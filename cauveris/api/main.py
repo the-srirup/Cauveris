@@ -83,6 +83,7 @@ async def upload_incident(incident_id: str, file: UploadFile = File(...)):
     # For now, we'll simulate by creating a dummy evidence item
     incident = incidents[incident_id]
 
+<<<<<<< HEAD
     # Read file content (in reality, we'd save to temp and extract)
     content = await file.read()
 
@@ -99,6 +100,20 @@ async def upload_incident(incident_id: str, file: UploadFile = File(...)):
     )
     incident.evidence_items.append(evidence)
     incident.update_counts()
+=======
+    # Validate file extension
+    if file.filename is None or not file.filename.lower().endswith('.zip'):
+        raise HTTPException(status_code=400, detail="File must be a ZIP archive")
+
+    # Read file content
+    content = await file.read()
+
+    # Save to temporary location for processing
+    if file.filename is None:
+        raise HTTPException(status_code=400, detail="File must have a filename")
+    zip_path = Path("./temp_upload") / file.filename
+    zip_path.parent.mkdir(exist_ok=True)
+>>>>>>> 95fa243 (Fixed Issue)
 
     logger.info(f"Uploaded file {file.filename} for incident {incident_id}")
     return {"message": "File uploaded", "filename": file.filename, "size": len(content)}
