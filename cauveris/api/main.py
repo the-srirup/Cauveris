@@ -80,13 +80,15 @@ async def upload_incident(incident_id: str, file: UploadFile = File(...)):
     incident = incidents[incident_id]
 
     # Validate file extension
-    if not file.filename.lower().endswith('.zip'):
+    if file.filename is None or not file.filename.lower().endswith('.zip'):
         raise HTTPException(status_code=400, detail="File must be a ZIP archive")
 
     # Read file content
     content = await file.read()
 
     # Save to temporary location for processing
+    if file.filename is None:
+        raise HTTPException(status_code=400, detail="File must have a filename")
     zip_path = Path("./temp_upload") / file.filename
     zip_path.parent.mkdir(exist_ok=True)
 
