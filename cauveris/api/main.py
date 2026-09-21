@@ -3,6 +3,8 @@ Main FastAPI application for Cauveris.
 """
 import asyncio
 import logging
+import shutil
+from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,35 +75,115 @@ async def upload_incident(incident_id: str, file: UploadFile = File(...)):
     if incident_id not in incidents:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    # In a real implementation, we would:
-    # 1. Validate the file is a ZIP
-    # 2. Extract it safely
-    # 3. Scan for secrets
-    # 4. Validate contents
-    # 5. Create EvidenceItem objects for each file
-    #
-    # For now, we'll simulate by creating a dummy evidence item
     incident = incidents[incident_id]
 
-    # Read file content (in reality, we'd save to temp and extract)
+    # Validate file extension
+    if not file.filename.lower().endswith('.zip'):
+        raise HTTPException(status_code=400, detail="File must be a ZIP archive")
+
+    # Read file content
     content = await file.read()
 
-    # Create a placeholder evidence item for the ZIP itself
-    import hashlib
-    checksum = hashlib.sha256(content).hexdigest()
-    evidence = EvidenceItem(
-        file_path=f"{file.filename}",
-        file_type="application/zip",
-        size_bytes=len(content),
-        checksum_sha256=checksum,
-        status="OBSERVED",
-        is_required=True,
-    )
-    incident.evidence_items.append(evidence)
-    incident.update_counts()
+    # Save to temporary location for processing
+    zip_path = Path("./temp_upload") / file.filename
+    zip_path.parent.mkdir(exist_ok=True)
 
-    logger.info(f"Uploaded file {file.filename} for incident {incident_id}")
-    return {"message": "File uploaded", "filename": file.filename, "size": len(content)}
+    with open(zip_path, "wb") as f:
+        f.write(content)
+
+    try:
+        # Extract ZIP safely
+        extract_dir = Path("./temp_upload") / "extracted"
+        extract_dir.mkdir(exist_ok=True)
+
+        # Clear previous extraction
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir)
+        extract_dir.mkdir()
+
+        extracted_files = extract_zip_safely(zip_path, extract_dir)
+
+        # Create EvidenceItem for each extracted file
+        evidence_items = []
+        for extracted_file in extracted_files:
+            # Get relative path from extract_dir for storage in evidence
+            relative_path = extracted_file.relative_to(extract_dir)
+
+            # Detect file type from content
+            detected_type = IngestionController()._detect_file_type(extracted_file)
+
+            # Compute checksum and size
+            checksum = compute_file_hash(str(extracted_file))
+            size_bytes = extracted_file.stat().st_size
+
+            # Scan for secrets (text files only)
+            secrets_found = []
+            try:
+                with open(str(extracted_file), 'r', encoding='utf-8', errors='ignore') as f:
+                    file_content = f.read()
+                secrets_found = scan_for_secrets(file_content, str(extracted_file))
+            except Exception:
+                # If we can't read as text, skip secret scanning
+                pass
+
+            evidence = EvidenceItem(
+                file_path=str(relative_path),
+                file_type=detected_type,
+                size_bytes=size_bytes,
+                checksum_sha256=checksum,
+                status="OBSERVED",
+                is_required=True,  # All extracted files are required for processing
+            )
+
+            if secrets_found:
+                evidence.validation_errors = [f"Potential secrets detected: {', '.join(secrets_found)}"]
+                evidence.status = "SECRETS_DETECTED"
+
+            evidence_items.append(evidence)
+
+        # Clear existing evidence items and replace with extracted ones
+        # (We keep the ZIP file evidence item as well for record-keeping)
+        incident.evidence_items.clear()
+
+        # Add ZIP file evidence
+        zip_checksum = hashlib.sha256(content).hexdigest()
+        zip_evidence = EvidenceItem(
+            file_path=f"{file.filename}",
+            file_type="application/zip",
+            size_bytes=len(content),
+            checksum_sha256=zip_checksum,
+            status="OBSERVED",
+            is_required=True,
+        )
+        incident.evidence_items.append(zip_evidence)
+
+        # Add all extracted file evidence
+        incident.evidence_items.extend(evidence_items)
+
+        # Update counts
+        incident.update_counts()
+
+        logger.info(f"Uploaded and extracted {file.filename} with {len(evidence_items)} files for incident {incident_id}")
+        return {
+            "message": "File uploaded and extracted successfully",
+            "filename": file.filename,
+            "size": len(content),
+            "extracted_files": len(evidence_items)
+        }
+
+    except Exception as e:
+        logger.error(f"Error processing upload {file.filename}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process upload: {str(e)}")
+    finally:
+        # Cleanup temporary files
+        try:
+            if zip_path.exists():
+                zip_path.unlink()
+            extract_dir = Path("./temp_upload") / "extracted"
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir)
+        except Exception as e:
+            logger.warning(f"Cleanup warning: {e}")
 
 
 @app.post("/api/v1/incidents/{incident_id}/validate")
