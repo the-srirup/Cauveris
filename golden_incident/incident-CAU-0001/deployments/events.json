@@ -1,0 +1,15 @@
+{
+  "deployment_id": "v42",
+  "timestamp": "2026-09-20T08:00:00Z",
+  "service": "inference-service",
+  "image": "inference-service:v42",
+  "changes": {
+    "config": {
+      "dynamic_batching.window_ms": {
+        "from": 100,
+        "to": 200
+      }
+    }
+  },
+  "author": "ml-team@example.com"
+}

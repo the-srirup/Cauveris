@@ -1,0 +1,28 @@
+{
+  "traceID": "0af7651916cd43dd8448eb211c80819c",
+  "spans": [
+    {
+      "traceId": "0af7651916cd43dd8448eb211c80819c",
+      "spanId": "023e1fd95803323b",
+      "name": "inference_request",
+      "timestamp": 1726823400000000000,
+      "duration": 150000000,
+      "attributes": {
+        "http.method": "POST",
+        "http.url": "/v1/models/objdet:predict",
+        "http.status_code": 200
+      }
+    },
+    {
+      "traceId": "0af7651916cd43dd8448eb211c80819c",
+      "spanId": "0456a2b3c4d5e6f7",
+      "name": "robot_control_loop",
+      "timestamp": 1726823400200000000,
+      "duration": 50000000,
+      "status": {
+        "code": 2,
+        "message": "Control deadline missed"
+      }
+    }
+  ]
+}

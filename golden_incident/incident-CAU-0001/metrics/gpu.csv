@@ -1,0 +1,5 @@
+timestamp,gpu_utilization,memory_utilization,queue_depth,inference_latency_ms
+2026-09-20T10:29:50Z,45,60,5,80
+2026-09-20T10:29:50.1Z,50,65,8,95
+2026-09-20T10:29:50.2Z,80,70,15,150
+2026-09-20T10:29:50.3Z,90,75,25,200

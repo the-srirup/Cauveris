@@ -1,0 +1,4 @@
+robot_name: warehouse-amr-01
+detection_freshness_budget_ms: 120
+control_loop_period_ms: 50
+safety_watchdog_timeout_ms: 100
