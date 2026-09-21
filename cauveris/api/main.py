@@ -2,6 +2,7 @@
 Main FastAPI application for Cauveris.
 """
 import asyncio
+import hashlib
 import logging
 import shutil
 from pathlib import Path
@@ -13,7 +14,8 @@ import json
 from cauveris.schemas.incident import Incident, EvidenceItem
 from cauveris.datasets.golden_incident import GoldenIncidentGenerator
 from cauveris.state_machine.orchestrator import PipelineOrchestrator, PipelineContext
-from cauveris.ingestion.controller import IngestionController
+from cauveris.ingestion.controller import IngestionController, extract_zip_safely
+from cauveris.security import compute_file_hash, scan_for_secrets
 
 logger = logging.getLogger(__name__)
 
