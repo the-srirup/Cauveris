@@ -1,0 +1,189 @@
+2026-09-21 22:06:15,961 - cauveris.main - INFO - Starting Cauveris backend
+2026-09-21 22:10:16,046 - cauveris.main - INFO - Starting Cauveris backend
+2026-09-21 22:10:16,046 - cauveris.main - INFO - Loading golden incident on startup...
+2026-09-21 22:10:16,354 - cauveris.datasets.golden_incident - INFO - Generating golden CAU-0001 incident
+2026-09-21 22:10:16,544 - cauveris.datasets.golden_incident - WARNING - Expected evidence file not found: incident-CAU-0001\README.md
+2026-09-21 22:10:16,546 - cauveris.datasets.golden_incident - INFO - Generated incident 9c9f31a6-9f18-4c93-b352-88a5ed87dc16 with 14 evidence items
+2026-09-21 22:10:16,546 - cauveris.main - INFO - Loaded golden incident 9c9f31a6-9f18-4c93-b352-88a5ed87dc16
+2026-09-21 22:10:29,278 - cauveris.datasets.golden_incident - INFO - Generating golden CAU-0001 incident
+2026-09-21 22:10:29,294 - cauveris.datasets.golden_incident - WARNING - Expected evidence file not found: incident-CAU-0001\README.md
+2026-09-21 22:10:29,295 - cauveris.datasets.golden_incident - INFO - Generated incident a26f011b-1bb9-4298-b825-6bd87ce280ee with 14 evidence items
+2026-09-21 22:10:29,295 - cauveris.api.main - INFO - Created golden incident a26f011b-1bb9-4298-b825-6bd87ce280ee
+2026-09-21 22:10:33,222 - cauveris.state_machine.orchestrator - INFO - Transitioning to RECEIVED: 
+2026-09-21 22:10:33,222 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: RECEIVED 0.0%
+2026-09-21 22:10:33,222 - cauveris.ingestion.controller - INFO - Processing incident: a26f011b-1bb9-4298-b825-6bd87ce280ee
+2026-09-21 22:10:33,223 - cauveris.ingestion.controller - INFO - Ingestion complete for incident a26f011b-1bb9-4298-b825-6bd87ce280ee
+2026-09-21 22:10:33,224 - cauveris.state_machine.orchestrator - INFO - Transitioning to VALIDATING: 
+2026-09-21 22:10:33,224 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: VALIDATING 10.0%
+2026-09-21 22:10:33,224 - cauveris.timeline.builder - INFO - Building timeline for incident a26f011b-1bb9-4298-b825-6bd87ce280ee
+2026-09-21 22:10:33,227 - cauveris.timeline.builder - INFO - Built timeline with 24 events
+2026-09-21 22:10:33,227 - cauveris.state_machine.orchestrator - INFO - Transitioning to NORMALIZING: 
+2026-09-21 22:10:33,227 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: NORMALIZING 20.0%
+2026-09-21 22:10:33,227 - cauveris.hypothesis.generator - INFO - Generating hypotheses for incident a26f011b-1bb9-4298-b825-6bd87ce280ee
+2026-09-21 22:10:33,229 - cauveris.hypothesis.generator - INFO - Generated 4 hypotheses for incident a26f011b-1bb9-4298-b825-6bd87ce280ee
+2026-09-21 22:10:33,229 - cauveris.state_machine.orchestrator - INFO - Transitioning to HYPOTHESIZING: 
+2026-09-21 22:10:33,229 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: HYPOTHESIZING 30.0%
+2026-09-21 22:10:33,229 - cauveris.sandbox.controller - INFO - Planning experiments for 4 hypotheses
+2026-09-21 22:10:33,229 - cauveris.state_machine.orchestrator - INFO - Transitioning to PLANNING: 
+2026-09-21 22:10:33,229 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: PLANNING 40.0%
+2026-09-21 22:10:33,229 - cauveris.sandbox.controller - INFO - Running 4 experiments
+2026-09-21 22:10:33,229 - cauveris.sandbox.controller - INFO - Starting experiment exp-h1_batching_window
+2026-09-21 22:10:33,232 - cauveris.sandbox.controller - INFO - Applying intervention for h1_batching_window: Reduce dynamic batching window from 200ms to 100ms
+2026-09-21 22:10:33,237 - cauveris.sandbox.controller - INFO - Changed batching_window_ms from 100 to 50
+2026-09-21 22:10:33,320 - cauveris.sandbox.controller - ERROR - Simulation failed: Traceback (most recent call last):
+  File "C:\Users\rajit\OneDrive\Desktop\Cauveris-main\Cauveris-main\sandbox_workspace\exp-h1_batching_window\simulate.py", line 5, in <module>
+    import yaml
+ModuleNotFoundError: No module named 'yaml'
+
+2026-09-21 22:10:33,321 - cauveris.sandbox.controller - INFO - Completed experiment exp-h1_batching_window
+2026-09-21 22:10:33,321 - cauveris.sandbox.controller - INFO - Starting experiment exp-h2_qos_stale_messages
+2026-09-21 22:10:33,324 - cauveris.sandbox.controller - INFO - Applying intervention for h2_qos_stale_messages: Adjust ROS 2 QoS settings for object_detections topic to reduce depth and disable stale message retention
+2026-09-21 22:10:33,325 - cauveris.sandbox.controller - INFO - Adjusted batching_window_ms for QoS: 100 -> 80
+2026-09-21 22:10:33,383 - cauveris.sandbox.controller - ERROR - Simulation failed: Traceback (most recent call last):
+  File "C:\Users\rajit\OneDrive\Desktop\Cauveris-main\Cauveris-main\sandbox_workspace\exp-h2_qos_stale_messages\simulate.py", line 5, in <module>
+    import yaml
+ModuleNotFoundError: No module named 'yaml'
+
+2026-09-21 22:10:33,383 - cauveris.sandbox.controller - INFO - Completed experiment exp-h2_qos_stale_messages
+2026-09-21 22:10:33,383 - cauveris.sandbox.controller - INFO - Starting experiment exp-h3_clock_skew
+2026-09-21 22:10:33,387 - cauveris.sandbox.controller - INFO - Applying intervention for h3_clock_skew: Implement or improve NTP synchronization between inference service hosts and robot fleet to maintain clock sync within 5ms
+2026-09-21 22:10:33,388 - cauveris.sandbox.controller - INFO - Adjusted batching_window_ms for clock sync: 100 -> 90
+2026-09-21 22:10:33,446 - cauveris.sandbox.controller - ERROR - Simulation failed: Traceback (most recent call last):
+  File "C:\Users\rajit\OneDrive\Desktop\Cauveris-main\Cauveris-main\sandbox_workspace\exp-h3_clock_skew\simulate.py", line 5, in <module>
+    import yaml
+ModuleNotFoundError: No module named 'yaml'
+
+2026-09-21 22:10:33,447 - cauveris.sandbox.controller - INFO - Completed experiment exp-h3_clock_skew
+2026-09-21 22:10:33,447 - cauveris.sandbox.controller - INFO - Starting experiment exp-h4_gpu_load_throttling
+2026-09-21 22:10:33,449 - cauveris.sandbox.controller - INFO - Applying intervention for h4_gpu_load_throttling: Implement GPU workload management to prevent throttling during peak loads, including power limit adjustments and better cooling
+2026-09-21 22:10:33,450 - cauveris.sandbox.controller - INFO - Reduced batching_window_ms for GPU load: 100 -> 70
+2026-09-21 22:10:33,508 - cauveris.sandbox.controller - ERROR - Simulation failed: Traceback (most recent call last):
+  File "C:\Users\rajit\OneDrive\Desktop\Cauveris-main\Cauveris-main\sandbox_workspace\exp-h4_gpu_load_throttling\simulate.py", line 5, in <module>
+    import yaml
+ModuleNotFoundError: No module named 'yaml'
+
+2026-09-21 22:10:33,509 - cauveris.sandbox.controller - INFO - Completed experiment exp-h4_gpu_load_throttling
+2026-09-21 22:10:33,509 - cauveris.state_machine.orchestrator - INFO - Transitioning to RUNNING_BRANCHES: 
+2026-09-21 22:10:33,509 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: RUNNING_BRANCHES 50.0%
+2026-09-21 22:10:33,509 - cauveris.simulation.runner - INFO - Running simulations for 4 experiments
+2026-09-21 22:10:33,509 - cauveris.simulation.runner - INFO - Starting simulation for experiment exp-h1_batching_window
+2026-09-21 22:10:33,509 - cauveris.simulation.runner - INFO - Completed simulation for experiment exp-h1_batching_window: 8/20 reproductions (40.0%)
+2026-09-21 22:10:33,509 - cauveris.simulation.runner - INFO - Starting simulation for experiment exp-h2_qos_stale_messages
+2026-09-21 22:10:33,509 - cauveris.simulation.runner - INFO - Completed simulation for experiment exp-h2_qos_stale_messages: 20/20 reproductions (100.0%)
+2026-09-21 22:10:33,509 - cauveris.simulation.runner - INFO - Starting simulation for experiment exp-h3_clock_skew
+2026-09-21 22:10:33,509 - cauveris.simulation.runner - INFO - Completed simulation for experiment exp-h3_clock_skew: 20/20 reproductions (100.0%)
+2026-09-21 22:10:33,509 - cauveris.simulation.runner - INFO - Starting simulation for experiment exp-h4_gpu_load_throttling
+2026-09-21 22:10:33,509 - cauveris.simulation.runner - INFO - Completed simulation for experiment exp-h4_gpu_load_throttling: 20/20 reproductions (100.0%)
+2026-09-21 22:10:33,509 - cauveris.state_machine.orchestrator - INFO - Transitioning to SCORING: 
+2026-09-21 22:10:33,509 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: SCORING 60.0%
+2026-09-21 22:10:33,509 - cauveris.patch.generator - INFO - Generating patches from 4 experiments
+2026-09-21 22:10:33,509 - cauveris.patch.generator - INFO - Found 0 completed experiments
+2026-09-21 22:10:33,509 - cauveris.patch.generator - INFO - Generated 0 patch candidates
+2026-09-21 22:10:33,509 - cauveris.state_machine.orchestrator - INFO - Transitioning to PATCH_FORGE: 
+2026-09-21 22:10:33,509 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: PATCH_FORGE 70.0%
+2026-09-21 22:10:33,509 - cauveris.verifier.engine - INFO - Verifying 0 patch candidates
+2026-09-21 22:10:33,510 - cauveris.state_machine.orchestrator - INFO - Transitioning to VERIFYING: 
+2026-09-21 22:10:33,510 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: VERIFYING 80.0%
+2026-09-21 22:10:33,510 - cauveris.report.generator - INFO - Generating report for incident a26f011b-1bb9-4298-b825-6bd87ce280ee
+2026-09-21 22:10:33,511 - cauveris.report.generator - INFO - Report generated at report\a26f011b-1bb9-4298-b825-6bd87ce280ee
+2026-09-21 22:10:33,511 - cauveris.state_machine.orchestrator - INFO - Transitioning to AWAITING_REVIEW: 
+2026-09-21 22:10:33,511 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: AWAITING_REVIEW 90.0%
+2026-09-21 22:10:33,511 - cauveris.state_machine.orchestrator - INFO - Transitioning to COMPLETED: 
+2026-09-21 22:10:33,511 - cauveris.api.main - INFO - Incident a26f011b-1bb9-4298-b825-6bd87ce280ee progress: COMPLETED 100.0%
+2026-09-21 22:10:33,511 - cauveris.api.main - INFO - Pipeline completed for incident a26f011b-1bb9-4298-b825-6bd87ce280ee
+2026-09-21 22:30:16,679 - cauveris.main - INFO - Starting Cauveris backend
+2026-09-21 22:33:14,481 - cauveris.main - INFO - Starting Cauveris backend
+2026-09-21 22:35:33,337 - cauveris.datasets.golden_incident - INFO - Generating golden CAU-0001 incident
+2026-09-21 22:35:33,367 - cauveris.datasets.golden_incident - WARNING - Expected evidence file not found: incident-CAU-0001\README.md
+2026-09-21 22:35:33,367 - cauveris.datasets.golden_incident - INFO - Generated incident 02631be4-8261-4433-9618-f4b1b5406cba with 14 evidence items
+2026-09-21 22:35:33,367 - cauveris.api.main - INFO - Created golden incident 02631be4-8261-4433-9618-f4b1b5406cba
+2026-09-21 22:35:37,071 - cauveris.state_machine.orchestrator - INFO - Transitioning to RECEIVED: 
+2026-09-21 22:35:37,071 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: RECEIVED 0.0%
+2026-09-21 22:35:37,071 - cauveris.ingestion.controller - INFO - Processing incident: 02631be4-8261-4433-9618-f4b1b5406cba
+2026-09-21 22:35:37,073 - cauveris.ingestion.controller - INFO - Ingestion complete for incident 02631be4-8261-4433-9618-f4b1b5406cba
+2026-09-21 22:35:37,074 - cauveris.state_machine.orchestrator - INFO - Transitioning to VALIDATING: 
+2026-09-21 22:35:37,074 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: VALIDATING 10.0%
+2026-09-21 22:35:37,074 - cauveris.timeline.builder - INFO - Building timeline for incident 02631be4-8261-4433-9618-f4b1b5406cba
+2026-09-21 22:35:37,077 - cauveris.timeline.builder - INFO - Built timeline with 24 events
+2026-09-21 22:35:37,077 - cauveris.state_machine.orchestrator - INFO - Transitioning to NORMALIZING: 
+2026-09-21 22:35:37,077 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: NORMALIZING 20.0%
+2026-09-21 22:35:37,077 - cauveris.hypothesis.generator - INFO - Generating hypotheses for incident 02631be4-8261-4433-9618-f4b1b5406cba
+2026-09-21 22:35:37,080 - cauveris.hypothesis.generator - INFO - Generated 4 hypotheses for incident 02631be4-8261-4433-9618-f4b1b5406cba
+2026-09-21 22:35:37,080 - cauveris.state_machine.orchestrator - INFO - Transitioning to HYPOTHESIZING: 
+2026-09-21 22:35:37,080 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: HYPOTHESIZING 30.0%
+2026-09-21 22:35:37,080 - cauveris.sandbox.controller - INFO - Planning experiments for 4 hypotheses
+2026-09-21 22:35:37,080 - cauveris.state_machine.orchestrator - INFO - Transitioning to PLANNING: 
+2026-09-21 22:35:37,080 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: PLANNING 40.0%
+2026-09-21 22:35:37,080 - cauveris.sandbox.controller - INFO - Running 4 experiments
+2026-09-21 22:35:37,080 - cauveris.sandbox.controller - INFO - Starting experiment exp-h1_batching_window
+2026-09-21 22:35:37,093 - cauveris.sandbox.controller - INFO - Applying intervention for h1_batching_window: Reduce dynamic batching window from 200ms to 100ms
+2026-09-21 22:35:37,095 - cauveris.sandbox.controller - INFO - Changed batching_window_ms from 100 to 50
+2026-09-21 22:35:37,175 - cauveris.sandbox.controller - ERROR - Simulation failed: Traceback (most recent call last):
+  File "C:\Users\rajit\OneDrive\Desktop\Cauveris-main\Cauveris-main\sandbox_workspace\exp-h1_batching_window\simulate.py", line 5, in <module>
+    import yaml
+ModuleNotFoundError: No module named 'yaml'
+
+2026-09-21 22:35:37,176 - cauveris.sandbox.controller - INFO - Completed experiment exp-h1_batching_window
+2026-09-21 22:35:37,176 - cauveris.sandbox.controller - INFO - Starting experiment exp-h2_qos_stale_messages
+2026-09-21 22:35:37,180 - cauveris.sandbox.controller - INFO - Applying intervention for h2_qos_stale_messages: Adjust ROS 2 QoS settings for object_detections topic to reduce depth and disable stale message retention
+2026-09-21 22:35:37,181 - cauveris.sandbox.controller - INFO - Adjusted batching_window_ms for QoS: 100 -> 80
+2026-09-21 22:35:37,242 - cauveris.sandbox.controller - ERROR - Simulation failed: Traceback (most recent call last):
+  File "C:\Users\rajit\OneDrive\Desktop\Cauveris-main\Cauveris-main\sandbox_workspace\exp-h2_qos_stale_messages\simulate.py", line 5, in <module>
+    import yaml
+ModuleNotFoundError: No module named 'yaml'
+
+2026-09-21 22:35:37,243 - cauveris.sandbox.controller - INFO - Completed experiment exp-h2_qos_stale_messages
+2026-09-21 22:35:37,243 - cauveris.sandbox.controller - INFO - Starting experiment exp-h3_clock_skew
+2026-09-21 22:35:37,247 - cauveris.sandbox.controller - INFO - Applying intervention for h3_clock_skew: Implement or improve NTP synchronization between inference service hosts and robot fleet to maintain clock sync within 5ms
+2026-09-21 22:35:37,250 - cauveris.sandbox.controller - INFO - Adjusted batching_window_ms for clock sync: 100 -> 90
+2026-09-21 22:35:37,317 - cauveris.sandbox.controller - ERROR - Simulation failed: Traceback (most recent call last):
+  File "C:\Users\rajit\OneDrive\Desktop\Cauveris-main\Cauveris-main\sandbox_workspace\exp-h3_clock_skew\simulate.py", line 5, in <module>
+    import yaml
+ModuleNotFoundError: No module named 'yaml'
+
+2026-09-21 22:35:37,317 - cauveris.sandbox.controller - INFO - Completed experiment exp-h3_clock_skew
+2026-09-21 22:35:37,318 - cauveris.sandbox.controller - INFO - Starting experiment exp-h4_gpu_load_throttling
+2026-09-21 22:35:37,321 - cauveris.sandbox.controller - INFO - Applying intervention for h4_gpu_load_throttling: Implement GPU workload management to prevent throttling during peak loads, including power limit adjustments and better cooling
+2026-09-21 22:35:37,322 - cauveris.sandbox.controller - INFO - Reduced batching_window_ms for GPU load: 100 -> 70
+2026-09-21 22:35:37,387 - cauveris.sandbox.controller - ERROR - Simulation failed: Traceback (most recent call last):
+  File "C:\Users\rajit\OneDrive\Desktop\Cauveris-main\Cauveris-main\sandbox_workspace\exp-h4_gpu_load_throttling\simulate.py", line 5, in <module>
+    import yaml
+ModuleNotFoundError: No module named 'yaml'
+
+2026-09-21 22:35:37,388 - cauveris.sandbox.controller - INFO - Completed experiment exp-h4_gpu_load_throttling
+2026-09-21 22:35:37,388 - cauveris.state_machine.orchestrator - INFO - Transitioning to RUNNING_BRANCHES: 
+2026-09-21 22:35:37,388 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: RUNNING_BRANCHES 50.0%
+2026-09-21 22:35:37,388 - cauveris.state_machine.orchestrator - INFO - Transitioning to SCORING: 
+2026-09-21 22:35:37,388 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: SCORING 60.0%
+2026-09-21 22:35:37,388 - cauveris.patch.generator - INFO - Generating patches from 4 experiments
+2026-09-21 22:35:37,388 - cauveris.patch.generator - INFO - Found 4 completed experiments
+2026-09-21 22:35:37,388 - cauveris.patch.generator - INFO - Generated patch patch-exp-h1_batching_window from experiment exp-h1_batching_window
+2026-09-21 22:35:37,388 - cauveris.patch.generator - INFO - Generated patch patch-exp-h2_qos_stale_messages from experiment exp-h2_qos_stale_messages
+2026-09-21 22:35:37,389 - cauveris.patch.generator - INFO - Generated patch patch-exp-h3_clock_skew from experiment exp-h3_clock_skew
+2026-09-21 22:35:37,389 - cauveris.patch.generator - INFO - Generated patch patch-exp-h4_gpu_load_throttling from experiment exp-h4_gpu_load_throttling
+2026-09-21 22:35:37,389 - cauveris.patch.generator - INFO - Generated 4 patch candidates
+2026-09-21 22:35:37,389 - cauveris.state_machine.orchestrator - INFO - Transitioning to PATCH_FORGE: 
+2026-09-21 22:35:37,389 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: PATCH_FORGE 70.0%
+2026-09-21 22:35:37,389 - cauveris.verifier.engine - INFO - Verifying 4 patch candidates
+2026-09-21 22:35:37,389 - cauveris.verifier.engine - INFO - Verifying patch patch-exp-h1_batching_window
+2026-09-21 22:35:37,393 - cauveris.verifier.engine - INFO - Applying patch patch-exp-h1_batching_window
+2026-09-21 22:35:37,409 - cauveris.verifier.engine - INFO - Set batching_window_ms to 200 in verification_workspace\patch-exp-h1_batching_window\src\config\inference.yaml
+2026-09-21 22:35:37,786 - cauveris.verifier.engine - INFO - Verification complete for patch patch-exp-h1_batching_window: VERIFIED=False
+2026-09-21 22:35:37,787 - cauveris.verifier.engine - INFO - Verifying patch patch-exp-h2_qos_stale_messages
+2026-09-21 22:35:37,790 - cauveris.verifier.engine - INFO - Applying patch patch-exp-h2_qos_stale_messages
+2026-09-21 22:35:37,959 - cauveris.verifier.engine - INFO - Verification complete for patch patch-exp-h2_qos_stale_messages: VERIFIED=False
+2026-09-21 22:35:37,959 - cauveris.verifier.engine - INFO - Verifying patch patch-exp-h3_clock_skew
+2026-09-21 22:35:37,962 - cauveris.verifier.engine - INFO - Applying patch patch-exp-h3_clock_skew
+2026-09-21 22:35:38,146 - cauveris.verifier.engine - INFO - Verification complete for patch patch-exp-h3_clock_skew: VERIFIED=False
+2026-09-21 22:35:38,146 - cauveris.verifier.engine - INFO - Verifying patch patch-exp-h4_gpu_load_throttling
+2026-09-21 22:35:38,152 - cauveris.verifier.engine - INFO - Applying patch patch-exp-h4_gpu_load_throttling
+2026-09-21 22:35:38,332 - cauveris.verifier.engine - INFO - Verification complete for patch patch-exp-h4_gpu_load_throttling: VERIFIED=False
+2026-09-21 22:35:38,332 - cauveris.state_machine.orchestrator - INFO - Transitioning to VERIFYING: 
+2026-09-21 22:35:38,332 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: VERIFYING 80.0%
+2026-09-21 22:35:38,332 - cauveris.report.generator - INFO - Generating report for incident 02631be4-8261-4433-9618-f4b1b5406cba
+2026-09-21 22:35:38,334 - cauveris.report.generator - INFO - Report generated at report\02631be4-8261-4433-9618-f4b1b5406cba
+2026-09-21 22:35:38,334 - cauveris.state_machine.orchestrator - INFO - Transitioning to AWAITING_REVIEW: 
+2026-09-21 22:35:38,334 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: AWAITING_REVIEW 90.0%
+2026-09-21 22:35:38,334 - cauveris.state_machine.orchestrator - INFO - Transitioning to COMPLETED: 
+2026-09-21 22:35:38,334 - cauveris.api.main - INFO - Incident 02631be4-8261-4433-9618-f4b1b5406cba progress: COMPLETED 100.0%
+2026-09-21 22:35:38,334 - cauveris.api.main - INFO - Pipeline completed for incident 02631be4-8261-4433-9618-f4b1b5406cba
