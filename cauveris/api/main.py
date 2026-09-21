@@ -3,15 +3,18 @@ Main FastAPI application for Cauveris.
 """
 import asyncio
 import logging
+import shutil
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uuid
 import json
+from pathlib import Path
 from cauveris.schemas.incident import Incident, EvidenceItem
 from cauveris.datasets.golden_incident import GoldenIncidentGenerator
 from cauveris.state_machine.orchestrator import PipelineOrchestrator, PipelineContext
-from cauveris.ingestion.controller import IngestionController
+from cauveris.ingestion.controller import IngestionController, extract_zip_safely
+from cauveris.security import scan_for_secrets, compute_file_hash
 
 logger = logging.getLogger(__name__)
 
@@ -73,34 +76,6 @@ async def upload_incident(incident_id: str, file: UploadFile = File(...)):
     if incident_id not in incidents:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    # In a real implementation, we would:
-    # 1. Validate the file is a ZIP
-    # 2. Extract it safely
-    # 3. Scan for secrets
-    # 4. Validate contents
-    # 5. Create EvidenceItem objects for each file
-    #
-    # For now, we'll simulate by creating a dummy evidence item
-    incident = incidents[incident_id]
-
-<<<<<<< HEAD
-    # Read file content (in reality, we'd save to temp and extract)
-    content = await file.read()
-
-    # Create a placeholder evidence item for the ZIP itself
-    import hashlib
-    checksum = hashlib.sha256(content).hexdigest()
-    evidence = EvidenceItem(
-        file_path=f"{file.filename}",
-        file_type="application/zip",
-        size_bytes=len(content),
-        checksum_sha256=checksum,
-        status="OBSERVED",
-        is_required=True,
-    )
-    incident.evidence_items.append(evidence)
-    incident.update_counts()
-=======
     # Validate file extension
     if file.filename is None or not file.filename.lower().endswith('.zip'):
         raise HTTPException(status_code=400, detail="File must be a ZIP archive")
@@ -113,10 +88,132 @@ async def upload_incident(incident_id: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="File must have a filename")
     zip_path = Path("./temp_upload") / file.filename
     zip_path.parent.mkdir(exist_ok=True)
->>>>>>> 95fa243 (Fixed Issue)
 
-    logger.info(f"Uploaded file {file.filename} for incident {incident_id}")
-    return {"message": "File uploaded", "filename": file.filename, "size": len(content)}
+    try:
+        # Write the uploaded file to temp location
+        with open(zip_path, "wb") as buffer:
+            buffer.write(content)
+
+        logger.info(f"Saved uploaded file to {zip_path}")
+
+        # Extract ZIP safely
+        extract_dir = Path("./temp_extract") / incident_id
+        extract_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            extracted_files = extract_zip_safely(zip_path, extract_dir)
+            logger.info(f"Extracted {len(extracted_files)} files from ZIP")
+        except ValueError as e:
+            logger.error(f"ZIP extraction failed due to security violation: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid ZIP file: {str(e)}")
+        except Exception as e:
+            logger.error(f"ZIP extraction failed: {e}")
+            raise HTTPException(status_code=500, detail="Failed to extract ZIP file")
+
+        # Process each extracted file and create EvidenceItem objects
+        incident = incidents[incident_id]
+
+        for extracted_file in extracted_files:
+            try:
+                # Get relative path for evidence tracking
+                relative_path = extracted_file.relative_to(extract_dir)
+
+                # Detect file type
+                detected_type = IngestionController()._detect_file_type(extracted_file)
+
+                # Validate file type (basic validation - in reality would use settings)
+                # For demo, we'll accept common types
+                allowed_types = {
+                    "text/yaml", "application/json", "text/csv", "text/plain",
+                    "text/markdown", "text/x-python", "application/octet-stream",
+                    "image/png", "image/jpeg", "application/pdf", "video/mp4"
+                }
+
+                if detected_type not in allowed_types:
+                    logger.warning(f"File type {detected_type} not in allowed list, but processing anyway")
+
+                # Validate file size
+                file_size = extracted_file.stat().st_size
+                max_size = 100 * 1024 * 1024  # 100MB limit for demo
+                if file_size > max_size:
+                    logger.warning(f"File {relative_path} exceeds size limit: {file_size} bytes")
+                    # Continue processing but flag in validation later
+
+                # Compute checksum
+                checksum = compute_file_hash(str(extracted_file))
+
+                # Scan for secrets (text files only)
+                secrets_found = []
+                if detected_type.startswith('text/') or detected_type in ['application/json', 'application/yaml']:
+                    try:
+                        with open(extracted_file, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                        secrets_found = scan_for_secrets(content, str(extracted_file))
+                    except Exception:
+                        # If we can't read as text, skip secret scanning
+                        pass
+
+                # Determine status based on validation
+                status = "OBSERVED"
+                validation_errors = []
+
+                if secrets_found:
+                    validation_errors.append(f"Potential secrets detected: {', '.join(set([s[0] for s in secrets_found]))}")
+                    status = "SECRETS_DETECTED"
+
+                # Create EvidenceItem
+                evidence = EvidenceItem(
+                    file_path=str(relative_path),
+                    file_type=detected_type,
+                    size_bytes=file_size,
+                    checksum_sha256=checksum,
+                    status=status,
+                    is_required=False,  # Most uploaded evidence is not strictly required
+                    validation_errors=validation_errors
+                )
+
+                incident.evidence_items.append(evidence)
+                logger.debug(f"Added evidence item for {relative_path}: {status}")
+
+            except Exception as e:
+                logger.error(f"Failed to process extracted file {extracted_file}: {e}")
+                # Create a failed evidence item
+                evidence = EvidenceItem(
+                    file_path=str(extracted_file.relative_to(extract_dir)) if extract_dir in extracted_file.parents else extracted_file.name,
+                    file_type="application/octet-stream",
+                    size_bytes=0,
+                    checksum_sha256="",
+                    status="PROCESSING_ERROR",
+                    is_required=False,
+                    validation_errors=[f"Processing error: {str(e)}"]
+                )
+                incident.evidence_items.append(evidence)
+
+        # Update incident evidence counts
+        incident.update_counts()
+
+        logger.info(f"Successfully processed upload for incident {incident_id}: {len(incident.evidence_items)} evidence items")
+        return {
+            "message": "File uploaded and processed",
+            "filename": file.filename,
+            "size": len(content),
+            "evidence_count": len(incident.evidence_items)
+        }
+
+    finally:
+        # Cleanup temporary files
+        try:
+            if zip_path.exists():
+                zip_path.unlink()
+            extract_dir = Path("./temp_extract") / incident_id
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir)
+            # Also cleanup the temp upload directory if empty
+            temp_upload_dir = Path("./temp_upload")
+            if temp_upload_dir.exists() and not any(temp_upload_dir.iterdir()):
+                temp_upload_dir.rmdir()
+        except Exception as e:
+            logger.warning(f"Cleanup failed: {e}")
 
 
 @app.post("/api/v1/incidents/{incident_id}/validate")
