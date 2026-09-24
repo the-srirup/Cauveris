@@ -1,7 +1,6 @@
 "use client";
 
-import { Button } from '@/components/ui';
-import { Card, Stat, Badge, KV, PageHeader } from '@/components/ui';
+import { Button, Card, Stat, Badge, PageHeader } from "@/components/ui";
 
 export default function PatchForge() {
   return (
@@ -27,56 +26,56 @@ export default function PatchForge() {
                     <h3 className="font-semibold text-primary">PATCH-001</h3>
                     <Badge tone="success">VERIFIED</Badge>
                   </div>
-                  <p className="text-sm font-mono text-muted mb-2">
-                    --- a/src/inference/config.py
-                    +++ b/src/inference/config.py
-                    @@ -1 +1 @@
-                    -BATCHING_WINDOW_MS = 200
-                    +BATCHING_WINDOW_MS = 100
-                  </p>
+                  <pre className="text-xs font-mono text-muted bg-surface/50 p-3 rounded-lg overflow-x-auto">
+{`--- a/src/inference/config.py
++++ b/src/inference/config.py
+@@ -1 +1 @@
+-BATCHING_WINDOW_MS = 200
++BATCHING_WINDOW_MS = 100`}
+                  </pre>
                   <div className="flex flex-wrap gap-2 mb-2">
                     <Badge tone="primary">-2 lines</Badge>
                     <Badge tone="primary">1 file</Badge>
                     <Badge tone="success">Score: 0.95</Badge>
                   </div>
                   <div className="mt-4">
-                    <h4 className="text-sm font-semibold mb-2">Verification Results</h4>
+                    <h4 className="text-sm font-semibold mb-2">Verification Results (9-Point Gates)</h4>
                     <div className="space-y-2 text-xs">
                       <div className="flex justify-between items-start">
                         <span className="text-muted">Applies Cleanly:</span>
-                        <span className="text-success font-mono">✓</span>
+                        <span className="text-success font-mono">✓ PASS</span>
                       </div>
                       <div className="flex justify-between items-start">
                         <span className="text-muted">Regression Test Fails Before:</span>
-                        <span className="text-success font-mono">✓</span>
+                        <span className="text-success font-mono">✓ PASS</span>
                       </div>
                       <div className="flex justify-between items-start">
                         <span className="text-muted">Regression Test Passes After:</span>
-                        <span className="text-success font-mono">✓</span>
+                        <span className="text-success font-mono">✓ PASS</span>
                       </div>
                       <div className="flex justify-between items-start">
                         <span className="text-muted">Original Failure Not Reproduced:</span>
-                        <span className="text-success font-mono">✓</span>
+                        <span className="text-success font-mono">✓ PASS</span>
                       </div>
                       <div className="flex justify-between items-start">
                         <span className="text-muted">Existing Tests Pass:</span>
-                        <span className="text-success font-mono">✓</span>
+                        <span className="text-success font-mono">✓ PASS</span>
                       </div>
                       <div className="flex justify-between items-start">
                         <span className="text-muted">Safety Invariants Pass:</span>
-                        <span className="text-success font-mono">✓</span>
+                        <span className="text-success font-mono">✓ PASS</span>
                       </div>
                       <div className="flex justify-between items-start">
                         <span className="text-muted">Performance Within Budget:</span>
-                        <span className="text-success font-mono">✓</span>
+                        <span className="text-success font-mono">✓ PASS</span>
                       </div>
                       <div className="flex justify-between items-start">
                         <span className="text-muted">Forbidden Change Scan Passes:</span>
-                        <span className="text-success font-mono">✓</span>
+                        <span className="text-success font-mono">✓ PASS</span>
                       </div>
                       <div className="flex justify-between items-start">
                         <span className="text-muted">Rollback Test Passes:</span>
-                        <span className="text-success font-mono">✓</span>
+                        <span className="text-success font-mono">✓ PASS</span>
                       </div>
                     </div>
                   </div>
@@ -94,7 +93,7 @@ export default function PatchForge() {
                     <Badge tone="danger">REJECTED</Badge>
                   </div>
                   <p className="text-sm font-mono text-muted mb-2">
-                    // This patch was rejected for weakening safety watchdog
+                    // Rejected: Weakens safety watchdog timeout
                   </p>
                   <div className="flex flex-wrap gap-2 mb-2">
                     <Badge tone="primary">+5 lines</Badge>
@@ -121,7 +120,7 @@ export default function PatchForge() {
                     <Badge tone="danger">REJECTED</Badge>
                   </div>
                   <p className="text-sm font-mono text-muted mb-2">
-                    // This patch was rejected for hard-coding the golden incident
+                    // Rejected: Hard-codes test incident ID
                   </p>
                   <div className="flex flex-wrap gap-2 mb-2">
                     <Badge tone="primary">+10 lines</Badge>
@@ -137,7 +136,7 @@ export default function PatchForge() {
                 </div>
               </div>
             </div>
-          }
+          </div>
         </Card>
 
         {/* Right: Controls & Stats */}
@@ -148,24 +147,24 @@ export default function PatchForge() {
               <h3 className="text-sm font-semibold mb-3 text-muted">Verification Summary</h3>
               <div className="grid grid-cols-2 gap-4">
                 <Stat label="Total Candidates" value="3" sub="Generated" trend="flat" />
-                <Stat label="Verified" value="1" sub="Passed all checks" trend="success" />
-                <Stat label="Rejected" value="2" sub="Failed verification" trend="danger" />
-                <Stat label="Success Rate" value="33%" sub="Verification rate" trend="warning" />
+                <Stat label="Verified" value="1" sub="Passed all checks" trend="up" />
+                <Stat label="Rejected" value="2" sub="Failed verification" trend="down" />
+                <Stat label="Success Rate" value="33%" sub="Verification rate" trend="flat" />
               </div>
             </div>
 
             {/* Action Buttons */}
             <div className="mt-6">
-              <Button variant="outline" onClick={() => alert('Generate new candidates')} className="w-full mb-3">
+              <Button variant="outline" onClick={() => alert("Generate new candidates")} className="w-full mb-3">
                 Generate New Candidates
               </Button>
-              <Button variant="primary" onClick={() => alert('Create patch package')} className="w-full">
+              <Button variant="primary" onClick={() => alert("Create patch package")} className="w-full">
                 Create Patch Package
               </Button>
             </div>
-          }
+          </div>
         </Card>
-      }
+      </div>
     </div>
   );
 }

@@ -65,8 +65,9 @@ instance/
 # Scrapy stuff:
 .scrapy
 
-# Sphinx documentation
-docs/_build/
+# Documentation folder
+/docs/
+docs/
 
 # PyBuilder
 .pybuilder/
@@ -167,8 +168,4 @@ Thumbs.db
 # Ruff cache
 .ruff_cache/
 
-# Scratch and debug files
-docs/*.log
-docs/response*.txt
-docs/final_response*.txt
 

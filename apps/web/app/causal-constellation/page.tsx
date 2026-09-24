@@ -1,7 +1,6 @@
 "use client";
 
-import { Button } from '@/components/ui';
-import { Card, Badge, Stat, KV, PageHeader } from '@/components/ui';
+import { Button, Card, Badge, PageHeader } from "@/components/ui";
 
 export default function CausalConstellation() {
   return (
@@ -39,16 +38,16 @@ export default function CausalConstellation() {
                     <span className="text-xs text-muted">Confidence:</span>
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-primary">75%</span>
-                      <div className="w-full h-0.5 bg-primary/10 rounded-full">
-                        <div className="bg-primary h-full w-75 transition-all duration-500" role="progressbar" aria-valuenow="75" aria-valuemin="0" aria-valuemax="100" />
-                      }
+                      <div className="w-24 h-1.5 bg-primary/10 rounded-full overflow-hidden">
+                        <div className="bg-primary h-full w-3/4 transition-all duration-500" role="progressbar" aria-valuenow={75} aria-valuemin={0} aria-valuemax={100} />
+                      </div>
                     </div>
-                  }
-                  <Button variant="outline" size="sm" onClick={() => alert('Test H1')} className="mt-2 w-full">
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => alert("Test H1")} className="mt-2 w-full">
                     Test Hypothesis
                   </Button>
                 </div>
-              }
+              </div>
             </div>
 
             {/* Hypothesis H2 */}
@@ -72,16 +71,16 @@ export default function CausalConstellation() {
                     <span className="text-xs text-muted">Confidence:</span>
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-primary">45%</span>
-                      <div className="w-full h-0.5 bg-primary/10 rounded-full">
-                        <div className="bg-primary h-full w-45 transition-all duration-500" role="progressbar" aria-valuenow="45" aria-valuemin="0" aria-valuemax="100" />
-                      }
+                      <div className="w-24 h-1.5 bg-primary/10 rounded-full overflow-hidden">
+                        <div className="bg-primary h-full w-[45%] transition-all duration-500" role="progressbar" aria-valuenow={45} aria-valuemin={0} aria-valuemax={100} />
+                      </div>
                     </div>
-                  }
-                  <Button variant="outline" size="sm" onClick={() => alert('Test H2')} className="mt-2 w-full">
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => alert("Test H2")} className="mt-2 w-full">
                     Test Hypothesis
                   </Button>
-                }
-              }
+                </div>
+              </div>
             </div>
 
             {/* Hypothesis H3 */}
@@ -105,16 +104,16 @@ export default function CausalConstellation() {
                     <span className="text-xs text-muted">Confidence:</span>
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-primary">20%</span>
-                      <div className="w-full h-0.5 bg-primary/10 rounded-full">
-                        <div className="bg-primary h-full w-20 transition-all duration-500" role="progressbar" aria-valuenow="20" aria-valuemin="0" aria-valuemax="100" />
-                      }
+                      <div className="w-24 h-1.5 bg-primary/10 rounded-full overflow-hidden">
+                        <div className="bg-primary h-full w-1/5 transition-all duration-500" role="progressbar" aria-valuenow={20} aria-valuemin={0} aria-valuemax={100} />
+                      </div>
                     </div>
-                  }
-                  <Button variant="outline" size="sm" onClick={() => alert('Test H3')} className="mt-2 w-full">
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => alert("Test H3")} className="mt-2 w-full">
                     Test Hypothesis
                   </Button>
-                }
-              }
+                </div>
+              </div>
             </div>
 
             {/* Hypothesis H4 */}
@@ -138,38 +137,37 @@ export default function CausalConstellation() {
                     <span className="text-xs text-muted">Confidence:</span>
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-primary">30%</span>
-                      <div className="w-full h-0.5 bg-primary/10 rounded-full">
-                        <div className="bg-primary h-full w-30 transition-all duration-500" role="progressbar" aria-valuenow="30" aria-valuemin="0" aria-valuemax="100" />
-                      }
+                      <div className="w-24 h-1.5 bg-primary/10 rounded-full overflow-hidden">
+                        <div className="bg-primary h-full w-[30%] transition-all duration-500" role="progressbar" aria-valuenow={30} aria-valuemin={0} aria-valuemax={100} />
+                      </div>
                     </div>
-                  }
-                  <Button variant="outline" size="sm" onClick={() => alert('Test H4')} className="mt-2 w-full">
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => alert("Test H4")} className="mt-2 w-full">
                     Test Hypothesis
                   </Button>
-                }
-              }
+                </div>
+              </div>
             </div>
-          }
+          </div>
         </Card>
 
         {/* Right: Evidence Graph */}
         <Card title="Evidence Event Graph">
           <div className="aspect-video w-full bg-[radial-gradient(at_top_left,_var(--color-surface-2)_0%,_var(--color-background)_60%)] rounded-2xl overflow-hidden relative">
-            {/* This would contain a React Flow or similar graph visualization */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="space-y-4 text-center">
-                <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4 ring-2 ring-primary/20" />
+                <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4 ring-2 ring-primary/20 mx-auto" />
                 <p className="text-lg font-medium text-white">
                   Interactive causal graph
                 </p>
-                <p className="text-sm text-muted">
+                <p className="text-sm text-muted max-w-md mx-auto">
                   Showing links between deployment, configuration, GPU queue, trace spans, ROS messages, source code, controller events, and safety stops.
                 </p>
-              }
-            }
-          }
+              </div>
+            </div>
+          </div>
         </Card>
-      }
+      </div>
     </div>
   );
 }

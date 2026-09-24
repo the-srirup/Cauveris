@@ -51,7 +51,7 @@ export function Badge({
   dot = false,
 }: {
   children: ReactNode;
-  tone?: "neutral" | "primary" | "success" | "danger" | "amber";
+  tone?: "neutral" | "primary" | "success" | "danger" | "amber" | "secondary" | "muted";
   dot?: boolean;
 }) {
   const tones: Record<string, string> = {
@@ -60,6 +60,8 @@ export function Badge({
     success: "bg-success/10 text-success ring-success/25",
     danger: "bg-danger/10 text-danger ring-danger/25",
     amber: "bg-secondary/10 text-secondary ring-secondary/25",
+    secondary: "bg-secondary/10 text-secondary ring-secondary/25",
+    muted: "bg-white/5 text-muted ring-white/10",
   };
   return (
     <span
@@ -72,7 +74,7 @@ export function Badge({
               ? "bg-success"
               : tone === "danger"
                 ? "bg-danger"
-                : tone === "amber"
+                : tone === "amber" || tone === "secondary"
                   ? "bg-secondary"
                   : "bg-primary"
           }`}
@@ -93,10 +95,16 @@ export function Stat({
   label: string;
   value: ReactNode;
   sub?: string;
-  trend?: "up" | "down" | "flat";
+  trend?: "up" | "down" | "flat" | "success" | "danger" | "warning";
 }) {
   const trendColor =
-    trend === "up" ? "text-success" : trend === "down" ? "text-danger" : "text-muted";
+    trend === "up" || trend === "success"
+      ? "text-success"
+      : trend === "down" || trend === "danger"
+        ? "text-danger"
+        : trend === "warning"
+          ? "text-secondary"
+          : "text-muted";
   return (
     <div className="rounded-xl border border-white/5 bg-surface/40 p-4">
       <div className="text-[11px] font-medium uppercase tracking-wider text-muted">
@@ -117,7 +125,7 @@ export function Progress({
   className = "",
 }: {
   value: number;
-  tone?: "primary" | "success" | "danger" | "amber";
+  tone?: "primary" | "success" | "danger" | "amber" | "secondary";
   className?: string;
 }) {
   const bar =
@@ -125,7 +133,7 @@ export function Progress({
       ? "bg-success"
       : tone === "danger"
         ? "bg-danger"
-        : tone === "amber"
+        : tone === "amber" || tone === "secondary"
           ? "bg-secondary"
           : "bg-primary";
   return (
@@ -144,14 +152,22 @@ export function Progress({
 export function Button({
   children,
   variant = "primary",
+  size = "md",
   className = "",
   onClick,
 }: {
   children: ReactNode;
   variant?: "primary" | "outline" | "danger" | "ghost";
+  size?: "sm" | "md" | "lg";
   className?: string;
   onClick?: () => void;
 }) {
+  const sizeClasses =
+    size === "sm"
+      ? "px-3 py-1.5 text-xs"
+      : size === "lg"
+        ? "px-6 py-3 text-base"
+        : "px-5 py-2.5 text-sm";
   const styles: Record<string, string> = {
     primary:
       "bg-primary text-background font-semibold shadow-lg shadow-primary/20 hover:bg-primary/90",
@@ -163,7 +179,7 @@ export function Button({
   return (
     <button
       onClick={onClick}
-      className={`rounded-xl px-5 py-2.5 text-sm transition-all active:scale-[0.97] ${styles[variant]} ${className}`}
+      className={`rounded-xl transition-all active:scale-[0.97] ${sizeClasses} ${styles[variant]} ${className}`}
     >
       {children}
     </button>
@@ -197,13 +213,18 @@ export function PageHeader({
 export function KV({
   label,
   value,
+  sub,
 }: {
   label: string;
   value: ReactNode;
+  sub?: string;
 }) {
   return (
     <div className="flex items-center justify-between gap-4 py-2 text-sm">
-      <span className="text-muted">{label}</span>
+      <div>
+        <span className="text-muted">{label}</span>
+        {sub && <span className="block text-xs text-muted/70">{sub}</span>}
+      </div>
       <span className="text-right font-medium text-white">{value}</span>
     </div>
   );

@@ -1,7 +1,6 @@
 "use client";
 
-import { Button } from '@/components/ui';
-import { Card, Stat, Badge, KV, PageHeader } from '@/components/ui';
+import { Button, Card, Badge, KV, PageHeader } from "@/components/ui";
 
 export default function RealityRewind() {
   return (
@@ -78,7 +77,7 @@ export default function RealityRewind() {
                 </div>
                 <div className="flex-1 h-0.5 bg-primary/20" />
                 <Badge tone="danger">Safety Tripped</Badge>
-              }
+              </div>
             </div>
 
             {/* Timeline Scrubber */}
@@ -92,8 +91,8 @@ export default function RealityRewind() {
                 <span>Playback Speed:</span>
                 <span className="font-mono">1.0x</span>
               </div>
-            }
-          }
+            </div>
+          </div>
         </Card>
 
         {/* Key Metrics */}
@@ -104,7 +103,7 @@ export default function RealityRewind() {
               <KV label="95th Percentile Latency" value="182ms" sub="+82ms over budget" />
               <KV label="Control Loop Jitter" value="28ms" sub="Nominal: <15ms" />
               <KV label="Safety Event Lag" value="92ms" sub="Within tolerance" />
-            }
+            </div>
 
             <div className="space-y-4">
               <div className="flex items-center gap-3">
@@ -112,27 +111,27 @@ export default function RealityRewind() {
                 <div className="space-y-1">
                   <p className="font-medium text-muted">Timeline Confidence</p>
                   <p className="text-sm font-mono text-danger">68%</p>
-                }
+                </div>
               </div>
               <div className="w-full bg-primary/10 rounded-full h-2.5 overflow-hidden">
-                <div className="bg-danger h-full w-68 transition-all duration-500" role="progressbar" aria-valuenow="68" aria-valuemin="0" aria-valuemax="100" />
-              }
-            }
-          }
+                <div className="bg-danger h-full w-[68%] transition-all duration-500" role="progressbar" aria-valuenow={68} aria-valuemin={0} aria-valuemax={100} />
+              </div>
+            </div>
+          </div>
         </Card>
-      }
+      </div>
 
       {/* Footer Actions */}
       <div className="mt-12 pt-8 border-t border-white/10">
         <div className="flex flex-wrap justify-end gap-4">
-          <Button variant="outline" onClick={() => alert('Export timeline')}>
+          <Button variant="outline" onClick={() => alert("Export timeline")}>
             Export Timeline (JSON)
           </Button>
-          <Button variant="primary" onClick={() => alert('Run temporal analysis')}>
+          <Button variant="primary" onClick={() => alert("Run temporal analysis")}>
             Run Temporal Analysis
-          }
-        }
-      }
-    }
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

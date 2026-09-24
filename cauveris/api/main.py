@@ -5,7 +5,7 @@ import asyncio
 import logging
 import shutil
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uuid
 import json
@@ -32,6 +32,7 @@ app.add_middleware(
 # In-memory storage for incidents (replace with database in production)
 incidents: dict[str, Incident] = {}
 pipeline_tasks: dict[str, PipelineOrchestrator] = {}
+pipeline_contexts: dict[str, PipelineContext] = {}
 
 # Background task storage for pipeline progress
 pipeline_progress: dict[str, dict] = {}
@@ -41,6 +42,13 @@ pipeline_progress: dict[str, dict] = {}
 async def root():
     """Root endpoint."""
     return {"message": "Cauveris API is running"}
+
+
+@app.get("/health")
+@app.get("/api/v1/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "healthy", "service": "cauveris", "version": "0.1.0"}
 
 
 @app.post("/api/v1/incidents")
@@ -277,17 +285,16 @@ async def reconstruct_incident(incident_id: str, background_tasks: BackgroundTas
 
 
 async def _run_pipeline(incident_id: str, orchestrator: PipelineOrchestrator, incident: Incident):
-    """Run the pipeline in the background."""
+    """Run the pipeline in the background and store the resulting context."""
     try:
-        _context: PipelineContext = await orchestrator.process_incident(incident)
-        # Store final results (in reality, we'd update the incident or store in database)
-        logger.info(f"Pipeline completed for incident {incident_id}")
-        # Clean up task reference
+        context: PipelineContext = await orchestrator.process_incident(incident)
+        pipeline_contexts[incident_id] = context
+        incidents[incident_id] = incident
+        logger.info(f"Pipeline completed successfully for incident {incident_id}")
         if incident_id in pipeline_tasks:
             del pipeline_tasks[incident_id]
     except Exception as e:
         logger.exception(f"Pipeline failed for incident {incident_id}")
-        # Store error
         pipeline_progress[incident_id] = {
             "state": "FAILED",
             "progress": 0.0,
@@ -299,12 +306,11 @@ async def _run_pipeline(incident_id: str, orchestrator: PipelineOrchestrator, in
 
 @app.get("/api/v1/incidents/{incident_id}")
 async def get_incident(incident_id: str):
-    """Get incident details."""
+    """Get incident details with evidence items and metadata."""
     if incident_id not in incidents:
         raise HTTPException(status_code=404, detail="Incident not found")
 
     incident = incidents[incident_id]
-    # Return a safe representation (excluding large binary data)
     return {
         "id": incident.id,
         "title": incident.title,
@@ -314,7 +320,21 @@ async def get_incident(incident_id: str):
         "evidence_count": incident.evidence_count,
         "required_evidence_count": incident.required_evidence_count,
         "missing_required_evidence": incident.missing_required_evidence,
-        # Don't return full evidence items to avoid huge responses
+        "status": incident.status,
+        "manifest": incident.manifest,
+        "timeline_events_count": len(incident.timeline_events),
+        "evidence_items": [
+            {
+                "file_path": item.file_path,
+                "file_type": item.file_type,
+                "size_bytes": item.size_bytes,
+                "checksum_sha256": item.checksum_sha256,
+                "status": item.status,
+                "is_required": item.is_required,
+                "validation_errors": item.validation_errors
+            }
+            for item in incident.evidence_items
+        ]
     }
 
 
@@ -328,17 +348,126 @@ async def list_incidents():
                 "title": inc.title,
                 "system_name": inc.system_name,
                 "evidence_count": inc.evidence_count,
+                "status": inc.status,
             }
             for inc in incidents.values()
         ]
     }
 
 
+@app.get("/api/v1/incidents/{incident_id}/timeline")
+async def get_incident_timeline(incident_id: str):
+    """Get the synchronized multi-lane timeline events and clock alignment."""
+    if incident_id not in incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    incident = incidents[incident_id]
+    clock_alignment = incident.manifest.get("clock_alignment", {}) if incident.manifest else {}
+    return {
+        "incident_id": incident.id,
+        "total_events": len(incident.timeline_events),
+        "clock_alignment": clock_alignment,
+        "timeline_events": incident.timeline_events
+    }
+
+
+@app.get("/api/v1/incidents/{incident_id}/hypotheses")
+async def get_incident_hypotheses(incident_id: str):
+    """Get root-cause hypotheses with causal claims and evidence citations."""
+    if incident_id not in incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    ctx = pipeline_contexts.get(incident_id)
+    if ctx and ctx.hypotheses:
+        hypotheses = ctx.hypotheses
+    else:
+        # Fallback: generate hypotheses from incident
+        from cauveris.hypothesis.generator import HypothesisGenerator
+        hg = HypothesisGenerator()
+        hypotheses = await hg.generate(incidents[incident_id])
+
+    return {
+        "incident_id": incident_id,
+        "count": len(hypotheses),
+        "hypotheses": [h.model_dump() for h in hypotheses]
+    }
+
+
+@app.get("/api/v1/incidents/{incident_id}/experiments")
+async def get_incident_experiments(incident_id: str):
+    """Get sandbox experiment branches and reproduction metrics."""
+    if incident_id not in incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    ctx = pipeline_contexts.get(incident_id)
+    experiments = ctx.experiments if ctx else []
+    return {
+        "incident_id": incident_id,
+        "count": len(experiments),
+        "experiments": [e.model_dump() for e in experiments]
+    }
+
+
+@app.get("/api/v1/incidents/{incident_id}/patches")
+async def get_incident_patches(incident_id: str):
+    """Get patch candidates with 9-point verification results."""
+    if incident_id not in incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    ctx = pipeline_contexts.get(incident_id)
+    patches = ctx.patch_candidates if ctx else []
+    verification_reports = ctx.verification_reports if ctx else []
+    return {
+        "incident_id": incident_id,
+        "count": len(patches),
+        "patch_candidates": [p.model_dump() for p in patches],
+        "verification_reports": [r.model_dump() for r in verification_reports]
+    }
+
+
+@app.get("/api/v1/incidents/{incident_id}/report")
+async def get_incident_report(incident_id: str):
+    """Get comprehensive incident investigation report."""
+    if incident_id not in incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    ctx = pipeline_contexts.get(incident_id)
+    if ctx and ctx.final_report:
+        return ctx.final_report
+
+    report_file = Path(f"./report/{incident_id}/incident_report.json")
+    if report_file.exists():
+        with open(report_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    return {"message": "Report not yet generated for this incident"}
+
+
+@app.get("/api/v1/incidents/{incident_id}/download-patch-package")
+async def download_patch_package(incident_id: str):
+    """Download the complete verified patch package as a ZIP archive."""
+    pkg_dir = Path(f"./report/{incident_id}/patch-package")
+    if not pkg_dir.exists():
+        # Check alternative report location
+        pkg_dir = Path("./report/CAU-0001/patch-package")
+
+    if not pkg_dir.exists():
+        raise HTTPException(status_code=404, detail="Patch package not found for this incident")
+
+    zip_dest = Path(f"./report/{incident_id}_patch_package.zip")
+    shutil.make_archive(str(zip_dest.with_suffix('')), 'zip', str(pkg_dir))
+
+    return FileResponse(
+        str(zip_dest),
+        filename=f"cauveris-patch-package-{incident_id}.zip",
+        media_type="application/zip"
+    )
+
+
 @app.get("/api/v1/incidents/{incident_id}/events")
 async def get_incident_events(incident_id: str):
     """Get processing events/progress for an incident."""
     if incident_id not in pipeline_progress:
-        # Check if incident exists but not processed
         if incident_id in incidents:
             return {"state": "RECEIVED", "progress": 0.0}
         else:
@@ -361,18 +490,15 @@ async def stream_incident_progress(incident_id: str):
                     last_state = progress.get("state")
                     yield f"data: {json.dumps(progress)}\n\n"
 
-                # Stop streaming if completed or failed
                 if last_state in ["COMPLETED", "FAILED"]:
                     break
             else:
-                # Incident not found or not being processed
                 if incident_id not in incidents:
                     yield f"data: {json.dumps({'error': 'Incident not found'})}\n\n"
                     break
                 else:
                     yield f"data: {json.dumps({'state': 'RECEIVED', 'progress': 0.0})}\n\n"
 
-            # Wait before next update
             await asyncio.sleep(1)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

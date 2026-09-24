@@ -1,7 +1,6 @@
 "use client";
 
-import { Button } from '@/components/ui';
-import { Card, Stat, Badge, KV, PageHeader } from '@/components/ui';
+import { Button, Card, Badge, PageHeader } from "@/components/ui";
 
 export default function VictoryReplay() {
   return (
@@ -22,7 +21,7 @@ export default function VictoryReplay() {
             <div className="aspect-video w-full bg-[radial-gradient(at_top_left,_var(--color-surface-2)_0%,_var(--color-background)_60%)] rounded-2xl overflow-hidden relative">
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="space-y-4 text-center">
-                  <div className="w-24 h-24 bg-danger/10 rounded-full flex items-center justify-center mb-4 ring-2 ring-danger/20" />
+                  <div className="w-24 h-24 bg-danger/10 rounded-full flex items-center justify-center mb-4 ring-2 ring-danger/20 mx-auto" />
                   <p className="text-lg font-medium text-white">
                     Robot stops due to emergency stop
                   </p>
@@ -36,7 +35,7 @@ export default function VictoryReplay() {
             <div className="aspect-video w-full bg-[radial-gradient(at_top_left,_var(--color-surface-2)_0%,_var(--color-background)_60%)] rounded-2xl overflow-hidden relative">
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="space-y-4 text-center">
-                  <div className="w-24 h-24 bg-success/10 rounded-full flex items-center justify-center mb-4 ring-2 ring-success/20" />
+                  <div className="w-24 h-24 bg-success/10 rounded-full flex items-center justify-center mb-4 ring-2 ring-success/20 mx-auto" />
                   <p className="text-lg font-medium text-white">
                     Robot completes route successfully
                   </p>
@@ -66,7 +65,7 @@ export default function VictoryReplay() {
                   </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-white/5">
                 <tr>
                   <td className="px-6 py-4 text-sm font-medium text-muted">
                     Failure Count
@@ -110,7 +109,7 @@ export default function VictoryReplay() {
               </tbody>
             </table>
           </div>
-        </div>
+        </Card>
 
         {/* Trial Progress & Rollback */}
         <div className="grid gap-6 lg:grid-cols-2">
@@ -143,27 +142,27 @@ export default function VictoryReplay() {
                 Rollback to pre-patch state successfully restores original failure behavior for validation.
               </p>
               <div className="mt-4 flex justify-end">
-                <Button variant="danger" onClick={() => alert('Test rollback')}>
+                <Button variant="danger" onClick={() => alert("Test rollback")}>
                   Test Rollback
                 </Button>
               </div>
             </div>
           </Card>
         </div>
-      }
+      </div>
 
       {/* Footer */}
       <footer className="mt-12 pt-8 border-t border-white/10">
         <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-4 text-xs text-muted">
           <div className="flex items-center gap-2">
             <svg className="w-4 h-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3M6 16l6-6 6 6"></path>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3M6 16l6-6 6 6" />
             </svg>
             <span>Powered by Nebius x NVIDIA Global AI Hackathon</span>
           </div>
           <div className="flex items-center gap-2">
             <svg className="w-4 h-4 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3 3 0 014.438 0 3.42 3.42 0 001.946.806 3 3 0 001.946.806V16a3 3 0 01-3 3H6a3 3 0 01-3 3V4.697z"></path>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3 3 0 014.438 0 3.42 3.42 0 001.946.806 3 3 0 001.946.806V16a3 3 0 01-3 3H6a3 3 0 01-3 3V4.697z" />
             </svg>
             <span>Version 1.0.0 • Build 2026.09.20</span>
           </div>

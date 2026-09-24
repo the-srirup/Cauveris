@@ -1,7 +1,6 @@
 "use client";
 
-import { Button } from '@/components/ui';
-import { Card, Stat, Badge, KV, PageHeader, Progress } from '@/components/ui';
+import { Button, Card, Stat, Badge, KV, PageHeader } from "@/components/ui";
 
 export default function GhostLab() {
   return (
@@ -28,13 +27,13 @@ export default function GhostLab() {
                   <Stat label="Trials Run" value="10" sub="/ 10 planned" trend="flat" />
                 </div>
                 <div>
-                  <Stat label="Reproduction Rate" value="80%" sub="Trials with failure" trend="danger" />
+                  <Stat label="Reproduction Rate" value="80%" sub="Trials with failure" trend="up" />
                 </div>
                 <div>
                   <KV label="Failure Oracle" value="Safety stop triggered" sub="Emergency halt" />
                 </div>
-              }
-            }
+              </div>
+            </div>
           </Card>
 
           {/* Parallel Trajectories */}
@@ -42,7 +41,7 @@ export default function GhostLab() {
             <div className="aspect-video w-full bg-[radial-gradient(at_top_left,_var(--color-surface-2)_0%,_var(--color-background)_60%)] rounded-2xl overflow-hidden relative">
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="space-y-4 text-center">
-                  <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mb-4 ring-2 ring-primary/20" />
+                  <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mb-4 ring-2 ring-primary/20 mx-auto" />
                   <p className="text-lg font-medium text-white">
                     Counterfactual Simulation
                   </p>
@@ -50,9 +49,9 @@ export default function GhostLab() {
                     10 parallel trajectories executing H1 intervention
                   </p>
                 </div>
-              }
+              </div>
             </div>
-          </div>
+          </Card>
         </div>
 
         {/* Right: Experiment Details & Outputs */}
@@ -62,7 +61,7 @@ export default function GhostLab() {
             <div className="space-y-4">
               <div className="flex justify-between items-start mb-2">
                 <h3 className="font-semibold text-primary">Intervention:</h3>
-                <span className="font-mono text-primary">Reduce batching window from 200ms to 100ms</span>
+                <span className="font-mono text-primary text-sm">Reduce batching window from 200ms to 100ms</span>
               </div>
               <div className="flex justify-between items-start mb-2">
                 <h3 className="font-semibold text-muted">Status:</h3>
@@ -92,15 +91,15 @@ export default function GhostLab() {
             <div className="space-y-4">
               <div className="flex justify-between items-start mb-2">
                 <span className="text-sm font-medium text-muted">Logs Artifact:</span>
-                <span className="font-mono text-muted">logs/exp-h1-system.log</span>
+                <span className="font-mono text-muted text-xs">logs/exp-h1-system.log</span>
               </div>
               <div className="flex justify-between items-start mb-2">
                 <span className="text-sm font-medium text-muted">Metrics Artifact:</span>
-                <span className="font-mono text-muted">metrics/exp-h1-latency.csv</span>
+                <span className="font-mono text-muted text-xs">metrics/exp-h1-latency.csv</span>
               </div>
               <div className="flex justify-between items-start mb-2">
                 <span className="text-sm font-medium text-muted">Replay Artifact:</span>
-                <span className="font-mono text-muted">recordings/exp-h1-replay.mcap</span>
+                <span className="font-mono text-muted text-xs">recordings/exp-h1-replay.mcap</span>
               </div>
             </div>
             <div className="mt-6">
@@ -125,16 +124,16 @@ export default function GhostLab() {
               </div>
             </div>
           </Card>
-        }
+        </div>
       </div>
 
       {/* Footer */}
       <footer className="mt-12 pt-8 border-t border-white/10">
         <div className="flex flex-wrap justify-end gap-4">
-          <Button variant="outline" onClick={() => alert('Export experiment data')}>
+          <Button variant="outline" onClick={() => alert("Export experiment data")}>
             Export Experiment Data
           </Button>
-          <Button variant="primary" onClick={() => alert('Run next experiment')}>
+          <Button variant="primary" onClick={() => alert("Run next experiment")}>
             Run Next Experiment
           </Button>
         </div>
