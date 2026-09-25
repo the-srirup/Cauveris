@@ -1,27 +1,38 @@
 {
   "traceID": "0af7651916cd43dd8448eb211c80819c",
+  "traceId": "0af7651916cd43dd8448eb211c80819c",
   "spans": [
     {
+      "traceID": "0af7651916cd43dd8448eb211c80819c",
       "traceId": "0af7651916cd43dd8448eb211c80819c",
+      "spanID": "023e1fd95803323b",
       "spanId": "023e1fd95803323b",
       "name": "inference_request",
-      "timestamp": 1726823400000000000,
-      "duration": 150000000,
+      "timestamp": 1789900190100000000,
+      "duration": 155000000,
       "attributes": {
         "http.method": "POST",
         "http.url": "/v1/models/objdet:predict",
-        "http.status_code": 200
+        "http.status_code": 200,
+        "batch.window_ms": 200,
+        "queue.wait_ms": 115
       }
     },
     {
+      "traceID": "0af7651916cd43dd8448eb211c80819c",
       "traceId": "0af7651916cd43dd8448eb211c80819c",
+      "spanID": "0456a2b3c4d5e6f7",
       "spanId": "0456a2b3c4d5e6f7",
       "name": "robot_control_loop",
-      "timestamp": 1726823400200000000,
+      "timestamp": 1789900190260000000,
       "duration": 50000000,
       "status": {
         "code": 2,
-        "message": "Control deadline missed"
+        "message": "Control deadline missed: detection latency exceeded freshness budget"
+      },
+      "attributes": {
+        "freshness_budget_ms": 120,
+        "observed_latency_ms": 155
       }
     }
   ]

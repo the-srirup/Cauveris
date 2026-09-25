@@ -1,4 +1,11 @@
 robot_name: warehouse-amr-01
-detection_freshness_budget_ms: 120
-control_loop_period_ms: 50
-safety_watchdog_timeout_ms: 100
+safety:
+  detection_freshness_budget_ms: 120
+  control_loop_deadline_ms: 100
+  transform_timeout_ms: 100
+  emergency_stop_on_stale_data: true
+  emergency_stop_on_transform_fail: true
+perception:
+  detection_topics:
+    - object_detections
+  required_detection_frequency_hz: 10

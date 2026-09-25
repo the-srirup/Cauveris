@@ -3,12 +3,18 @@
   "timestamp": "2026-09-20T08:00:00Z",
   "service": "inference-service",
   "image": "inference-service:v42",
-  "changes": {
-    "config": {
-      "dynamic_batching.window_ms": {
-        "from": 100,
-        "to": 200
-      }
+  "changes": [
+    {
+      "file": "config/inference.yaml",
+      "change": "batching_window_ms increased from 100 to 200",
+      "old_value": 100,
+      "new_value": 200
+    }
+  ],
+  "config": {
+    "dynamic_batching.window_ms": {
+      "from": 100,
+      "to": 200
     }
   },
   "author": "ml-team@example.com"

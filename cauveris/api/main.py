@@ -10,11 +10,18 @@ from fastapi.middleware.cors import CORSMiddleware
 import uuid
 import json
 from pathlib import Path
+from pydantic import BaseModel
 from cauveris.schemas.incident import Incident, EvidenceItem
 from cauveris.datasets.golden_incident import GoldenIncidentGenerator
 from cauveris.state_machine.orchestrator import PipelineOrchestrator, PipelineContext
 from cauveris.ingestion.controller import IngestionController, extract_zip_safely
 from cauveris.security import scan_for_secrets, compute_file_hash
+from cauveris.patch.generator import PatchGenerator
+
+class ApplyPatchRequest(BaseModel):
+    target_directory: str = "."
+    dry_run: bool = False
+    rollback: bool = False
 
 logger = logging.getLogger(__name__)
 
@@ -462,6 +469,124 @@ async def download_patch_package(incident_id: str):
         filename=f"cauveris-patch-package-{incident_id}.zip",
         media_type="application/zip"
     )
+
+
+@app.get("/api/v1/incidents/{incident_id}/export-patch")
+async def export_incident_patch(incident_id: str, format: str = "installer"):
+    """
+    Export the verified patch for direct import into the infected space.
+    Formats:
+      - 'installer' (default): zero-dependency self-contained executable apply_patch.py
+      - 'patch': standard universal unified diff fix.patch
+      - 'zip': complete verified patch package archive
+    """
+    if incident_id not in incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    pkg_dir = Path(f"./report/{incident_id}/patch-package")
+    if not pkg_dir.exists():
+        pkg_dir = Path("./report/CAU-0001/patch-package")
+
+    # If patch package doesn't exist yet, generate from pipeline context or golden patch
+    if not pkg_dir.exists():
+        ctx = pipeline_contexts.get(incident_id)
+        patches = ctx.patch_candidates if ctx else []
+        verified_patches = [p for p in patches if p.verified]
+        if verified_patches:
+            patch_gen = PatchGenerator()
+            patch_gen.export_patch(verified_patches[0], pkg_dir)
+        else:
+            raise HTTPException(status_code=404, detail="No verified patch candidate available to export")
+
+    if format.lower() in ["installer", "python", "script"]:
+        installer_file = pkg_dir / "apply_patch.py"
+        if not installer_file.exists():
+            ctx = pipeline_contexts.get(incident_id)
+            if ctx and ctx.patch_candidates:
+                PatchGenerator().export_patch(ctx.patch_candidates[0], pkg_dir)
+        if not installer_file.exists():
+            raise HTTPException(status_code=404, detail="Installer script not found")
+        return FileResponse(
+            str(installer_file),
+            filename=f"apply_patch_{incident_id}.py",
+            media_type="text/x-python"
+        )
+    elif format.lower() in ["patch", "diff"]:
+        patch_file = pkg_dir / "fix.patch"
+        if not patch_file.exists():
+            raise HTTPException(status_code=404, detail="fix.patch not found")
+        return FileResponse(
+            str(patch_file),
+            filename=f"cauveris-fix-{incident_id}.patch",
+            media_type="text/x-diff"
+        )
+    else:
+        # Default or zip format
+        zip_dest = Path(f"./report/{incident_id}_patch_package.zip")
+        shutil.make_archive(str(zip_dest.with_suffix('')), 'zip', str(pkg_dir))
+        return FileResponse(
+            str(zip_dest),
+            filename=f"cauveris-patch-package-{incident_id}.zip",
+            media_type="application/zip"
+        )
+
+
+@app.post("/api/v1/incidents/{incident_id}/apply-patch")
+async def apply_patch_to_target(incident_id: str, request: ApplyPatchRequest):
+    """
+    Directly apply or rollback the verified patch on an infected target space.
+    """
+    if incident_id not in incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    target_path = Path(request.target_directory).resolve()
+    if not target_path.exists():
+        raise HTTPException(status_code=400, detail=f"Target directory '{request.target_directory}' does not exist")
+
+    pkg_dir = Path(f"./report/{incident_id}/patch-package")
+    if not pkg_dir.exists():
+        pkg_dir = Path("./report/CAU-0001/patch-package")
+
+    installer_file = pkg_dir / "apply_patch.py"
+    if not installer_file.exists():
+        ctx = pipeline_contexts.get(incident_id)
+        if ctx and ctx.patch_candidates:
+            PatchGenerator().export_patch(ctx.patch_candidates[0], pkg_dir)
+            installer_file = pkg_dir / "apply_patch.py"
+
+    if not installer_file.exists():
+        raise HTTPException(status_code=404, detail="No verified patch installer found for this incident")
+
+    # Execute installer script within target space
+    scope: dict = {}
+    with open(installer_file, "r", encoding="utf-8") as f:
+        code = f.read()
+    exec(code, scope)
+
+    if request.rollback:
+        rollback_fn = scope.get("rollback")
+        if not callable(rollback_fn):
+            raise HTTPException(status_code=500, detail="Rollback function not found in installer")
+        success = rollback_fn(target_dir=str(target_path))
+        return {
+            "incident_id": incident_id,
+            "operation": "rollback",
+            "target_directory": str(target_path),
+            "success": success,
+            "status": scope.get("status", lambda x: "UNKNOWN")(str(target_path))
+        }
+    else:
+        apply_fn = scope.get("apply")
+        if not callable(apply_fn):
+            raise HTTPException(status_code=500, detail="Apply function not found in installer")
+        success = apply_fn(target_dir=str(target_path), dry_run=request.dry_run)
+        return {
+            "incident_id": incident_id,
+            "operation": "dry_run" if request.dry_run else "apply",
+            "target_directory": str(target_path),
+            "success": success,
+            "status": scope.get("status", lambda x: "UNKNOWN")(str(target_path))
+        }
 
 
 @app.get("/api/v1/incidents/{incident_id}/events")

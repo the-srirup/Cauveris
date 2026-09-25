@@ -6,8 +6,8 @@
 **Observation**: Robot came to a sudden halt in aisle B after completing a pick operation. No obstacles in path. Safety indicator showed emergency stop activated.
 
 **Preliminary Analysis**:
-- Checked robot logs: detection listener received stale object data
-- Network latency appeared normal
+- Checked robot logs: detection listener received stale object data (latency > 150ms)
+- Network latency appeared normal (12-18ms)
 - Inference service metrics showed increased queue depth
 - Correlated with deployment v42 rolled out 2 hours prior
 

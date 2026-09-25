@@ -192,13 +192,21 @@ class ReportGenerator:
 
         # Write fix.patch
         fix_path = package_dir / "fix.patch"
-        with open(fix_path, 'w') as f:
+        with open(fix_path, 'w', encoding='utf-8') as f:
             f.write(patch.unified_diff)
+
+        # Write standalone self-applying installer apply_patch.py
+        from cauveris.patch.generator import PatchGenerator
+        patch_gen = PatchGenerator()
+        installer_code = patch_gen.generate_standalone_installer(patch)
+        installer_path = package_dir / "apply_patch.py"
+        with open(installer_path, 'w', encoding='utf-8') as f:
+            f.write(installer_code)
 
         # Write regression_test.patch (if available)
         if patch.regression_test_patch:
             regression_test_path = package_dir / "regression_test.patch"
-            with open(regression_test_path, 'w') as f:
+            with open(regression_test_path, 'w', encoding='utf-8') as f:
                 f.write(patch.regression_test_patch)
 
         # Write verification.json

@@ -2,6 +2,6 @@ model_name: objdet
 version: v42
 dynamic_batching:
   enabled: true
-  max_batch_size: 32
-  batching_window_ms: 200  # Increased in v42
+  max_batch_size: 8
+  batching_window_ms: 200  # Increased from 100 in v42
   timeout_ms: 500
