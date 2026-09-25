@@ -114,10 +114,7 @@ class AnomalyPatternRecognizer:
                 anomaly_type=AnomalyType.CAUSALITY_REVERSAL,
                 severity=min(1.0, v.confidence),
                 affected_events=[v.cause_id, v.effect_id],
-                timestamp_range=(
-                    v.cause.timestamp_ns / 1e9 if hasattr(v, 'cause_time') else 0,
-                    v.effect.timestamp_ns / 1e9 if hasattr(v, 'effect_time') else 0,
-                ),
+                timestamp_range=(0, 0),  # Will be computed from evidence if needed
                 confidence=v.confidence,
                 explanation=v.description,
                 evidence_ids=[v.cause_id, v.effect_id],

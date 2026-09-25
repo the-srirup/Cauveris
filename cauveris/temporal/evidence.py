@@ -461,9 +461,10 @@ class RawSignalExtractor:
             return {}
 
         content = path.read_text(encoding="utf-8", errors="ignore")
-        signals = {
+        monotonic_brackets: List[Tuple[int, float]] = []
+        signals: Dict[str, Any] = {
             "ntp_offset_sec": None,
-            "monotonic_brackets": [],  # (wall_ns, monotonic_sec)
+            "monotonic_brackets": monotonic_brackets,
             "second_precision_samples": 0,
             "mixed_domain_entries": 0,
         }
@@ -498,7 +499,11 @@ class RawSignalExtractor:
         if not metrics_dir.exists():
             return {}
 
-        signals = {"duplicate_columns": [], "column_precision": {}}
+        duplicate_columns: List[Dict[str, Any]] = []
+        signals: Dict[str, Any] = {
+            "duplicate_columns": duplicate_columns,
+            "column_precision": {}
+        }
 
         for csv_path in metrics_dir.glob("*.csv"):
             try:
@@ -550,13 +555,14 @@ class RawSignalExtractor:
         if not logs_dir.exists():
             return {}
 
-        signals = {"files": {}}
+        signals: Dict[str, Any] = {"files": {}}
 
         for jsonl_path in logs_dir.glob("*.jsonl"):
-            file_signals = {
+            detail: List[Dict[str, Any]] = []
+            file_signals: Dict[str, Any] = {
                 "line_count": 0,
                 "inversions": 0,
-                "detail": [],
+                "detail": detail,
             }
             prev_ts = None
             with open(jsonl_path, "r", encoding="utf-8") as f:
