@@ -32,6 +32,7 @@ class Incident(BaseEntity):
     manifest: Dict[str, Any] = Field(default_factory=dict, description="Parsed manifest.yaml")
     status: StatusLabel = Field(default=StatusLabel.OBSERVED, description="Overall incident processing status")
     timeline_events: List[Dict[str, Any]] = Field(default_factory=list, description="Normalized timeline events")
+    temporal_analysis: Optional[Dict[str, Any]] = Field(default=None, description="Temporal causality analysis results")
 
     # Computed properties
     evidence_count: int = Field(0, description="Number of evidence items")

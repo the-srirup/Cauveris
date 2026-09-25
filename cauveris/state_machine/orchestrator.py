@@ -17,6 +17,7 @@ from cauveris.simulation.runner import SimulationRunner
 from cauveris.patch.generator import PatchGenerator
 from cauveris.verifier.engine import VerificationEngine
 from cauveris.report.generator import ReportGenerator
+from cauveris.temporal.integration import TemporalAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class PipelineState(Enum):
     VALIDATING = auto()        # Validating evidence
     NORMALIZING = auto()       # Normalizing timestamps and evidence
     MAPPING = auto()           # Mapping evidence to source and runtime
+    TEMPORAL_ANALYSIS = auto() # Analyzing temporal causality
     HYPOTHESIZING = auto()     # Generating root-cause hypotheses
     PLANNING = auto()          # Planning experiments
     RUNNING_BRANCHES = auto()  # Running experiment branches in sandboxes
@@ -48,6 +50,7 @@ class PipelineContext:
     validated_incident: Optional[Incident] = None
     # timeline_events is now stored directly on the Incident object
     timeline_events: Optional[List[Dict[str, Any]]] = None
+    temporal_analysis: Optional[Dict[str, Any]] = None
     hypotheses: Optional[list] = None
     experiments: Optional[list] = None
     patch_candidates: Optional[list] = None
@@ -65,6 +68,7 @@ class PipelineOrchestrator:
         self.settings = get_settings()
         self.ingestion = IngestionController()
         self.timeline_builder = TimelineBuilder()
+        self.temporal_analyzer = TemporalAnalyzer()
         self.hypothesis_generator = HypothesisGenerator()
         self.sandbox_controller = SandboxController()
         self.simulation_runner = SimulationRunner()
@@ -101,6 +105,12 @@ class PipelineOrchestrator:
 
             context.validated_incident = await self.timeline_builder.build(context.incident)
             await self._transition(context, PipelineState.NORMALIZING, 0.2)
+
+            # Temporal causality analysis right after timeline construction
+            context.temporal_analysis = self.temporal_analyzer.analyze_incident(context.validated_incident)
+            # Attach temporal analysis to incident for report embedding
+            context.validated_incident.temporal_analysis = context.temporal_analysis
+            await self._transition(context, PipelineState.TEMPORAL_ANALYSIS, 0.25)
 
             context.hypotheses = await self.hypothesis_generator.generate(context.validated_incident)
             await self._transition(context, PipelineState.HYPOTHESIZING, 0.3)

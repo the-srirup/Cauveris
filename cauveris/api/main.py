@@ -378,6 +378,31 @@ async def get_incident_timeline(incident_id: str):
     }
 
 
+@app.get("/api/v1/incidents/{incident_id}/temporal-analysis")
+async def get_incident_temporal_analysis(incident_id: str):
+    """Get temporal causality analysis for an incident."""
+    if incident_id not in incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    ctx = pipeline_contexts.get(incident_id)
+    if ctx is None:
+        # Incident not yet processed through pipeline
+        from cauveris.temporal.integration import TemporalAnalyzer
+        analyzer = TemporalAnalyzer()
+        result = analyzer.analyze_incident(incidents[incident_id])
+    elif ctx.temporal_analysis:
+        result = ctx.temporal_analysis
+    else:
+        from cauveris.temporal.integration import TemporalAnalyzer
+        analyzer = TemporalAnalyzer()
+        result = analyzer.analyze_incident(incidents[incident_id])
+
+    return {
+        "incident_id": incident_id,
+        "temporal_analysis": result,
+    }
+
+
 @app.get("/api/v1/incidents/{incident_id}/hypotheses")
 async def get_incident_hypotheses(incident_id: str):
     """Get root-cause hypotheses with causal claims and evidence citations."""
@@ -627,6 +652,33 @@ async def stream_incident_progress(incident_id: str):
             await asyncio.sleep(1)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/api/v1/incidents/{incident_id}/temporal-visualization")
+async def get_incident_temporal_visualization(incident_id: str):
+    """
+    Get visualization data for temporal anomalies.
+
+    Returns data structured for an interactive timeline that shows:
+    * Events positioned by relative time
+    * Causal edges between events
+    * Anomaly markers and time loop cycles
+    * Untrusted time windows
+    """
+    if incident_id not in incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    ctx = pipeline_contexts.get(incident_id)
+    if ctx and ctx.temporal_analysis:
+        temporal_result = ctx.temporal_analysis
+    else:
+        from cauveris.temporal.integration import TemporalAnalyzer
+        analyzer = TemporalAnalyzer()
+        temporal_result = analyzer.analyze_incident(incidents[incident_id])
+
+    from cauveris.temporal.visualization import build_timeline_visualization_data
+
+    return build_timeline_visualization_data(temporal_result, incidents[incident_id].timeline_events)
 
 
 if __name__ == "__main__":

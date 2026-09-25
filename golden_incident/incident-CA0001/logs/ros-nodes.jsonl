@@ -1,0 +1,3 @@
+{"timestamp": "2026-09-20T10:29:50.210Z", "node": "detection_listener", "level": "INFO", "message": "Received detection message from cloud inference"}
+{"timestamp": "2026-09-20T10:29:50.260Z", "node": "navigation_controller", "level": "ERROR", "message": "Transform lookup failed: stale detection age 155ms exceeds freshness budget 120ms"}
+{"timestamp": "2026-09-20T10:29:50.270Z", "node": "safety_monitor", "level": "CRITICAL", "message": "Emergency stop triggered: control deadline missed due to stale perception data"}

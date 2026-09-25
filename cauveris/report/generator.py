@@ -61,6 +61,7 @@ class ReportGenerator:
                 "missing_required_evidence": incident.missing_required_evidence,
             },
             "timeline": getattr(incident, 'timeline_events', []),
+            "temporal_analysis": getattr(incident, 'temporal_analysis', None),
             "hypotheses": [self._hypothesis_to_dict(h) for h in hypotheses],
             "experiments": [self._experiment_to_dict(e) for e in experiments],
             "patch_candidates": [self._patch_to_dict(p) for p in patch_candidates],
