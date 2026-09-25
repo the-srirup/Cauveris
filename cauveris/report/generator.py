@@ -71,7 +71,7 @@ class ReportGenerator:
 
         # Write incident report
         report_path = report_dir / "incident_report.json"
-        with open(report_path, 'w') as f:
+        with open(report_path, 'w', encoding='utf-8') as f:
             json.dump(incident_report, f, indent=2, default=str)
 
         # Generate patch package if we have verified patches
@@ -211,7 +211,7 @@ class ReportGenerator:
 
         # Write verification.json
         verification_path = package_dir / "verification.json"
-        with open(verification_path, 'w') as f:
+        with open(verification_path, 'w', encoding='utf-8') as f:
             json.dump({
                 "patch_candidate_id": patch.candidate_id,
                 "applies_cleanly": patch.applied_cleanly,
@@ -377,7 +377,7 @@ A regression test has been included to prevent reversion.
 ## Rollback
 See rollback.sh for instructions to revert this change.
 """
-        with open(pr_path, 'w') as f:
+        with open(pr_path, 'w', encoding='utf-8') as f:
             f.write(pr_content)
 
         # Write reviewer checklist
@@ -411,7 +411,7 @@ See rollback.sh for instructions to revert this change.
 ## Rollback
 - [ ] Rollback procedure is documented and tested
 """
-        with open(checklist_path, 'w') as f:
+        with open(checklist_path, 'w', encoding='utf-8') as f:
             f.write(checklist_content)
 
         # Write rollback.sh
@@ -439,7 +439,7 @@ git apply --reverse {patch.candidate_id}.patch
 
 echo "Rollback complete. Please verify the system is back to its previous state."
 """
-        with open(rollback_path, 'w') as f:
+        with open(rollback_path, 'w', encoding='utf-8') as f:
             f.write(rollback_content)
         # Make it executable
         os.chmod(rollback_path, 0o755)
