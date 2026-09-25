@@ -21,11 +21,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from cauveris.temporal.evidence import ClockDomain, TimestampKind
+from cauveris.temporal.evidence import ClockDomain
 
 logger = logging.getLogger(__name__)
 
@@ -140,12 +139,6 @@ class ClockSkewAnalyzer:
     ) -> ClockAnalysisResult:
         result = ClockAnalysisResult()
         domains_data = manifest.get("domains", {})
-
-        mapping = {
-            ClockDomain.CLOUD: "REFERENCE",
-            ClockDomain.HOST: "SYNCHRONIZED",
-            ClockDomain.ROBOT: "SYNCHRONIZED",
-        }
 
         for domain_key, domain_data in domains_data.items():
             try:

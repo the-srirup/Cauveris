@@ -246,9 +246,6 @@ def _add_timeline_causal_hints(
     5. Within-lane temporal proximity → TEMPORAL_PROXIMITY
     6. Cross-lane temporal proximity at handoff boundaries → CROSS_DOMAIN_HANDOFF
     """
-    # Index by ID for fast lookup
-    by_id = {e.evidence_id: e for e in evidence}
-
     # 1. OTel trace order
     traces_by_trace_id: Dict[str, List[TemporalEvidence]] = defaultdict(list)
     for ev in evidence:

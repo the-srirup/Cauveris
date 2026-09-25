@@ -7,13 +7,12 @@ This test file validates the full pipeline:
 3. Run the TemporalAnalyzer
 4. Assert expected findings (detection freshness breach, co-temporal ambiguity)
 """
-import json
 import pytest
 from pathlib import Path
 
 from cauveris.datasets.golden_incident import GoldenIncidentGenerator
 from cauveris.timeline.builder import TimelineBuilder
-from cauveris.temporal import TemporalAnalyzer, TemporalAnalysisResult
+from cauveris.temporal import TemporalAnalyzer
 from cauveris.temporal.evidence import RawSignalExtractor, extract_from_timeline
 from cauveris.temporal.clock import ClockSkewAnalyzer
 

@@ -10,21 +10,19 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from cauveris.config import get_settings
-from cauveris.temporal.causality import CausalityViolation, CausalEdge, infer_causal_edges
-from cauveris.temporal.clock import ClockAnalysisResult, ClockSkewAnalyzer, ClockStatus
+from cauveris.temporal.causality import CausalityViolation, infer_causal_edges
+from cauveris.temporal.clock import ClockAnalysisResult, ClockSkewAnalyzer
 from cauveris.temporal.evidence import (
-    ClockDomain,
     RawSignalExtractor,
     TemporalEvidence,
     extract_from_timeline,
 )
-from cauveris.temporal.loops import TimeLoop, TimeLoopDetector
+from cauveris.temporal.loops import TimeLoopDetector
 from cauveris.temporal.pattern import (
     AnomalyPatternRecognizer,
-    AnomalyType,
     TemporalAnomaly,
 )
 
@@ -159,15 +157,8 @@ class TemporalAnalyzer:
         clock_alignment = manifest.get("clock_alignment", {})
         clock_result = self.clock_analyzer.analyze(evidence, raw_signals, clock_alignment)
 
-        # Calculate total skew for confidence
-        max_skew = max(
-            (m.offset_ns for m in clock_result.domains.values()),
-            default=0,
-        )
-        clock_skew_ns = max_skew
-
         # Causality violations
-        causal_edges = infer_causal_edges(evidence, raw_signals, self.freshness_budget_ms)
+        infer_causal_edges(evidence, raw_signals, self.freshness_budget_ms)
 
         # Build edge map for violation detector
         violations: List[CausalityViolation] = []

@@ -15,8 +15,8 @@ break the loop, giving a confidence score.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from dataclasses import dataclass
+from typing import Any, Dict, List, Set
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class TimeLoopDetector:
                 if loop.confidence >= self.confidence_threshold:
                     self.loops.append(loop)
 
-        return sorted(self.loops, key=lambda l: l.confidence, reverse=True)
+        return sorted(self.loops, key=lambda t: t.confidence, reverse=True)
 
     # ------------------------------------------------------------------ #
     # Iterative Tarjan's algorithm

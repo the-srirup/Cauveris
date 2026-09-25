@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Tuple
 
 from cauveris.temporal.causality import CausalityViolation
 
@@ -242,8 +242,7 @@ class AnomalyPatternRecognizer:
         mixed = sys_log.get("mixed_domain_entries", 0)
 
         if brackets and mixed > 0:
-            # Extract timestamps from brackets for precision loss check
-            precision_ns = 1_000_000_000  # seconds -> nanoseconds loss
+            # System log mixes wall-clock and kernel monotonic timestamps
             self.anomalies.append(TemporalAnomaly(
                 anomaly_type=AnomalyType.CLOCK_DOMAIN_MIXING,
                 severity=0.5,
