@@ -175,8 +175,7 @@ class HolographicCompressor:
         cumsum_var = np.cumsum(var_explained)
 
         # Find number of components for threshold
-        n_components = np.searchsorted(cumsum_var, self.config.pca_variance_threshold) + 1
-        n_components = min(n_components, 8)
+        n_components: int = int(min(int(np.searchsorted(cumsum_var, self.config.pca_variance_threshold)) + 1, 8))
 
         # Principal directions in HEU space (rows of U[:, :n_components] weighted by singular values)
         # Select HEUs that best span the principal subspace
@@ -185,7 +184,7 @@ class HolographicCompressor:
         heu_scores = np.sum(principal_scores ** 2, axis=1)
 
         # Select top HEUs
-        target_count = max(int(n_heus / self.config.target_compression_ratio), n_components)
+        target_count: int = int(max(int(n_heus / self.config.target_compression_ratio), n_components))
         top_indices = np.argsort(heu_scores)[-target_count:][::-1]
 
         self._last_pca_basis = Vt[:n_components].T

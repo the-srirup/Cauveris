@@ -110,12 +110,17 @@ class VisualizationDataGenerator:
             "message_queue": "#84cc16",
         }
 
-        self.layer_colors = {
+        self.layer_colors: Dict[Any, str] = {
             BoundaryLayer.APPLICATION_LOG: "#10b981",
+            BoundaryLayer.APPLICATION_LOG.value: "#10b981",
             BoundaryLayer.METRICS_EXPORT: "#3b82f6",
+            BoundaryLayer.METRICS_EXPORT.value: "#3b82f6",
             BoundaryLayer.DISTRIBUTED_TRACE: "#8b5cf6",
+            BoundaryLayer.DISTRIBUTED_TRACE.value: "#8b5cf6",
             BoundaryLayer.NETWORK_FLOW: "#f59e0b",
+            BoundaryLayer.NETWORK_FLOW.value: "#f59e0b",
             BoundaryLayer.INFRASTRUCTURE_LOG: "#6b7280",
+            BoundaryLayer.INFRASTRUCTURE_LOG.value: "#6b7280",
         }
 
     def generate(
@@ -382,22 +387,26 @@ class VisualizationDataGenerator:
         regions = []
 
         for region in reconstruction.ambiguity_regions:
+            dim_str = ", ".join(region.affected_dimensions) if region.affected_dimensions else "unknown"
             regions.append({
                 "component": region.component,
-                "dimension": region.dimension,
-                "primary_value": region.primary_value,
-                "ci_lower": region.primary_value - region.confidence_interval_width / 2,
-                "ci_upper": region.primary_value + region.confidence_interval_width / 2,
-                "ci_width": region.confidence_interval_width,
-                "entropy": region.posterior_entropy,
-                "num_alternatives": len(region.alternative_hypotheses),
-                "alternatives": [
-                    {"value": h.value, "probability": h.probability}
-                    for h in region.alternative_hypotheses[:5]  # Top 5
-                ],
+                "dimension": dim_str,
+                "affected_dimensions": region.affected_dimensions,
+                "time_range_ns": region.time_range_ns,
+                "duration_ms": region.duration_ms,
+                "ambiguity_score": region.ambiguity_score,
+                "missing_layers": region.missing_layers,
+                "description": region.description,
+                "primary_value": region.ambiguity_score,
+                "ci_lower": max(0.0, region.ambiguity_score - 0.1),
+                "ci_upper": min(1.0, region.ambiguity_score + 0.1),
+                "ci_width": 0.2,
+                "entropy": region.ambiguity_score,
+                "num_alternatives": 0,
+                "alternatives": [],
                 "severity": (
-                    "high" if region.confidence_interval_width > 0.5
-                    else "medium" if region.confidence_interval_width > 0.2
+                    "high" if region.ambiguity_score > 0.5
+                    else "medium" if region.ambiguity_score > 0.2
                     else "low"
                 ),
             })

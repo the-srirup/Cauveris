@@ -78,7 +78,7 @@ class CausalKernelBuilder:
         self.topology = topology
         self.config = config or KernelConfig()
         self._local_kernels: Dict[Tuple[str, str], LocalPropagationKernel] = {}
-        self._cross_kernels: Dict[Tuple[str, str], CrossPropagationKernel] = {}
+        self._cross_kernels: Dict[Tuple[str, str, str, str], CrossPropagationKernel] = {}
 
     def build_all_kernels(self) -> Dict:
         """

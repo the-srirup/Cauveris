@@ -411,10 +411,13 @@ class HolographicAnalyzer:
         temporal_analysis: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Cross-reference holographic reconstruction with temporal analysis."""
-        crossref = {
-            "agreement": {},
-            "discrepancies": [],
-            "enhanced_confidence": [],
+        discrepancies: List[Dict[str, Any]] = []
+        enhanced_confidence: List[str] = []
+        agreement: Dict[str, Any] = {}
+        crossref: Dict[str, Any] = {
+            "agreement": agreement,
+            "discrepancies": discrepancies,
+            "enhanced_confidence": enhanced_confidence,
         }
 
         # Compare root causes
@@ -422,15 +425,15 @@ class HolographicAnalyzer:
         holographic_root = self._get_holographic_root_cause(reconstruction)
 
         if temporal_root and holographic_root:
-            crossref["agreement"]["root_cause"] = temporal_root == holographic_root
+            agreement["root_cause"] = temporal_root == holographic_root
             if temporal_root != holographic_root:
-                crossref["discrepancies"].append({
+                discrepancies.append({
                     "type": "root_cause_mismatch",
                     "temporal": temporal_root,
                     "holographic": holographic_root,
                 })
             else:
-                crossref["enhanced_confidence"].append("root_cause")
+                enhanced_confidence.append("root_cause")
 
         # Compare component states
         temporal_components = temporal_analysis.get("component_states", {})
@@ -442,10 +445,10 @@ class HolographicAnalyzer:
                 temp_cpu = temp_state.get("cpu", 0)
                 diff = abs(holo_cpu - temp_cpu)
                 if diff < 0.2:
-                    crossref["agreement"][f"{comp}_cpu"] = True
-                    crossref["enhanced_confidence"].append(f"{comp}_cpu")
+                    agreement[f"{comp}_cpu"] = True
+                    enhanced_confidence.append(f"{comp}_cpu")
                 else:
-                    crossref["discrepancies"].append({
+                    discrepancies.append({
                         "type": "cpu_mismatch",
                         "component": comp,
                         "temporal": temp_cpu,
