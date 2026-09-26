@@ -1,0 +1,112 @@
+{
+  "individual_results": [
+    {
+      "incident_type": "CPU",
+      "method": "HYBRID",
+      "target_ratio": 2.0,
+      "achieved_ratio": 2.0,
+      "fidelity_retention": 0.946305460726481,
+      "num_heus_original": 600,
+      "num_heus_compressed": 300,
+      "solve_time_ms": 13.736486434936523,
+      "boundary_residual_original": 0.4109424650669098,
+      "boundary_residual_compressed": 0.3828723430633545
+    },
+    {
+      "incident_type": "CPU",
+      "method": "HYBRID",
+      "target_ratio": 5.0,
+      "achieved_ratio": 4.958677685950414,
+      "fidelity_retention": 0.2938522635629661,
+      "num_heus_original": 600,
+      "num_heus_compressed": 121,
+      "solve_time_ms": 13.736486434936523,
+      "boundary_residual_original": 0.4109424650669098,
+      "boundary_residual_compressed": 0.7560683488845825
+    },
+    {
+      "incident_type": "CPU",
+      "method": "HYBRID",
+      "target_ratio": 10.0,
+      "achieved_ratio": 10.0,
+      "fidelity_retention": 0.0,
+      "num_heus_original": 600,
+      "num_heus_compressed": 60,
+      "solve_time_ms": 13.736486434936523,
+      "boundary_residual_original": 0.4109424650669098,
+      "boundary_residual_compressed": 0.0
+    },
+    {
+      "incident_type": "CPU",
+      "method": "HYBRID",
+      "target_ratio": 20.0,
+      "achieved_ratio": 20.0,
+      "fidelity_retention": 0.0,
+      "num_heus_original": 600,
+      "num_heus_compressed": 30,
+      "solve_time_ms": 13.736486434936523,
+      "boundary_residual_original": 0.4109424650669098,
+      "boundary_residual_compressed": 0.0
+    },
+    {
+      "incident_type": "NET",
+      "method": "HYBRID",
+      "target_ratio": 2.0,
+      "achieved_ratio": 2.0,
+      "fidelity_retention": 0.9888201369624339,
+      "num_heus_original": 400,
+      "num_heus_compressed": 200,
+      "solve_time_ms": 9.296894073486328,
+      "boundary_residual_original": 0.302548885345459,
+      "boundary_residual_compressed": 0.19788706302642822
+    },
+    {
+      "incident_type": "NET",
+      "method": "HYBRID",
+      "target_ratio": 5.0,
+      "achieved_ratio": 5.0,
+      "fidelity_retention": 0.9809975808589879,
+      "num_heus_original": 400,
+      "num_heus_compressed": 80,
+      "solve_time_ms": 9.296894073486328,
+      "boundary_residual_original": 0.302548885345459,
+      "boundary_residual_compressed": 0.02964779920876026
+    },
+    {
+      "incident_type": "NET",
+      "method": "HYBRID",
+      "target_ratio": 10.0,
+      "achieved_ratio": 10.0,
+      "fidelity_retention": 0.9801884558504121,
+      "num_heus_original": 400,
+      "num_heus_compressed": 40,
+      "solve_time_ms": 9.296894073486328,
+      "boundary_residual_original": 0.302548885345459,
+      "boundary_residual_compressed": 0.023622263222932816
+    },
+    {
+      "incident_type": "NET",
+      "method": "HYBRID",
+      "target_ratio": 20.0,
+      "achieved_ratio": 20.0,
+      "fidelity_retention": 0.9876754082479133,
+      "num_heus_original": 400,
+      "num_heus_compressed": 20,
+      "solve_time_ms": 9.296894073486328,
+      "boundary_residual_original": 0.302548885345459,
+      "boundary_residual_compressed": 0.08067641407251358
+    }
+  ],
+  "summary": {
+    "HYBRID": {
+      "mean_fidelity": 0.6472299132761493,
+      "std_fidelity": 0.43401963242460484,
+      "min_fidelity": 0.0,
+      "max_fidelity": 0.9888201369624339,
+      "mean_achieved_ratio": 9.244834710743802,
+      "num_runs": 8,
+      "max_ratio_fidelity_90": 20.0,
+      "max_ratio_fidelity_80": 20.0
+    }
+  }
+}

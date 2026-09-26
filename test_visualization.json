@@ -1,0 +1,456 @@
+{
+  "incident_id": "SYNTH_CPU_SPIKE_1803",
+  "timestamp_ns": "66877551020",
+  "format": "VisualizationFormat.JSON",
+  "bulk_nodes": [
+    {
+      "id": "svc_0",
+      "name": "svc_0",
+      "type": "service",
+      "position": [
+        100.0,
+        0.0,
+        9.0
+      ],
+      "size": 36.27650737762498,
+      "color": "#ff3f00",
+      "health": 0.12411642074584961,
+      "metrics": {
+        "cpu_usage": 0.8758835792541504,
+        "memory_usage": 1.5754584120034228e-14,
+        "network_usage": 1.656801865840274e-14,
+        "error_rate": 0.0,
+        "latency_p99_ms": 0.0
+      },
+      "confidence": 0.0,
+      "config_changed": false
+    },
+    {
+      "id": "svc_1",
+      "name": "svc_1",
+      "type": "service",
+      "position": [
+        6.123233995736766e-15,
+        100.0,
+        2.0
+      ],
+      "size": 20.17808198928833,
+      "color": "#56ff00",
+      "health": 0.8303653001785278,
+      "metrics": {
+        "cpu_usage": 0.16963469982147217,
+        "memory_usage": 0.16963469982147217,
+        "network_usage": 0.16963469982147217,
+        "error_rate": 0.0,
+        "latency_p99_ms": 0.0
+      },
+      "confidence": 0.0,
+      "config_changed": false
+    },
+    {
+      "id": "svc_2",
+      "name": "svc_2",
+      "type": "service",
+      "position": [
+        -100.0,
+        1.2246467991473532e-14,
+        49.0
+      ],
+      "size": 20.17808198928833,
+      "color": "#ff0000",
+      "health": -4.0,
+      "metrics": {
+        "cpu_usage": 0.16963469982147217,
+        "memory_usage": 0.16963469982147217,
+        "network_usage": 0.16963469982147217,
+        "error_rate": 1.0,
+        "latency_p99_ms": 0.0
+      },
+      "confidence": 0.0,
+      "config_changed": false
+    },
+    {
+      "id": "svc_3",
+      "name": "svc_3",
+      "type": "service",
+      "position": [
+        -1.8369701987210297e-14,
+        -100.0,
+        21.0
+      ],
+      "size": 20.17808198928833,
+      "color": "#ff0000",
+      "health": -4.0,
+      "metrics": {
+        "cpu_usage": 0.16963469982147217,
+        "memory_usage": 0.16963469982147217,
+        "network_usage": 0.16963469982147217,
+        "error_rate": 1.0,
+        "latency_p99_ms": 0.0
+      },
+      "confidence": 0.0,
+      "config_changed": false
+    }
+  ],
+  "bulk_edges": [
+    {
+      "source": "svc_0",
+      "target": "svc_1",
+      "type": "causal",
+      "thickness": 4.136554837226868,
+      "color": "#f97316",
+      "latency_ms": 5.0,
+      "source_health": 0.12411642074584961,
+      "target_health": 0.8303653001785278
+    },
+    {
+      "source": "svc_1",
+      "target": "svc_2",
+      "type": "causal",
+      "thickness": 2.017808198928833,
+      "color": "#ef4444",
+      "latency_ms": 5.0,
+      "source_health": 0.8303653001785278,
+      "target_health": -4.0
+    },
+    {
+      "source": "svc_2",
+      "target": "svc_3",
+      "type": "causal",
+      "thickness": 2.017808198928833,
+      "color": "#ef4444",
+      "latency_ms": 5.0,
+      "source_health": -4.0,
+      "target_health": -4.0
+    },
+    {
+      "source": "svc_0",
+      "target": "svc_1",
+      "type": "network",
+      "thickness": 2,
+      "color": "#06b6d4",
+      "latency_ms": 5.0,
+      "loss_rate": 0.0,
+      "bandwidth_mbps": 1000.0
+    },
+    {
+      "source": "svc_1",
+      "target": "svc_2",
+      "type": "network",
+      "thickness": 2,
+      "color": "#06b6d4",
+      "latency_ms": 5.0,
+      "loss_rate": 0.0,
+      "bandwidth_mbps": 1000.0
+    },
+    {
+      "source": "svc_2",
+      "target": "svc_3",
+      "type": "network",
+      "thickness": 2,
+      "color": "#06b6d4",
+      "latency_ms": 5.0,
+      "loss_rate": 0.0,
+      "bandwidth_mbps": 1000.0
+    }
+  ],
+  "boundary_layers": {},
+  "scale_hierarchy": [],
+  "ambiguity_regions": [],
+  "counterfactual": {
+    "intervention": "cpu_scaling on svc_0",
+    "intervention_type": "cpu_scaling",
+    "fidelity_improvement": 0.06569126844406137,
+    "cost_estimate": 30.0,
+    "risk_score": 0.2,
+    "changes": [
+      {
+        "component": "svc_0",
+        "dimension": "cpu_usage",
+        "original": 0.8758835792541504,
+        "intervened": 0.2189708948135376,
+        "change": -0.6569126844406128,
+        "improvement": true
+      }
+    ],
+    "predicted_boundary": {
+      "service_predictions": {
+        "svc_0": {
+          "application_log": {
+            "layer": "application_log",
+            "component": "svc_0",
+            "predicted_signals": {
+              "cpu_usage": 0.2189708948135376,
+              "memory_usage": 1.5754584120034228e-14,
+              "error_rate": 0.0,
+              "log_level": "INFO"
+            }
+          },
+          "metrics_export": {
+            "layer": "metrics_export",
+            "component": "svc_0",
+            "predicted_signals": {
+              "cpu_usage": 0.2189708948135376,
+              "memory_usage": 1.5754584120034228e-14,
+              "latency_p99_ms": 0.0,
+              "rps": 7810.291051864624
+            }
+          },
+          "distributed_trace": {
+            "layer": "distributed_trace",
+            "component": "svc_0",
+            "predicted_signals": {
+              "duration_ms": 0.0,
+              "error": false,
+              "span_count": 100.0
+            }
+          }
+        },
+        "svc_1": {
+          "application_log": {
+            "layer": "application_log",
+            "component": "svc_1",
+            "predicted_signals": {
+              "cpu_usage": 0.16963469982147217,
+              "memory_usage": 0.16963469982147217,
+              "error_rate": 0.0,
+              "log_level": "INFO"
+            }
+          },
+          "metrics_export": {
+            "layer": "metrics_export",
+            "component": "svc_1",
+            "predicted_signals": {
+              "cpu_usage": 0.16963469982147217,
+              "memory_usage": 0.16963469982147217,
+              "latency_p99_ms": 0.0,
+              "rps": 8303.653001785278
+            }
+          },
+          "distributed_trace": {
+            "layer": "distributed_trace",
+            "component": "svc_1",
+            "predicted_signals": {
+              "duration_ms": 0.0,
+              "error": false,
+              "span_count": 100.0
+            }
+          }
+        },
+        "svc_2": {
+          "application_log": {
+            "layer": "application_log",
+            "component": "svc_2",
+            "predicted_signals": {
+              "cpu_usage": 0.16963469982147217,
+              "memory_usage": 0.16963469982147217,
+              "error_rate": 1.0,
+              "log_level": "ERROR"
+            }
+          },
+          "metrics_export": {
+            "layer": "metrics_export",
+            "component": "svc_2",
+            "predicted_signals": {
+              "cpu_usage": 0.16963469982147217,
+              "memory_usage": 0.16963469982147217,
+              "latency_p99_ms": 0.0,
+              "rps": 8303.653001785278
+            }
+          },
+          "distributed_trace": {
+            "layer": "distributed_trace",
+            "component": "svc_2",
+            "predicted_signals": {
+              "duration_ms": 0.0,
+              "error": true,
+              "span_count": 10
+            }
+          }
+        },
+        "svc_3": {
+          "application_log": {
+            "layer": "application_log",
+            "component": "svc_3",
+            "predicted_signals": {
+              "cpu_usage": 0.16963469982147217,
+              "memory_usage": 0.16963469982147217,
+              "error_rate": 1.0,
+              "log_level": "ERROR"
+            }
+          },
+          "metrics_export": {
+            "layer": "metrics_export",
+            "component": "svc_3",
+            "predicted_signals": {
+              "cpu_usage": 0.16963469982147217,
+              "memory_usage": 0.16963469982147217,
+              "latency_p99_ms": 0.0,
+              "rps": 8303.653001785278
+            }
+          },
+          "distributed_trace": {
+            "layer": "distributed_trace",
+            "component": "svc_3",
+            "predicted_signals": {
+              "duration_ms": 0.0,
+              "error": true,
+              "span_count": 10
+            }
+          }
+        }
+      },
+      "network_predictions": {
+        "svc_0->svc_1": {
+          "latency_ms": 5.0,
+          "loss_rate": 0.0,
+          "bandwidth_mbps": 1000.0
+        },
+        "svc_1->svc_2": {
+          "latency_ms": 5.0,
+          "loss_rate": 0.0,
+          "bandwidth_mbps": 1000.0
+        },
+        "svc_2->svc_3": {
+          "latency_ms": 5.0,
+          "loss_rate": 0.0,
+          "bandwidth_mbps": 1000.0
+        }
+      },
+      "layer_predictions": {}
+    }
+  },
+  "anomalies": [
+    {
+      "type": "cpu_saturation",
+      "severity": "MEDIUM",
+      "component": "svc_0",
+      "dimension": "cpu_usage",
+      "value": 0.8758835792541504,
+      "expected_range": [
+        0.0,
+        0.7
+      ],
+      "confidence": 1.0,
+      "description": "svc_0 cpu_usage = 0.876 exceeds normal max 0.700",
+      "evidence": [
+        "Reconstructed cpu_usage = 0.876"
+      ],
+      "related": []
+    },
+    {
+      "type": "error_spike",
+      "severity": "CRITICAL",
+      "component": "svc_2",
+      "dimension": "error_rate",
+      "value": 1.0,
+      "expected_range": [
+        0.0,
+        0.01
+      ],
+      "confidence": 1.0,
+      "description": "svc_2 error_rate = 1.000 exceeds normal max 0.010",
+      "evidence": [
+        "Reconstructed error_rate = 1.000"
+      ],
+      "related": []
+    },
+    {
+      "type": "error_spike",
+      "severity": "CRITICAL",
+      "component": "svc_3",
+      "dimension": "error_rate",
+      "value": 1.0,
+      "expected_range": [
+        0.0,
+        0.01
+      ],
+      "confidence": 1.0,
+      "description": "svc_3 error_rate = 1.000 exceeds normal max 0.010",
+      "evidence": [
+        "Reconstructed error_rate = 1.000"
+      ],
+      "related": []
+    },
+    {
+      "type": "error_spike",
+      "severity": "CRITICAL",
+      "component": "svc_2",
+      "dimension": "error_rate",
+      "value": 1.0,
+      "expected_range": [
+        0.0,
+        0.01
+      ],
+      "confidence": 2.0,
+      "description": "Error spike: 100.0% error rate",
+      "evidence": [
+        "error_rate=1.0000"
+      ],
+      "related": []
+    },
+    {
+      "type": "error_spike",
+      "severity": "CRITICAL",
+      "component": "svc_3",
+      "dimension": "error_rate",
+      "value": 1.0,
+      "expected_range": [
+        0.0,
+        0.01
+      ],
+      "confidence": 2.0,
+      "description": "Error spike: 100.0% error rate",
+      "evidence": [
+        "error_rate=1.0000"
+      ],
+      "related": []
+    },
+    {
+      "type": "resource_starvation",
+      "severity": "HIGH",
+      "component": "svc_0->svc_1",
+      "dimension": "starvation",
+      "value": 0.8758835792541504,
+      "expected_range": [
+        0.0,
+        0.6
+      ],
+      "confidence": 0.75,
+      "description": "Resource starvation: svc_0 starved (88%) while svc_1 idle (17%)",
+      "evidence": [
+        "Source CPU: 0.88",
+        "Target CPU: 0.17"
+      ],
+      "related": []
+    },
+    {
+      "type": "cascading_failure",
+      "severity": "HIGH",
+      "component": "svc_2->svc_3",
+      "dimension": "error_rate",
+      "value": 1.0,
+      "expected_range": [
+        0.0,
+        0.5
+      ],
+      "confidence": 0.8,
+      "description": "Correlated high error_rate on edge svc_2->svc_3",
+      "evidence": [
+        "Source: 1.00, Target: 1.00"
+      ],
+      "related": []
+    }
+  ],
+  "metadata": {
+    "overall_fidelity": 0.5890575349330902,
+    "boundary_residual": 0.4109424650669098,
+    "num_components": 4,
+    "num_ambiguity_regions": 0,
+    "time_window_ns": [
+      0,
+      "66877551020"
+    ],
+    "generation_timestamp_ns": "66877551020"
+  }
+}
