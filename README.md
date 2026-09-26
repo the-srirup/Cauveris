@@ -127,10 +127,3 @@ Configuration is managed through environment variables and a `.env` file. See `.
 
 Apache 2.0 License - see [LICENSE](LICENSE) file
 
-## Contributing
-
-See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for development guidelines.
-
-## Documentation
-
-See the [docs/](docs/) directory for detailed architectural designs, bug fix logs, and status checklists.
