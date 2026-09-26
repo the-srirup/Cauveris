@@ -13,7 +13,7 @@ from cauveris.holographic.solver import (
     solve_holographic_inverse,
 )
 from cauveris.holographic.topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
-from cauveris.holographic.heu import HolographicEvidenceUnit, BoundaryLayer, convert_timeline_to_heus
+from cauveris.holographic.heu import convert_timeline_to_heus
 from cauveris.holographic.heu_kernel import CausalKernelBuilder
 from cauveris.holographic.measurement import build_measurement_system, MeasurementConfig
 
@@ -168,7 +168,6 @@ class TestHolographicSolver:
 
         # Test objective at zero
         x_zero = np.zeros(solver.n_state)
-        obj_at_zero = solver._objective(x_zero)
 
         # Data term should be ||b||^2 at x=0
         data_at_zero = solver._data_term(x_zero)

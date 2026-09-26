@@ -6,8 +6,8 @@ reconstruction fidelity.
 """
 
 import numpy as np
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Any, Tuple
 from enum import Enum
 
 from cauveris.holographic.topology import (
@@ -18,12 +18,10 @@ from cauveris.holographic.topology import (
 )
 from cauveris.holographic.heu import (
     HolographicEvidenceUnit,
-    BoundaryLayer,
     convert_timeline_to_heus,
 )
 from cauveris.holographic.reconstruction import (
     HolographicReconstruction,
-    ReconstructedServiceState,
 )
 
 
@@ -502,15 +500,15 @@ class SyntheticIncidentGenerator:
                 attrs = {"cpu_usage": state["cpu_pressure"], "thread_count": int(state["cpu_pressure"]*100)}
                 status = "critical"
             elif "error_rate" in state and state["error_rate"] > 0.2:
-                msg = f"ERROR: High error rate detected"
+                msg = "ERROR: High error rate detected"
                 attrs = {"error_rate": state["error_rate"], "service": comp}
                 status = "error"
             elif "memory_pressure" in state and state["memory_pressure"] > 0.7:
-                msg = f"WARN: Memory pressure high"
+                msg = "WARN: Memory pressure high"
                 attrs = {"memory_usage": state["memory_pressure"]}
                 status = "warning"
             else:
-                msg = f"Operation in degraded state"
+                msg = "Operation in degraded state"
                 attrs = {k: v for k, v in state.items() if v > 0.1}
                 status = "warning"
 

@@ -7,19 +7,16 @@ Measures fidelity vs compression ratio curves for different compression methods.
 import numpy as np
 import json
 import time
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any
 from dataclasses import dataclass, asdict
 
-from cauveris.holographic.topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
-from cauveris.holographic.heu import HolographicEvidenceUnit, BoundaryLayer, convert_timeline_to_heus
 from cauveris.holographic.heu_kernel import CausalKernelBuilder
 from cauveris.holographic.measurement import build_measurement_system, MeasurementConfig
-from cauveris.holographic.solver import HolographicSolver, SolverConfig, SolverMethod, solve_holographic_inverse
+from cauveris.holographic.solver import HolographicSolver, SolverConfig, SolverMethod
 from cauveris.holographic.compression import (
     HolographicCompressor,
     CompressionConfig,
     CompressionMethod,
-    compress_holographic,
 )
 import sys
 sys.path.insert(0, 'tests/holographic')
@@ -80,9 +77,7 @@ def run_compression_benchmark(
         )
         compressor = HolographicCompressor(topology, comp_config)
 
-        start = time.time()
         comp_result = compressor.compress(heus, 60_000_000_000)
-        compress_time = (time.time() - start) * 1000
 
         if len(comp_result.compressed_heus) < 1:
             continue

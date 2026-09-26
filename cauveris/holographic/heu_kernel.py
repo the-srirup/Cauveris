@@ -317,7 +317,7 @@ class CausalKernelBuilder:
         K = np.zeros((n_comp * n_layers, n_comp, n_time), dtype=np.float32)
 
         comp_to_idx = {c: i for i, c in enumerate(components)}
-        layer_to_idx = {l: i for i, l in enumerate(layers)}
+        layer_to_idx = {layer: i for i, layer in enumerate(layers)}
 
         # Diagonal blocks: local propagation
         for i, comp in enumerate(components):
@@ -344,7 +344,6 @@ class CausalKernelBuilder:
                             edge.source, edge.target, src_layer, dst_layer
                         )
                         if kernel:
-                            src_state_idx = src_i * n_layers + layer_to_idx.get(src_layer, 0)
                             dst_obs_idx = dst_i * n_layers + layer_to_idx.get(dst_layer, 0)
                             k_vals = kernel.kernel_values[:n_time]
                             K[dst_obs_idx, src_i, :len(k_vals)] = k_vals

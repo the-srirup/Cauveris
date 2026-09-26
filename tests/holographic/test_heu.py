@@ -11,7 +11,6 @@ Tests cover:
 """
 import pytest
 import numpy as np
-from datetime import datetime
 
 from cauveris.holographic.heu import (
     HolographicEvidenceUnit,

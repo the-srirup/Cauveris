@@ -15,7 +15,6 @@ from cauveris.holographic.anomaly import (
     AnomalyType,
     AnomalySeverity,
     create_anomaly_detector,
-    NORMAL_RANGES,
 )
 from cauveris.holographic.reconstruction import (
     HolographicReconstruction,

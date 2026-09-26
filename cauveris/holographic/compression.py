@@ -9,13 +9,12 @@ Implements compression by:
 from __future__ import annotations
 
 import numpy as np
-from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 from enum import Enum
 
 from .heu import HolographicEvidenceUnit, BoundaryLayer
-from .reconstruction import HolographicReconstruction, ReconstructedServiceState
+from .reconstruction import HolographicReconstruction
 from .solver import solve_holographic_inverse, SolverConfig
 from .measurement import build_measurement_system, MeasurementConfig
 from .heu_kernel import CausalKernelBuilder
@@ -386,7 +385,6 @@ class EvidenceSynthesizer:
             List of synthesized HEUs with is_synthesized=True
         """
         from .heu import HolographicEvidenceUnit, BoundaryLayer, _synthesize_heu_id
-        import hashlib
 
         synthesized = []
         start_ns, end_ns = incident_window
@@ -396,7 +394,7 @@ class EvidenceSynthesizer:
         all_layers = list(BoundaryLayer)
         for comp_name, comp in self.topology.components.items():
             observed = set(observed_layers.get(comp_name, []))
-            missing = [l for l in all_layers if l not in observed and l in comp.boundary_layers]
+            missing = [layer for layer in all_layers if layer not in observed and layer in comp.boundary_layers]
 
             for layer in missing:
                 # Synthesize a few HEUs per missing layer

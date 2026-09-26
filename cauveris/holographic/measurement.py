@@ -11,11 +11,11 @@ import numpy as np
 import scipy.sparse as sp
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple
 
 from .heu import HolographicEvidenceUnit, BoundaryLayer, convert_timeline_to_heus
 from .topology import SystemTopology, ComponentInfo, CausalEdge
-from .heu_kernel import CausalKernelBuilder, LocalPropagationKernel, CrossPropagationKernel, KernelConfig
+from .heu_kernel import CausalKernelBuilder
 
 
 @dataclass(slots=True)
@@ -201,7 +201,6 @@ class MeasurementSystemBuilder:
 
         # Weight by reconstruction weight and kernel response
         weight = heu.reconstruction_weight
-        phase = heu.phase_vector
 
         for dim_name, dim_weight in heu.encoded_dimensions.items():
             idx = self._state_index.get((heu.source_component, dim_name))

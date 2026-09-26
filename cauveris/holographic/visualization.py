@@ -13,23 +13,19 @@ Produces structured data for:
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from enum import Enum
 import json
 
 import numpy as np
 
-from .topology import SystemTopology, ComponentInfo, CausalEdge, ResourceCapacity
-from .heu import HolographicEvidenceUnit, BoundaryLayer
+from .topology import SystemTopology
+from .heu import BoundaryLayer
 from .reconstruction import (
     HolographicReconstruction,
-    ReconstructedServiceState,
-    ReconstructedNetworkState,
-    NetworkEdge,
-    AmbiguityRegion,
 )
 from .counterfactual import CounterfactualResult, Intervention
-from .anomaly import AnomalyReport, Anomaly, AnomalyType, AnomalySeverity
+from .anomaly import AnomalyReport, AnomalySeverity
 
 
 class VisualizationFormat(Enum):
@@ -619,7 +615,7 @@ if __name__ == "__main__":
     sys.path.insert(0, 'tests/holographic')
     from synthetic import SyntheticIncidentGenerator, IncidentType
     from cauveris.holographic.integration import analyze_incident_holographically, HolographicConfig
-    from cauveris.holographic.counterfactual import create_standard_interventions, CounterfactualHolographer, CausalKernelBuilder, Intervention, InterventionType
+    from cauveris.holographic.counterfactual import CounterfactualHolographer, CausalKernelBuilder, Intervention, InterventionType
     from cauveris.holographic.anomaly import create_anomaly_detector
 
     generator = SyntheticIncidentGenerator(seed=42)

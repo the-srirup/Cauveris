@@ -9,7 +9,6 @@ Tests cover:
 - HolographicReconstruction
 """
 import pytest
-import numpy as np
 
 from cauveris.holographic.reconstruction import (
     ReconstructedServiceState,

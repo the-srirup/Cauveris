@@ -12,22 +12,19 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 
-from .topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge, build_topology_from_timeline
+from .topology import SystemTopology, build_topology_from_timeline
 from .heu import HolographicEvidenceUnit, BoundaryLayer, convert_timeline_to_heus
 from .heu_kernel import CausalKernelBuilder, KernelConfig
 from .measurement import build_measurement_system, MeasurementConfig
-from .solver import HolographicSolver, SolverConfig, SolverMethod, solve_holographic_inverse
+from .solver import HolographicSolver, SolverConfig, SolverMethod
 from .multiscale import MultiScaleReconstructor, MultiScaleConfig, ReconstructionScale, reconstruct_multiscale
-from .compression import HolographicCompressor, CompressionConfig, CompressionMethod, compress_holographic, EvidenceSynthesizer
+from .compression import HolographicCompressor, CompressionConfig, CompressionMethod, EvidenceSynthesizer
 from .reconstruction import (
     HolographicReconstruction,
     ReconstructedServiceState,
     ReconstructedNetworkState,
     NetworkEdge,
-    ReconstructedResourceState,
-    AmbiguityRegion,
 )
 
 logger = logging.getLogger(__name__)
@@ -604,7 +601,7 @@ if __name__ == "__main__":
         topology=incident.topology,
     )
 
-    print(f"Analysis complete:")
+    print("Analysis complete:")
     print(f"  Fidelity: {result.overall_fidelity:.3f}")
     print(f"  Boundary residual: {result.boundary_residual:.3f}")
     print(f"  Solve time: {result.solve_time_ms:.1f}ms")

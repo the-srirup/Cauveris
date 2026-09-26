@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -479,8 +478,6 @@ def build_topology_from_timeline(
         if source_type == "otel_trace":
             service_name = attributes.get("service.name")
             peer_service = attributes.get("peer.service")
-            # Also check for span kind to determine if it's a client span calling a service
-            span_kind = attributes.get("span.kind", attributes.get("otel.span.kind", ""))
             # Infer edge if we have a service and peer, regardless of parent_span
             if service_name and peer_service and service_name != peer_service:
                 edges_found.add((service_name, peer_service))

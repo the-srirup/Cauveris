@@ -8,7 +8,6 @@ import scipy.sparse as sp
 from cauveris.holographic.measurement import (
     MeasurementSystemBuilder,
     MeasurementSystem,
-    MeasurementConfig,
     build_measurement_system,
     StateDimension,
     MeasurementRow,
@@ -132,7 +131,6 @@ class TestMeasurementSystemBuilder:
         builder._register_state_dimensions(heus)
 
         # Should have base dimensions for both components + encoded dimensions
-        expected_dims = 2 * 8 + 2  # 8 base dims per component + 2 encoded
         assert len(builder._state_dims) >= 16
 
     def test_build_empty(self):

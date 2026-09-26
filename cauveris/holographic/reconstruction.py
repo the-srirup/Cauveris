@@ -7,9 +7,8 @@ reconstructed service states, network state, resource state, and ambiguity regio
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
-import numpy as np
 
 
 @dataclass(slots=True)

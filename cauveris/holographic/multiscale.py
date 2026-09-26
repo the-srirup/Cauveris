@@ -15,12 +15,12 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
-from .heu import HolographicEvidenceUnit, BoundaryLayer, convert_timeline_to_heus
+from .heu import HolographicEvidenceUnit, convert_timeline_to_heus
 from .topology import SystemTopology, ComponentInfo
 from .reconstruction import HolographicReconstruction, ReconstructedServiceState, AmbiguityRegion
-from .solver import HolographicSolver, SolverConfig, solve_holographic_inverse
+from .solver import SolverConfig, solve_holographic_inverse
 from .measurement import build_measurement_system, MeasurementConfig
-from .heu_kernel import CausalKernelBuilder, KernelConfig
+from .heu_kernel import CausalKernelBuilder
 
 
 class ReconstructionScale(Enum):
@@ -250,8 +250,6 @@ class MultiScaleReconstructor:
     ) -> List[HolographicEvidenceUnit]:
         """Downsample HEUs to target count for scale."""
         target = scale.target_heu_count
-        window = end_ns - start_ns
-
         if len(heus) <= target:
             return heus
 
@@ -303,8 +301,6 @@ class MultiScaleReconstructor:
         decoded = solver_result.x  # Direct state vector for now
 
         # Create service states
-        from .reconstruction import ReconstructedServiceState, ReconstructedNetworkState
-        import scipy.sparse as sp
 
         # Map state indices to components
         for i, sd in enumerate(measurement_system.state_dims):

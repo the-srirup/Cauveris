@@ -9,10 +9,8 @@ Tests cover:
 - Building from timeline events
 """
 import pytest
-import tempfile
 import yaml
 import json
-from pathlib import Path
 
 from cauveris.holographic.topology import (
     SystemTopology,

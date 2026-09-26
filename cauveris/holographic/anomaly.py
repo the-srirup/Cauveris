@@ -8,20 +8,13 @@ signatures of known failure modes, and statistical anomalies in the bulk dimensi
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple, Set, Callable
 from enum import Enum
-from collections import defaultdict
 
-import numpy as np
 
-from .topology import SystemTopology, ComponentInfo, CausalEdge, ResourceCapacity
-from .heu import HolographicEvidenceUnit, BoundaryLayer
+from .topology import SystemTopology
 from .reconstruction import (
     HolographicReconstruction,
-    ReconstructedServiceState,
-    ReconstructedNetworkState,
-    NetworkEdge,
-    AmbiguityRegion,
 )
 
 
@@ -335,7 +328,7 @@ class HolographicAnomalyDetector:
             try:
                 anomalies = detector(reconstruction, temporal_data)
                 report.anomalies.extend(anomalies)
-            except Exception as e:
+            except Exception:
                 # Don't let one detector failure stop others
                 pass
 
@@ -626,7 +619,7 @@ class HolographicAnomalyDetector:
                         expected_range=(0.0, 0.0),
                         confidence=0.7,
                         description=f"Potential feedback loop: {edge.source} <-> {edge.target} both under high load",
-                        evidence=[f"Edge {edge.source}->{edge.target}", f"Reverse edge exists"],
+                        evidence=[f"Edge {edge.source}->{edge.target}", "Reverse edge exists"],
                     ))
         return anomalies
 
@@ -824,7 +817,7 @@ if __name__ == "__main__":
     detector = create_anomaly_detector(incident.topology)
     report = detector.detect(result.reconstruction, temporal_data={"root_cause": "svc_0/cpu_pressure"})
 
-    print(f"\nAnomaly Report:")
+    print("\nAnomaly Report:")
     print(f"  Summary: {report.summary}")
     print(f"  Total anomalies: {len(report.anomalies)}")
     for anomaly in report.get_high_anomalies():

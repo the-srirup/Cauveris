@@ -13,7 +13,7 @@ from cauveris.holographic.compression import (
     EvidenceSynthesizer,
 )
 from cauveris.holographic.topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
-from cauveris.holographic.heu import HolographicEvidenceUnit, BoundaryLayer, convert_timeline_to_heus
+from cauveris.holographic.heu import HolographicEvidenceUnit, BoundaryLayer
 
 
 class TestCompressionConfig:
@@ -58,7 +58,6 @@ class TestHolographicCompressor:
 
     def test_compress_small_set(self):
         """Test compression with small HEU set (should not compress)."""
-        from cauveris.holographic.heu_kernel import CausalKernelBuilder
 
         config = CompressionConfig(target_compression_ratio=10.0)
         compressor = HolographicCompressor(self.topo, config)
@@ -82,7 +81,6 @@ class TestHolographicCompressor:
 
     def test_compress_pca_method(self):
         """Test PCA-based phase compression."""
-        from cauveris.holographic.heu_kernel import CausalKernelBuilder
 
         config = CompressionConfig(
             method=CompressionMethod.PCA_PHASE,
@@ -115,7 +113,6 @@ class TestHolographicCompressor:
 
     def test_compress_cluster_method(self):
         """Test clustering-based compression."""
-        from cauveris.holographic.heu_kernel import CausalKernelBuilder
 
         config = CompressionConfig(
             method=CompressionMethod.CLUSTER_REP,
@@ -143,7 +140,6 @@ class TestHolographicCompressor:
 
     def test_compress_greedy_method(self):
         """Test greedy fidelity compression."""
-        from cauveris.holographic.heu_kernel import CausalKernelBuilder
 
         config = CompressionConfig(
             method=CompressionMethod.GREEDY_FIDELITY,
@@ -173,7 +169,6 @@ class TestHolographicCompressor:
 
     def test_compress_hybrid_method(self):
         """Test hybrid compression (default)."""
-        from cauveris.holographic.heu_kernel import CausalKernelBuilder
 
         config = CompressionConfig(
             method=CompressionMethod.HYBRID,
@@ -201,7 +196,6 @@ class TestHolographicCompressor:
 
     def test_compression_preserves_informative_heus(self):
         """Test that high-weight HEUs are preserved with greedy method."""
-        from cauveris.holographic.heu_kernel import CausalKernelBuilder
 
         config = CompressionConfig(
             method=CompressionMethod.GREEDY_FIDELITY,

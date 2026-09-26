@@ -2,14 +2,13 @@
 """
 Phase 2 Holographic Evidence Reconstruction - Real-World Verification
 """
-import numpy as np
 from cauveris.holographic.topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
-from cauveris.holographic.heu import HolographicEvidenceUnit, BoundaryLayer, convert_timeline_to_heus
+from cauveris.holographic.heu import BoundaryLayer, convert_timeline_to_heus
 from cauveris.holographic.heu_kernel import CausalKernelBuilder
 from cauveris.holographic.measurement import build_measurement_system, MeasurementConfig
-from cauveris.holographic.solver import HolographicSolver, SolverConfig, solve_holographic_inverse
-from cauveris.holographic.multiscale import MultiScaleReconstructor, MultiScaleConfig, ReconstructionScale, reconstruct_multiscale
-from cauveris.holographic.compression import HolographicCompressor, CompressionConfig, CompressionMethod, compress_holographic, EvidenceSynthesizer
+from cauveris.holographic.solver import HolographicSolver, SolverConfig
+from cauveris.holographic.multiscale import reconstruct_multiscale
+from cauveris.holographic.compression import HolographicCompressor, CompressionConfig, CompressionMethod, EvidenceSynthesizer
 from cauveris.holographic.reconstruction import HolographicReconstruction, ReconstructedServiceState
 
 
@@ -145,7 +144,7 @@ def main():
 
     # Decode results
     decoded = solver.decode_state(result.x)
-    print(f'\n  DECODED SERVICE STATES:')
+    print('\n  DECODED SERVICE STATES:')
     for svc, state in decoded['services'].items():
         print(f'    {svc}:')
         for dim, val in state.items():
@@ -154,10 +153,6 @@ def main():
 
     # Multi-scale reconstruction
     print('\n7. MULTI-SCALE RECONSTRUCTION...')
-    ms_config = MultiScaleConfig(
-        target_scales=[ReconstructionScale.INCIDENT, ReconstructionScale.TRANSACTION, ReconstructionScale.REQUEST],
-        enable_prior_chaining=True,
-    )
     ms_results = reconstruct_multiscale(topo, timeline, (0, 500_000_000), {})
     print(f'  Scales reconstructed: {len(ms_results)}')
     for scale, result in ms_results.items():

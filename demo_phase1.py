@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """Phase 1 Demo: Holographic Evidence Reconstruction"""
-from cauveris.holographic import *
-import numpy as np
+from cauveris.holographic.heu import convert_timeline_to_heus
+from cauveris.holographic.topology import build_topology_from_timeline
+from cauveris.holographic.reconstruction import HolographicReconstruction, ReconstructedServiceState, ReconstructedResourceState, AmbiguityRegion, NetworkEdge
 
 print('=== HOLOGRAPHIC EVIDENCE RECONSTRUCTION - PHASE 1 DEMO ===')
 print()
