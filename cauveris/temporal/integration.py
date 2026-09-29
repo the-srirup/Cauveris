@@ -129,11 +129,18 @@ class TemporalAnalyzer:
         # Resolve bundle path
         if bundle_path is None:
             settings = get_settings()
-            bundle_path = Path(settings.evidence_store_path) / incident.id
-            if not bundle_path.exists():
-                bundle_path = Path(f"./incident-{incident.id}")
-            if not bundle_path.exists():
-                bundle_path = Path("./golden_incident/incident-CAU-0001")
+            if hasattr(incident, "bundle_path") and incident.bundle_path and Path(incident.bundle_path).exists():
+                bundle_path = Path(incident.bundle_path)
+            elif incident.manifest and incident.manifest.get("bundle_path") and Path(incident.manifest["bundle_path"]).exists():
+                bundle_path = Path(incident.manifest["bundle_path"])
+            else:
+                bundle_path = Path(settings.evidence_store_path) / incident.id
+                if not bundle_path.exists():
+                    bundle_path = Path(f"./incident-{incident.id}")
+                if not bundle_path.exists():
+                    bundle_path = Path("./temp_ingestion") / incident.id
+                if not bundle_path.exists() and incident.id.upper() in ["CAU-0001", "GOLDEN"]:
+                    bundle_path = Path("./golden_incident/incident-CAU-0001")
 
         # Extract raw signals for deeper analysis
         raw_extractor = RawSignalExtractor(bundle_path)

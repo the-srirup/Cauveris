@@ -186,10 +186,39 @@ class PatchGenerator:
         return patch
 
     def _generate_generic_patch(self, patch: PatchCandidate, experiment: Experiment) -> PatchCandidate:
-        """Generate generic fallback patch."""
-        patch.affected_files = ["config/inference.yaml"]
-        patch.lines_changed = 1
-        patch.unified_diff = """--- a/config/inference.yaml
+        """Generate generic fallback patch for real-world incidents."""
+        hyp_id = experiment.hypothesis_id.lower()
+        if "memory" in hyp_id:
+            patch.affected_files = ["deploy/resources.yaml"]
+            patch.lines_changed = 1
+            patch.unified_diff = """--- a/deploy/resources.yaml
++++ b/deploy/resources.yaml
+@@ -2,1 +2,1 @@
+-  memory_limit: 512Mi
++  memory_limit: 1024Mi
+"""
+        elif "timeout" in hyp_id:
+            patch.affected_files = ["config/network.yaml"]
+            patch.lines_changed = 1
+            patch.unified_diff = """--- a/config/network.yaml
++++ b/config/network.yaml
+@@ -3,1 +3,1 @@
+-  timeout_ms: 1000
++  timeout_ms: 3000
+"""
+        elif "deadlock" in hyp_id:
+            patch.affected_files = ["config/concurrency.yaml"]
+            patch.lines_changed = 1
+            patch.unified_diff = """--- a/config/concurrency.yaml
++++ b/config/concurrency.yaml
+@@ -4,1 +4,1 @@
+-  lock_timeout_ms: 0
++  lock_timeout_ms: 500
+"""
+        else:
+            patch.affected_files = ["config/inference.yaml"]
+            patch.lines_changed = 1
+            patch.unified_diff = """--- a/config/inference.yaml
 +++ b/config/inference.yaml
 @@ -4,1 +4,1 @@
 -  batching_window_ms: 200

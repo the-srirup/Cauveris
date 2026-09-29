@@ -6,13 +6,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#0a0a12',
-        foreground: '#e0e0ff',
-        primary: '#00ffff', // electric cyan
-        secondary: '#ffb800', // restrained amber
-        success: '#8fbc8f', // soft green
-        danger: '#ff6b6b', // red for failures
-        muted: '#6b6b80',
+        background: '#080a16',
+        surface: '#0d1024',
+        'surface-2': '#141837',
+        foreground: '#e8eafc',
+        muted: '#8a90b8',
+        primary: '#00e5ff',
+        'primary-dim': '#0a1428',
+        secondary: '#ffb300',
+        success: '#58d68d',
+        danger: '#ff5c8a',
       },
     },
   },

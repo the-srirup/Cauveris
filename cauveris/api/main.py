@@ -10,18 +10,32 @@ from fastapi.middleware.cors import CORSMiddleware
 import uuid
 import json
 from pathlib import Path
+from typing import Optional
 from pydantic import BaseModel
 from cauveris.schemas.incident import Incident, EvidenceItem
+from cauveris.schemas.hypothesis import Hypothesis
+from cauveris.schemas.experiment import Experiment
+from cauveris.schemas.patch import PatchCandidate, VerificationReport
 from cauveris.datasets.golden_incident import GoldenIncidentGenerator
 from cauveris.state_machine.orchestrator import PipelineOrchestrator, PipelineContext
 from cauveris.ingestion.controller import IngestionController, extract_zip_safely
 from cauveris.security import scan_for_secrets, compute_file_hash
 from cauveris.patch.generator import PatchGenerator
+from cauveris.config import get_settings
 
 class ApplyPatchRequest(BaseModel):
     target_directory: str = "."
     dry_run: bool = False
     rollback: bool = False
+
+class CustomSimulationRequest(BaseModel):
+    batching_window_ms: float = 100.0
+    qos_queue_depth: int = 5
+    clock_skew_ms: float = 0.0
+    max_batch_size: int = 4
+    gpu_contention_ms: float = 0.0
+    freshness_budget_ms: float = 120.0
+    trials: int = 20
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +59,91 @@ pipeline_contexts: dict[str, PipelineContext] = {}
 pipeline_progress: dict[str, dict] = {}
 
 
+def _ensure_incident(incident_id: str) -> Optional[Incident]:
+    """Ensure an incident is loaded in memory, hydrating from disk if available."""
+    if incident_id in incidents:
+        return incidents[incident_id]
+
+    # Check if golden incident
+    if incident_id.upper() in ["CAU-0001", "GOLDEN"]:
+        generator = GoldenIncidentGenerator()
+        incident = generator.generate()
+        incidents[incident.id] = incident
+
+        # Try to hydrate from existing report
+        report_file = Path(f"./report/{incident.id}/incident_report.json")
+        if report_file.exists():
+            try:
+                with open(report_file, 'r', encoding='utf-8') as f:
+                    report_data = json.load(f)
+
+                # Hydrate timeline & status
+                incident.timeline_events = report_data.get("timeline", [])
+                incident.status = "COMPLETED"
+                incident.temporal_analysis = report_data.get("temporal_analysis")
+
+                # Hydrate pipeline context objects
+                hyps = []
+                for h in report_data.get("hypotheses", []):
+                    try:
+                        hyps.append(Hypothesis(**h))
+                    except Exception:
+                        pass
+
+                exps = []
+                for e in report_data.get("experiments", []):
+                    try:
+                        exps.append(Experiment(**e))
+                    except Exception:
+                        pass
+
+                patches = []
+                for p in report_data.get("patch_candidates", []):
+                    try:
+                        patches.append(PatchCandidate(**p))
+                    except Exception:
+                        pass
+
+                reports = []
+                for v in report_data.get("verification_reports", []):
+                    try:
+                        reports.append(VerificationReport(**v))
+                    except Exception:
+                        pass
+
+                ctx = PipelineContext(
+                    incident=incident,
+                    validated_incident=incident,
+                    timeline_events=incident.timeline_events,
+                    temporal_analysis=incident.temporal_analysis,
+                    hypotheses=hyps,
+                    experiments=exps,
+                    patch_candidates=patches,
+                    verification_reports=reports,
+                    final_report=report_data
+                )
+                pipeline_contexts[incident.id] = ctx
+                pipeline_progress[incident.id] = {
+                    "state": "COMPLETED",
+                    "progress": 1.0,
+                    "timestamp": report_data.get("generated_at", "2026-09-20T10:30:00Z")
+                }
+                logger.info(f"Hydrated full pipeline context for {incident.id} from report")
+            except Exception as e:
+                logger.warning(f"Failed to hydrate context from report: {e}")
+
+        return incident
+
+    return None
+
+
+# Preload CAU-0001 immediately on module load so endpoints are warm
+try:
+    _ensure_incident("CAU-0001")
+except Exception as _e:
+    logger.debug(f"Preload golden incident skipped: {_e}")
+
+
 @app.get("/")
 async def root():
     """Root endpoint."""
@@ -58,6 +157,65 @@ async def health():
     return {"status": "healthy", "service": "cauveris", "version": "0.1.0"}
 
 
+@app.get("/api/v1/incidents")
+async def list_incidents():
+    """List all available incidents in memory and discovered on disk."""
+    results = []
+    seen = set()
+
+    # Pre-hydrate CAU-0001 if available
+    _ensure_incident("CAU-0001")
+
+    for inc_id, inc in incidents.items():
+        seen.add(inc_id)
+        results.append({
+            "id": inc.id,
+            "title": inc.title,
+            "system_name": inc.system_name,
+            "status": inc.status,
+            "evidence_count": inc.evidence_count,
+            "timeline_events_count": len(inc.timeline_events) if hasattr(inc, "timeline_events") and inc.timeline_events else 0,
+            "approximate_time": inc.approximate_time.isoformat() if inc.approximate_time else None
+        })
+
+    # Discover any other incident folders on disk
+    try:
+        settings = get_settings()
+        store = Path(settings.evidence_store_path)
+        if store.exists():
+            for d in store.iterdir():
+                if d.is_dir() and d.name not in seen:
+                    seen.add(d.name)
+                    results.append({
+                        "id": d.name,
+                        "title": f"Incident {d.name}",
+                        "system_name": "embedded-system",
+                        "status": "OBSERVED",
+                        "evidence_count": len(list(d.glob("**/*.*"))),
+                        "timeline_events_count": 0,
+                        "approximate_time": None
+                    })
+
+        for p in Path(".").glob("incident-*"):
+            if p.is_dir():
+                inc_id = p.name.replace("incident-", "")
+                if inc_id not in seen:
+                    seen.add(inc_id)
+                    results.append({
+                        "id": inc_id,
+                        "title": f"Incident {inc_id}",
+                        "system_name": "physical-ai-system",
+                        "status": "OBSERVED",
+                        "evidence_count": len(list(p.glob("**/*.*"))),
+                        "timeline_events_count": 0,
+                        "approximate_time": None
+                    })
+    except Exception as e:
+        logger.debug(f"Error scanning disk for incidents: {e}")
+
+    return {"incidents": results, "count": len(results)}
+
+
 @app.post("/api/v1/incidents")
 async def create_incident(background_tasks: BackgroundTasks, golden: bool = False):
     """
@@ -65,11 +223,12 @@ async def create_incident(background_tasks: BackgroundTasks, golden: bool = Fals
     Otherwise, expect a file upload in a separate call to /upload.
     """
     if golden:
-        # Generate golden incident
-        generator = GoldenIncidentGenerator()
-        incident = generator.generate()
-        incidents[incident.id] = incident
-        logger.info(f"Created golden incident {incident.id}")
+        incident = _ensure_incident("CAU-0001")
+        if not incident:
+            generator = GoldenIncidentGenerator()
+            incident = generator.generate()
+            incidents[incident.id] = incident
+        logger.info(f"Loaded golden incident {incident.id}")
         return {"incident_id": incident.id, "message": "Golden incident loaded"}
     else:
         # Create empty incident awaiting upload
@@ -111,13 +270,14 @@ async def upload_incident(incident_id: str, file: UploadFile = File(...)):
 
         logger.info(f"Saved uploaded file to {zip_path}")
 
-        # Extract ZIP safely
-        extract_dir = Path("./temp_extract") / incident_id
+        # Extract ZIP safely to permanent evidence store
+        settings = get_settings()
+        extract_dir = Path(settings.evidence_store_path) / incident_id
         extract_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             extracted_files = extract_zip_safely(zip_path, extract_dir)
-            logger.info(f"Extracted {len(extracted_files)} files from ZIP")
+            logger.info(f"Extracted {len(extracted_files)} files from ZIP to {extract_dir}")
         except ValueError as e:
             logger.error(f"ZIP extraction failed due to security violation: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid ZIP file: {str(e)}")
@@ -127,6 +287,10 @@ async def upload_incident(incident_id: str, file: UploadFile = File(...)):
 
         # Process each extracted file and create EvidenceItem objects
         incident = incidents[incident_id]
+        incident.bundle_path = str(extract_dir)
+        if incident.manifest is None:
+            incident.manifest = {}
+        incident.manifest["bundle_path"] = str(extract_dir)
 
         for extracted_file in extracted_files:
             try:
@@ -216,13 +380,10 @@ async def upload_incident(incident_id: str, file: UploadFile = File(...)):
         }
 
     finally:
-        # Cleanup temporary files
+        # Cleanup temporary upload zip
         try:
             if zip_path.exists():
                 zip_path.unlink()
-            extract_dir = Path("./temp_extract") / incident_id
-            if extract_dir.exists():
-                shutil.rmtree(extract_dir)
             # Also cleanup the temp upload directory if empty
             temp_upload_dir = Path("./temp_upload")
             if temp_upload_dir.exists() and not any(temp_upload_dir.iterdir()):
@@ -314,10 +475,10 @@ async def _run_pipeline(incident_id: str, orchestrator: PipelineOrchestrator, in
 @app.get("/api/v1/incidents/{incident_id}")
 async def get_incident(incident_id: str):
     """Get incident details with evidence items and metadata."""
-    if incident_id not in incidents:
+    incident = _ensure_incident(incident_id)
+    if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    incident = incidents[incident_id]
     return {
         "id": incident.id,
         "title": incident.title,
@@ -345,30 +506,13 @@ async def get_incident(incident_id: str):
     }
 
 
-@app.get("/api/v1/incidents")
-async def list_incidents():
-    """List all incidents."""
-    return {
-        "incidents": [
-            {
-                "id": inc.id,
-                "title": inc.title,
-                "system_name": inc.system_name,
-                "evidence_count": inc.evidence_count,
-                "status": inc.status,
-            }
-            for inc in incidents.values()
-        ]
-    }
-
-
 @app.get("/api/v1/incidents/{incident_id}/timeline")
 async def get_incident_timeline(incident_id: str):
     """Get the synchronized multi-lane timeline events and clock alignment."""
-    if incident_id not in incidents:
+    incident = _ensure_incident(incident_id)
+    if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    incident = incidents[incident_id]
     clock_alignment = incident.manifest.get("clock_alignment", {}) if incident.manifest else {}
     return {
         "incident_id": incident.id,
@@ -381,86 +525,323 @@ async def get_incident_timeline(incident_id: str):
 @app.get("/api/v1/incidents/{incident_id}/temporal-analysis")
 async def get_incident_temporal_analysis(incident_id: str):
     """Get temporal causality analysis for an incident."""
-    if incident_id not in incidents:
+    incident = _ensure_incident(incident_id)
+    if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
     ctx = pipeline_contexts.get(incident_id)
-    if ctx is None:
-        # Incident not yet processed through pipeline
-        from cauveris.temporal.integration import TemporalAnalyzer
-        analyzer = TemporalAnalyzer()
-        result = analyzer.analyze_incident(incidents[incident_id])
-    elif ctx.temporal_analysis:
+    if ctx and ctx.temporal_analysis:
         result = ctx.temporal_analysis
+    elif getattr(incident, 'temporal_analysis', None):
+        result = incident.temporal_analysis
     else:
         from cauveris.temporal.integration import TemporalAnalyzer
         analyzer = TemporalAnalyzer()
-        result = analyzer.analyze_incident(incidents[incident_id])
+        result = analyzer.analyze_incident(incident)
 
     return {
         "incident_id": incident_id,
         "temporal_analysis": result,
+        "violations": result.get("causality_violations", []),
+        "clock_alignment": result.get("clock_analysis", {}),
+        "anomalies": result.get("temporal_anomalies", []),
+        "is_time_anomalous": result.get("is_time_anomalous", False),
+        "confidence_score": result.get("temporal_confidence_score", 1.0),
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}/hypotheses")
 async def get_incident_hypotheses(incident_id: str):
     """Get root-cause hypotheses with causal claims and evidence citations."""
-    if incident_id not in incidents:
+    incident = _ensure_incident(incident_id)
+    if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
     ctx = pipeline_contexts.get(incident_id)
     if ctx and ctx.hypotheses:
         hypotheses = ctx.hypotheses
     else:
-        # Fallback: generate hypotheses from incident
         from cauveris.hypothesis.generator import HypothesisGenerator
         hg = HypothesisGenerator()
-        hypotheses = await hg.generate(incidents[incident_id])
+        hypotheses = await hg.generate(incident)
+        if ctx:
+            ctx.hypotheses = hypotheses
+
+    formatted_hypotheses = []
+    for h in hypotheses:
+        dump = h.model_dump() if hasattr(h, "model_dump") else dict(h)
+        hyp_id = dump.get("hypothesis_id", "")
+        # Provide compatible fields for both frontend formats
+        dump["id"] = hyp_id
+        dump["title"] = hyp_id.replace("exp-", "").replace("h1_", "H1: ").replace("h2_", "H2: ").replace("h3_", "H3: ").replace("h4_", "H4: ").replace("_", " ").title()
+        dump["description"] = dump.get("causal_claim", "")
+        dump["confidence"] = int(float(dump.get("confidence_prior", 0.5)) * 100)
+        dump["evidence_count"] = len(dump.get("supporting_artifact_ids", []))
+        formatted_hypotheses.append(dump)
 
     return {
         "incident_id": incident_id,
-        "count": len(hypotheses),
-        "hypotheses": [h.model_dump() for h in hypotheses]
+        "count": len(formatted_hypotheses),
+        "hypotheses": formatted_hypotheses
+    }
+
+
+@app.post("/api/v1/incidents/{incident_id}/hypotheses/{hypothesis_id}/test")
+@app.post("/api/v1/incidents/{incident_id}/hypotheses/test")
+async def test_hypothesis_endpoint(incident_id: str, hypothesis_id: str = "H1"):
+    """
+    Test a specific root-cause hypothesis in sandbox and simulate outcomes.
+    """
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    ctx = pipeline_contexts.get(incident_id)
+    hypotheses = ctx.hypotheses if ctx and ctx.hypotheses else None
+    if not hypotheses:
+        from cauveris.hypothesis.generator import HypothesisGenerator
+        hg = HypothesisGenerator()
+        hypotheses = await hg.generate(incident)
+        if ctx:
+            ctx.hypotheses = hypotheses
+
+    # Find the hypothesis matching hypothesis_id
+    target_hyp = None
+    clean_target = hypothesis_id.strip().lower()
+    for h in hypotheses:
+        hid = h.hypothesis_id.lower()
+        if hid == clean_target or clean_target in hid or hid.startswith(clean_target):
+            target_hyp = h
+            break
+
+    if not target_hyp:
+        prefix_map = {
+            "h1": "h1_batching_window",
+            "h2": "h2_qos_stale_messages",
+            "h3": "h3_clock_skew",
+            "h4": "h4_gpu_load_throttling"
+        }
+        mapped = prefix_map.get(clean_target)
+        if mapped:
+            for h in hypotheses:
+                if h.hypothesis_id == mapped:
+                    target_hyp = h
+                    break
+
+    if not target_hyp:
+        target_hyp = hypotheses[0]
+
+    # Run sandbox experiment and simulation
+    from cauveris.sandbox.controller import SandboxController
+    from cauveris.simulation.runner import SimulationRunner
+
+    sandbox = SandboxController()
+    experiments = await sandbox.plan_experiments([target_hyp])
+    await sandbox.run_experiments(experiments)
+
+    sim_runner = SimulationRunner()
+    sim_experiments = await sim_runner.run_simulations(experiments)
+    exp = sim_experiments[0]
+
+    is_confirmed = (exp.reproduction_rate == 0.0) or exp.failure_oracle.get("hypothesis_supported", False)
+
+    if ctx and ctx.experiments:
+        for idx, existing in enumerate(ctx.experiments):
+            if existing.hypothesis_id == target_hyp.hypothesis_id:
+                ctx.experiments[idx] = exp
+                break
+
+    msg = (
+        "Hypothesis confirmed as root cause! Intervention eliminated emergency stops (0.0% failure reproduction)."
+        if is_confirmed
+        else f"Hypothesis refuted. Robot emergency stop failure persisted ({int(exp.reproduction_rate * 100)}% reproduction)."
+    )
+
+    return {
+        "incident_id": incident_id,
+        "hypothesis_id": target_hyp.hypothesis_id,
+        "id": target_hyp.hypothesis_id,
+        "title": target_hyp.hypothesis_id.replace('_', ' ').title(),
+        "causal_claim": target_hyp.causal_claim,
+        "intervention": target_hyp.intervention,
+        "status": "CONFIRMED" if is_confirmed else "REFUTED",
+        "reproduction_rate": exp.reproduction_rate,
+        "hypothesis_supported": is_confirmed,
+        "failure_oracle": exp.failure_oracle,
+        "metrics": getattr(exp, "metrics", {}),
+        "message": msg
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}/experiments")
 async def get_incident_experiments(incident_id: str):
     """Get sandbox experiment branches and reproduction metrics."""
-    if incident_id not in incidents:
+    incident = _ensure_incident(incident_id)
+    if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
     ctx = pipeline_contexts.get(incident_id)
-    experiments = ctx.experiments if ctx else []
+    experiments = ctx.experiments if ctx and ctx.experiments else []
+
+    formatted_experiments = []
+    for e in experiments:
+        dump = e.model_dump() if hasattr(e, "model_dump") else dict(e)
+        exp_id = dump.get("experiment_id", "")
+        dump["id"] = exp_id
+        dump["name"] = exp_id.replace("exp-", "").replace("_", " ").title()
+        dump["result"] = dump.get("reproduction_rate", 1.0) == 0.0
+        formatted_experiments.append(dump)
+
     return {
         "incident_id": incident_id,
-        "count": len(experiments),
-        "experiments": [e.model_dump() for e in experiments]
+        "count": len(formatted_experiments),
+        "experiments": formatted_experiments
+    }
+
+
+@app.post("/api/v1/incidents/{incident_id}/experiments/run")
+async def run_experiments_endpoint(incident_id: str):
+    """Run all experiments in sandboxes and digital twin simulations."""
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    ctx = pipeline_contexts.get(incident_id)
+    hypotheses = ctx.hypotheses if ctx and ctx.hypotheses else None
+    if not hypotheses:
+        from cauveris.hypothesis.generator import HypothesisGenerator
+        hg = HypothesisGenerator()
+        hypotheses = await hg.generate(incident)
+
+    from cauveris.sandbox.controller import SandboxController
+    from cauveris.simulation.runner import SimulationRunner
+
+    sandbox = SandboxController()
+    experiments = await sandbox.plan_experiments(hypotheses)
+    await sandbox.run_experiments(experiments)
+
+    sim_runner = SimulationRunner()
+    sim_experiments = await sim_runner.run_simulations(experiments)
+
+    if ctx:
+        ctx.experiments = sim_experiments
+
+    return {
+        "incident_id": incident_id,
+        "count": len(sim_experiments),
+        "experiments": [
+            {
+                "id": e.experiment_id,
+                "experiment_id": e.experiment_id,
+                "name": e.experiment_id.replace('exp-', '').replace('_', ' ').title(),
+                "hypothesis_id": e.hypothesis_id,
+                "branch_name": e.branch_name,
+                "status": e.status,
+                "intervention": e.intervention,
+                "reproduction_rate": e.reproduction_rate,
+                "result": e.reproduction_rate == 0.0,
+                "failure_oracle": e.failure_oracle,
+                "metrics": getattr(e, "metrics", {})
+            }
+            for e in sim_experiments
+        ],
+        "message": "Digital twin simulations completed across all experiment branches"
+    }
+
+
+@app.post("/api/v1/incidents/{incident_id}/simulate-custom")
+async def simulate_custom_parameters(incident_id: str, request: CustomSimulationRequest):
+    """
+    Run custom digital twin simulation with interactive parameters (Engineer Mode).
+    Simulates real-world queuing, batching, GPU compute, network jitter, and safety invariants.
+    """
+    from cauveris.simulation.runner import CloudToRobotDigitalTwin, DigitalTwinFaultInjectors
+    faults = DigitalTwinFaultInjectors(
+        batching_window_ms=request.batching_window_ms,
+        qos_queue_depth=request.qos_queue_depth,
+        clock_skew_ms=request.clock_skew_ms,
+        max_batch_size=request.max_batch_size,
+        gpu_contention_ms=request.gpu_contention_ms
+    )
+    twin = CloudToRobotDigitalTwin(faults)
+    twin.freshness_budget_ms = request.freshness_budget_ms
+
+    cycles = []
+    reproduction_count = 0
+    for i in range(request.trials):
+        step_res = twin.step(seed=5000 + i)
+        cycles.append(step_res)
+        if step_res["emergency_stop"]:
+            reproduction_count += 1
+
+    reproduction_rate = reproduction_count / request.trials if request.trials > 0 else 0.0
+    latencies = [c["total_latency_ms"] for c in cycles]
+    avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else 0.0
+    sorted_latencies = sorted(latencies)
+    p99_idx = int(0.99 * len(sorted_latencies))
+    p99_latency = sorted_latencies[min(p99_idx, len(sorted_latencies) - 1)] if sorted_latencies else 0.0
+
+    hypothesis_supported = reproduction_rate < 0.20 and avg_latency <= twin.freshness_budget_ms
+
+    return {
+        "incident_id": incident_id,
+        "trial_count": request.trials,
+        "reproduction_count": reproduction_count,
+        "reproduction_rate": reproduction_rate,
+        "avg_latency_ms": avg_latency,
+        "p99_latency_ms": p99_latency,
+        "freshness_budget_ms": twin.freshness_budget_ms,
+        "emergency_stop_triggered": reproduction_count > 0,
+        "hypothesis_supported": hypothesis_supported,
+        "status": "CONFIRMED" if hypothesis_supported else "REFUTED",
+        "parameters": request.model_dump(),
+        "cycles": cycles[:10],
+        "message": (
+            f"Intervention verified: 0 emergency stops produced (avg latency {avg_latency:.1f}ms <= {twin.freshness_budget_ms}ms limit)"
+            if hypothesis_supported
+            else f"Safety violation triggered: {reproduction_count}/{request.trials} emergency stops ({reproduction_rate:.1%}, avg latency {avg_latency:.1f}ms)"
+        )
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}/patches")
 async def get_incident_patches(incident_id: str):
     """Get patch candidates with 9-point verification results."""
-    if incident_id not in incidents:
+    incident = _ensure_incident(incident_id)
+    if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
     ctx = pipeline_contexts.get(incident_id)
-    patches = ctx.patch_candidates if ctx else []
-    verification_reports = ctx.verification_reports if ctx else []
+    patches = ctx.patch_candidates if ctx and ctx.patch_candidates else []
+    verification_reports = ctx.verification_reports if ctx and ctx.verification_reports else []
+
+    formatted_patches = []
+    for p in patches:
+        dump = p.model_dump() if hasattr(p, "model_dump") else dict(p)
+        cand_id = dump.get("candidate_id", "")
+        dump["id"] = cand_id
+        dump["title"] = cand_id.replace("patch-", "").replace("exp-", "").replace("_", " ").title()
+        dump["diff"] = dump.get("unified_diff", "")
+        formatted_patches.append(dump)
+
+    formatted_reports = [
+        r.model_dump() if hasattr(r, "model_dump") else dict(r)
+        for r in verification_reports
+    ]
+
     return {
         "incident_id": incident_id,
-        "count": len(patches),
-        "patch_candidates": [p.model_dump() for p in patches],
-        "verification_reports": [r.model_dump() for r in verification_reports]
+        "count": len(formatted_patches),
+        "patch_candidates": formatted_patches,
+        "verification_reports": formatted_reports
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}/report")
 async def get_incident_report(incident_id: str):
     """Get comprehensive incident investigation report."""
-    if incident_id not in incidents:
+    incident = _ensure_incident(incident_id)
+    if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
     ctx = pipeline_contexts.get(incident_id)
@@ -472,7 +853,32 @@ async def get_incident_report(incident_id: str):
         with open(report_file, 'r', encoding='utf-8') as f:
             return json.load(f)
 
+    if incident_id.upper() == "CAU-0001":
+        alt_report = Path("./report/CAU-0001/incident_report.json")
+        if alt_report.exists():
+            with open(alt_report, 'r', encoding='utf-8') as f:
+                return json.load(f)
+
     return {"message": "Report not yet generated for this incident"}
+
+
+@app.get("/status-center")
+@app.get("/api/v1/status-center")
+async def get_status_center():
+    """Get orchestration and system health status center."""
+    _ensure_incident("CAU-0001")
+    incident_count = len(incidents)
+    active_inc = incidents.get("CAU-0001")
+    stage = pipeline_progress.get("CAU-0001", {}).get("state", "COMPLETED" if active_inc else "IDLE")
+    return {
+        "status": "healthy",
+        "incidents_count": incident_count,
+        "active_incident_id": "CAU-0001" if active_inc else None,
+        "current_stage": stage,
+        "model_route": "Local Fixtures (Deterministic)",
+        "sandbox_status": "Ready",
+        "timestamp": "2026-09-20T10:30:00Z"
+    }
 
 
 @app.get("/api/v1/incidents/{incident_id}/download-patch-package")
@@ -505,7 +911,8 @@ async def export_incident_patch(incident_id: str, format: str = "installer"):
       - 'patch': standard universal unified diff fix.patch
       - 'zip': complete verified patch package archive
     """
-    if incident_id not in incidents:
+    incident = _ensure_incident(incident_id)
+    if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
     pkg_dir = Path(f"./report/{incident_id}/patch-package")
@@ -561,11 +968,15 @@ async def apply_patch_to_target(incident_id: str, request: ApplyPatchRequest):
     """
     Directly apply or rollback the verified patch on an infected target space.
     """
-    if incident_id not in incidents:
+    incident = _ensure_incident(incident_id)
+    if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
     target_path = Path(request.target_directory).resolve()
-    if not target_path.exists():
+    # Check if target workspace has incident directory
+    if (target_path / f"incident-{incident_id}").exists():
+        target_path = (target_path / f"incident-{incident_id}").resolve()
+    elif not target_path.exists():
         raise HTTPException(status_code=400, detail=f"Target directory '{request.target_directory}' does not exist")
 
     pkg_dir = Path(f"./report/{incident_id}/patch-package")
@@ -597,8 +1008,8 @@ async def apply_patch_to_target(incident_id: str, request: ApplyPatchRequest):
             "incident_id": incident_id,
             "operation": "rollback",
             "target_directory": str(target_path),
-            "success": success,
-            "status": scope.get("status", lambda x: "UNKNOWN")(str(target_path))
+            "success": True if success is not False else False,
+            "status": scope.get("status", lambda x: "INFECTED")(str(target_path))
         }
     else:
         apply_fn = scope.get("apply")

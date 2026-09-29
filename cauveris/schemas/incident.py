@@ -31,6 +31,7 @@ class Incident(BaseEntity):
     evidence_items: List[EvidenceItem] = Field(default_factory=list, description="All evidence in the bundle")
     manifest: Dict[str, Any] = Field(default_factory=dict, description="Parsed manifest.yaml")
     status: StatusLabel = Field(default=StatusLabel.OBSERVED, description="Overall incident processing status")
+    bundle_path: Optional[str] = Field(None, description="Path to the incident bundle directory")
     timeline_events: List[Dict[str, Any]] = Field(default_factory=list, description="Normalized timeline events")
     temporal_analysis: Optional[Dict[str, Any]] = Field(default=None, description="Temporal causality analysis results")
 

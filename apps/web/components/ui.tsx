@@ -154,13 +154,17 @@ export function Button({
   variant = "primary",
   size = "md",
   className = "",
+  title,
   onClick,
+  disabled = false,
 }: {
   children: ReactNode;
-  variant?: "primary" | "outline" | "danger" | "ghost";
+  variant?: "primary" | "outline" | "danger" | "ghost" | "success";
   size?: "sm" | "md" | "lg";
   className?: string;
+  title?: string;
   onClick?: () => void;
+  disabled?: boolean;
 }) {
   const sizeClasses =
     size === "sm"
@@ -170,15 +174,31 @@ export function Button({
         : "px-5 py-2.5 text-sm";
   const styles: Record<string, string> = {
     primary:
-      "bg-primary text-background font-semibold shadow-lg shadow-primary/20 hover:bg-primary/90",
+      disabled
+        ? "bg-primary/50 text-background/50 cursor-not-allowed"
+        : "bg-primary text-background font-semibold shadow-lg shadow-primary/20 hover:bg-primary/90",
     outline:
-      "border border-white/15 text-foreground hover:border-primary/50 hover:text-primary",
-    danger: "bg-danger text-white font-semibold hover:bg-danger/90",
-    ghost: "text-muted hover:bg-white/5 hover:text-white",
+      disabled
+        ? "border border-white/15 text-muted/50 cursor-not-allowed"
+        : "border border-white/15 text-foreground hover:border-primary/50 hover:text-primary",
+    danger:
+      disabled
+        ? "bg-danger/50 text-white/50 cursor-not-allowed"
+        : "bg-danger text-white font-semibold hover:bg-danger/90",
+    success:
+      disabled
+        ? "bg-success/50 text-white/50 cursor-not-allowed"
+        : "bg-success text-white font-semibold shadow-lg shadow-success/20 hover:bg-success/90",
+    ghost:
+      disabled
+        ? "text-muted/50 cursor-not-allowed"
+        : "text-muted hover:bg-white/5 hover:text-white",
   };
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
+      title={title}
       className={`rounded-xl transition-all active:scale-[0.97] ${sizeClasses} ${styles[variant]} ${className}`}
     >
       {children}

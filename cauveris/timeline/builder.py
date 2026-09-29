@@ -29,8 +29,10 @@ class TimelineBuilder:
             candidates.append(Path(incident.manifest["bundle_path"]))
         candidates.append(Path(self.settings.evidence_store_path) / incident.id)
         candidates.append(Path(f"./incident-{incident.id}"))
-        candidates.append(Path("./incident-CAU-0001"))
-        candidates.append(Path("./golden_incident/incident-CAU-0001"))
+        candidates.append(Path("./temp_ingestion") / incident.id)
+        if incident.id.upper() in ["CAU-0001", "GOLDEN"]:
+            candidates.append(Path("./incident-CAU-0001"))
+            candidates.append(Path("./golden_incident/incident-CAU-0001"))
 
         for candidate in candidates:
             if candidate.exists() and candidate.is_dir():
@@ -58,22 +60,57 @@ class TimelineBuilder:
         timeline_events = []
 
         # 1. Parse OpenTelemetry traces
+        parsed_trace_files = set()
         trace_path = bundle_path / "traces" / "otel.json"
         if trace_path.exists():
             trace_events = await self._parse_otel_traces(trace_path, bundle_path)
             timeline_events.extend(trace_events)
+            parsed_trace_files.add(trace_path.resolve())
+
+        # Also search for any other OTel / trace JSON files in real data
+        for otel_candidate in bundle_path.glob("**/*.json"):
+            if otel_candidate.resolve() not in parsed_trace_files and "trace" in otel_candidate.stem.lower():
+                try:
+                    trace_events = await self._parse_otel_traces(otel_candidate, bundle_path)
+                    timeline_events.extend(trace_events)
+                    parsed_trace_files.add(otel_candidate.resolve())
+                except Exception:
+                    pass
 
         # 2. Parse logs (jsonl and text)
+        parsed_log_files = set()
         logs_dir = bundle_path / "logs"
         if logs_dir.exists():
             log_events = await self._parse_logs(logs_dir, bundle_path)
             timeline_events.extend(log_events)
+            for f in logs_dir.glob("*.*"):
+                parsed_log_files.add(f.resolve())
+
+        # Scan bundle root and subdirectories for remaining log files in real data
+        for ext in ["*.jsonl", "*.log"]:
+            for log_file in bundle_path.glob(f"**/{ext}"):
+                if log_file.resolve() not in parsed_log_files:
+                    if log_file.suffix == ".jsonl":
+                        timeline_events.extend(await self._parse_jsonl_log(log_file, bundle_path))
+                    else:
+                        timeline_events.extend(await self._parse_text_log(log_file, bundle_path))
+                    parsed_log_files.add(log_file.resolve())
 
         # 3. Parse metrics (GPU and network CSVs)
+        parsed_metric_files = set()
         metrics_dir = bundle_path / "metrics"
         if metrics_dir.exists():
             metric_events = await self._parse_metrics(metrics_dir, bundle_path)
             timeline_events.extend(metric_events)
+            for f in metrics_dir.glob("*.csv"):
+                parsed_metric_files.add(f.resolve())
+
+        # Scan for any additional CSV metric files in real data
+        for csv_file in bundle_path.glob("**/*.csv"):
+            if csv_file.resolve() not in parsed_metric_files:
+                metric_events = await self._parse_metrics_csv(csv_file, bundle_path)
+                timeline_events.extend(metric_events)
+                parsed_metric_files.add(csv_file.resolve())
 
         # 4. Parse deployment events
         deploy_path = bundle_path / "deployments" / "events.json"
@@ -183,8 +220,41 @@ class TimelineBuilder:
             events.extend(await self._parse_text_log(log_file, bundle_path))
         return events
 
+    def _normalize_timestamp_ns(self, val: Any) -> Optional[int]:
+        """Convert ISO8601 string or int/float Unix epoch into nanoseconds."""
+        if val is None:
+            return None
+        if isinstance(val, (int, float)):
+            if val <= 0:
+                return None
+            if val < 1e11:  # seconds (e.g. 1.7e9)
+                return int(val * 1_000_000_000)
+            elif val < 1e14:  # milliseconds (e.g. 1.7e12)
+                return int(val * 1_000_000)
+            elif val < 1e17:  # microseconds (e.g. 1.7e15)
+                return int(val * 1_000)
+            return int(val)  # nanoseconds
+
+        if isinstance(val, str):
+            val = val.strip()
+            if not val:
+                return None
+            try:
+                num = float(val)
+                return self._normalize_timestamp_ns(num)
+            except ValueError:
+                pass
+
+            try:
+                dt = datetime.fromisoformat(val.replace('Z', '+00:00'))
+                return int(dt.timestamp() * 1_000_000_000)
+            except Exception:
+                pass
+
+        return None
+
     async def _parse_jsonl_log(self, log_path: Path, bundle_path: Path) -> List[Dict[str, Any]]:
-        """Parse JSONL log file."""
+        """Parse JSONL log file with flexible real-world schema support."""
         events = []
         try:
             with open(log_path, 'r', encoding='utf-8') as f:
@@ -194,23 +264,58 @@ class TimelineBuilder:
                         continue
                     try:
                         log_entry = json.loads(line)
-                        timestamp_str = log_entry.get("timestamp")
-                        if not timestamp_str:
+                        raw_ts = (
+                            log_entry.get("timestamp")
+                            or log_entry.get("time")
+                            or log_entry.get("ts")
+                            or log_entry.get("@timestamp")
+                            or log_entry.get("datetime")
+                            or log_entry.get("timestamp_ns")
+                            or log_entry.get("timestamp_ms")
+                        )
+                        timestamp_ns = self._normalize_timestamp_ns(raw_ts)
+                        if timestamp_ns is None:
                             continue
 
-                        dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                        timestamp_ns = int(dt.timestamp() * 1_000_000_000)
+                        level = str(log_entry.get("level") or log_entry.get("severity") or log_entry.get("lvl") or "INFO").upper()
+                        node = str(
+                            log_entry.get("node")
+                            or log_entry.get("service")
+                            or log_entry.get("component")
+                            or log_entry.get("app")
+                            or log_path.stem
+                        )
+                        message = str(
+                            log_entry.get("message")
+                            or log_entry.get("msg")
+                            or log_entry.get("log")
+                            or log_entry
+                        )
 
-                        level = log_entry.get("level", "INFO")
-                        node = log_entry.get("node", log_path.stem)
-                        message = log_entry.get("message", "")
+                        # Dynamically derive lane from event characteristics
+                        lane = log_entry.get("lane")
+                        if not lane:
+                            node_l = node.lower()
+                            msg_l = message.lower()
+                            if "detection" in node_l:
+                                lane = "detection_publication"
+                            elif "navigation" in node_l or "tf" in node_l:
+                                lane = "tf_events"
+                            elif "safety" in node_l or "halt" in msg_l or "stop" in msg_l:
+                                lane = "safety_state"
+                            elif "cloud" in node_l or "predict" in msg_l:
+                                lane = "cloud_requests"
+                            elif "control" in node_l:
+                                lane = "controller_latency"
+                            else:
+                                lane = node_l
 
                         event = {
                             "timestamp_ns": timestamp_ns,
-                            "original_timestamp": timestamp_str,
+                            "original_timestamp": str(raw_ts),
                             "event_type": "log_entry",
                             "source_type": "jsonl_log",
-                            "lane": "detection_publication" if "detection" in node.lower() else ("tf_events" if "navigation" in node.lower() else ("safety_state" if "safety" in node.lower() else "cloud_requests")),
+                            "lane": lane,
                             "source": str(log_path.relative_to(bundle_path)).replace("\\", "/"),
                             "message": f"[{node}] {message}",
                             "attributes": {
@@ -221,6 +326,11 @@ class TimelineBuilder:
                             "confidence": 0.9,
                             "status": level
                         }
+                        # Merge extra payload attributes
+                        for k, v in log_entry.items():
+                            if k not in ["timestamp", "time", "ts", "@timestamp", "message", "msg", "level", "node", "service", "lane"]:
+                                event["attributes"][k] = v
+
                         events.append(event)
                     except Exception as e:
                         logger.debug(f"Failed to parse JSONL line {line_num} in {log_path}: {e}")
@@ -243,11 +353,19 @@ class TimelineBuilder:
                         timestamp_ns = int(log_path.stat().st_mtime * 1_000_000_000)
                         ts_str = "inferred"
 
+                    msg_l = line.lower()
+                    lane = log_path.stem
+                    if "halt" in msg_l or "emergency" in msg_l or "stop" in msg_l:
+                        lane = "safety_state"
+                    elif "timeout" in msg_l or "deadline" in msg_l:
+                        lane = "controller_latency"
+
                     event = {
                         "timestamp_ns": timestamp_ns,
                         "original_timestamp": ts_str,
                         "event_type": "log_entry",
                         "source_type": "text_log",
+                        "lane": lane,
                         "source": str(log_path.relative_to(bundle_path)).replace("\\", "/"),
                         "message": line,
                         "attributes": {
@@ -262,10 +380,11 @@ class TimelineBuilder:
         return events
 
     def _extract_timestamp_from_text_line(self, line: str) -> tuple[Optional[int], str]:
-        """Extract timestamp from various text log formats."""
+        """Extract timestamp from various text log formats (ISO8601, syslog, brackets)."""
         patterns = [
-            r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)',
-            r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})',
+            r'(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)',
+            r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)\]',
+            r'([A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)',
         ]
         for pattern in patterns:
             match = re.search(pattern, line)
@@ -275,7 +394,7 @@ class TimelineBuilder:
                     dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
                     return int(dt.timestamp() * 1_000_000_000), ts_str
                 except ValueError:
-                    continue
+                    pass
         return None, ""
 
     async def _parse_metrics(self, metrics_dir: Path, bundle_path: Path) -> List[Dict[str, Any]]:

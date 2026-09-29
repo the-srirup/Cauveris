@@ -2,11 +2,12 @@ import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import Sidebar from '@/components/Sidebar';
+import { NotificationContainer } from '@/components/Notification';
 
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Cauveris - Where Failures Meet Their Cause',
+  title: 'Cauveris - Where Failures Meet Cause',
   description: 'Autonomous reality debugger for AI-powered robotic systems',
 };
 
@@ -24,6 +25,7 @@ export default function RootLayout({
         <main className="flex-1 pl-64 pt-8 pb-12 bg-background min-h-screen">
           {children}
         </main>
+        <NotificationContainer />
       </body>
     </html>
   );
