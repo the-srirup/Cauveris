@@ -72,29 +72,29 @@ export function NotificationContainer() {
           key={notification.id}
           className="flex items-center gap-3 p-4 rounded-lg border shadow-lg backdrop-blur-sm"
           style={{
-            backgroundColor: "rgba(255, 255, 255, 0.05)",
-            border: "1px solid rgba(255, 255, 255, 0.1)",
+            backgroundColor: "var(--color-surface)",
+            border: "1px solid var(--color-border)",
           }}
         >
           <div className="flex-shrink-0">
             {notification.type === "success" ? (
-              <svg className="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 text-[var(--color-brand-success)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             ) : notification.type === "error" ? (
-              <svg className="w-5 h-5 text-danger" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 text-[var(--color-brand-danger)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             ) : notification.type === "warning" ? (
-              <svg className="w-5 h-5 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 text-[var(--color-brand-warning)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
             ) : (
-              <div className="w-5 h-5 bg-primary/20 rounded-full" />
+              <div className="w-5 h-5 bg-[var(--color-accent)]/20 rounded-full" />
             )}
           </div>
           <div className="flex-1">
-            <p className="text-sm text-foreground">{notification.message}</p>
+            <p className="text-sm text-[var(--color-text-primary)]">{notification.message}</p>
           </div>
         </div>
       ))}

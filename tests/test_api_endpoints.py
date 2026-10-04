@@ -9,7 +9,7 @@ from cauveris.state_machine.orchestrator import PipelineOrchestrator
 
 @pytest.mark.asyncio
 async def test_health_endpoints():
-    """Verify health and root endpoints."""
+    """Verify health and root endpoints (public, no auth required)."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         res = await client.get("/")
@@ -26,10 +26,13 @@ async def test_health_endpoints():
 
 
 @pytest.mark.asyncio
-async def test_create_golden_incident_and_validate():
+async def test_create_golden_incident_and_validate(test_user):
     """Verify POST /api/v1/incidents?golden=true and /validate."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Use authenticated client
+        client.headers.update(test_user["headers"])
+
         # 1. Create golden incident
         create_res = await client.post("/api/v1/incidents?golden=true")
         assert create_res.status_code == 200
@@ -47,10 +50,12 @@ async def test_create_golden_incident_and_validate():
 
 
 @pytest.mark.asyncio
-async def test_full_pipeline_endpoints():
+async def test_full_pipeline_endpoints(test_user):
     """Verify pipeline execution and retrieval of timeline, hypotheses, experiments, patches, and report."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers.update(test_user["headers"])
+
         # Load golden incident
         await client.post("/api/v1/incidents?golden=true")
         incident = incidents["CAU-0001"]

@@ -1,8 +1,9 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import Sidebar from '@/components/Sidebar';
-import { NotificationContainer } from '@/components/Notification';
+import { ShellProvider } from '@/lib/useShell';
+import { AuthProvider } from '@/components/AuthProvider';
+import ShellLayout from '@/components/ShellLayout';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -17,15 +18,57 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="h-full w-full">
-      <body className="h-full w-full bg-background text-foreground font-sans antialiased relative">
-        <div className="fixed inset-y-0 left-0 z-30 w-60">
-          <Sidebar />
-        </div>
-        <main className="flex-1 pl-64 pt-8 pb-12 bg-background min-h-screen">
-          {children}
-        </main>
-        <NotificationContainer />
+    <html lang="en" className="h-full w-full" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var raw = localStorage.getItem('cauveris-settings');
+                  if (!raw) return;
+                  var s = JSON.parse(raw);
+                  var root = document.documentElement;
+                  var theme = s.theme;
+                  if (theme === 'light') {
+                    root.classList.add('light');
+                    root.classList.remove('dark');
+                  } else if (theme === 'dark') {
+                    root.classList.add('dark');
+                    root.classList.remove('light');
+                  } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+                    root.classList.add('light');
+                    root.classList.remove('dark');
+                  } else {
+                    root.classList.add('dark');
+                    root.classList.remove('light');
+                  }
+                  if (s.accentColor) {
+                    root.classList.add('accent-' + s.accentColor);
+                  }
+                  if (s.density) {
+                    root.classList.add('density-' + s.density);
+                  }
+                  if (s.reducedMotion) {
+                    root.classList.add('reduced-motion');
+                  }
+                  if (s.animations === false) {
+                    root.classList.add('animations-disabled');
+                  }
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
+      <body className={`${inter.className} h-full w-full bg-background text-foreground font-sans antialiased`}>
+        <AuthProvider>
+          <ShellProvider>
+            <ShellLayout>
+              {children}
+            </ShellLayout>
+          </ShellProvider>
+        </AuthProvider>
       </body>
     </html>
   );

@@ -1,10 +1,17 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { Button, Card, Stat, Badge, PageHeader } from "@/components/ui";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { Button, Card, Stat, Badge, PageHeader, Input, Select } from "@/components/ui";
 import { api, Incident, IncidentReport } from "@/lib/api";
 import { notify } from "@/components/Notification";
 import { useActiveIncident } from "@/lib/useIncident";
+import { useShell } from "@/lib/useShell";
+import type { InspectorData } from "@/lib/useShell";
+import { useAuthStore } from "@/lib/auth";
+import { X, Search } from "lucide-react";
+import { VirtualizedList } from "@/components/VirtualizedList";
+import { DataErrorBoundary } from "@/components/ErrorBoundary";
 
 interface VaultItem {
   id: string;
@@ -15,10 +22,62 @@ interface VaultItem {
   size?: number | string;
   checksum?: string;
   path?: string;
+  priority?: number;
 }
 
-export default function EvidenceVault() {
-  const { incidentId } = useActiveIncident();
+function EvidenceVaultContent() {
+  const { incidentId, judgeMode, engineerMode } = useActiveIncident();
+  const { openInspector, setIncidentContext } = useShell();
+  const { isAuthenticated, isLoading: authLoading } = useAuthStore();
+  const router = useRouter();
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push('/login?redirect=/evidence-vault');
+    }
+  }, [isAuthenticated, authLoading, router]);
+
+  // Show loading while auth is initializing
+  if (authLoading) {
+    return (
+      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
+        <div className="flex h-8 w-8 animate-spin text-primary">
+          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+        </div>
+        <p className="text-sm text-[var(--color-text-muted)]">Loading Evidence Vault...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
+        <div className="flex h-8 w-8 animate-spin text-primary">
+          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+        </div>
+        <p className="text-sm text-[var(--color-text-muted)]">Redirecting to login...</p>
+      </div>
+    );
+  }
+
+  useEffect(() => {
+    if (incidentId) {
+      setIncidentContext({
+        id: incidentId,
+        title: "Evidence Vault",
+        state: "IDLE",
+        pipelineStage: "IDLE",
+        evidenceCoverage: 0,
+        modelProvider: "Local Fixtures",
+        backendStatus: "online",
+        processingMode: judgeMode ? "judge" : engineerMode ? "engineer" : "autonomous",
+        isDemonstration: false,
+      });
+    } else {
+      setIncidentContext(null);
+    }
+  }, [incidentId, judgeMode, engineerMode]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [incident, setIncident] = useState<Incident | null>(null);
@@ -46,108 +105,93 @@ export default function EvidenceVault() {
     }
   }, [incidentId]);
 
-  // Aggregate all items into searchable inventory
+  // Aggregate all items from ACTUAL API RESPONSE DATA (no hardcoded fallbacks)
+  // This ensures we only show real evidence items from the backend
   const allItems: VaultItem[] = useMemo(() => {
     const items: VaultItem[] = [];
+    const priorityOrder = [
+      "manifest.yaml", "config/inference.yaml", "deployments/events.json",
+      "traces/otel.json", "source/robot-stack/src/detection_client.py",
+      "logs/", "metrics/", "recordings/"
+    ];
 
-    // 1. Evidence items from incident
-    if (incident?.evidence_items && incident.evidence_items.length > 0) {
-      incident.evidence_items.forEach((ev) => {
+    // 1. Evidence items from incident (from API - no hardcoded fallback)
+    if (incident?.evidence_items) {
+      incident.evidence_items.forEach((ev, idx) => {
         items.push({
           id: `ev-${ev.file_path}`,
           name: ev.file_path,
           type: "evidence",
           status: ev.status || "OBSERVED",
-          description: `Evidence artifact (${ev.file_type}) • ${ev.is_required ? "Required" : "Supplementary"}`,
+          description: `Evidence artifact (${ev.file_type}) ${ev.is_required ? "• REQUIRED" : ""}`,
           size: ev.size_bytes ? `${Math.round(ev.size_bytes / 1024)} KB` : undefined,
           checksum: ev.checksum_sha256 ? `${ev.checksum_sha256.slice(0, 16)}...` : undefined,
-          path: ev.file_path
-        });
-      });
-    } else {
-      // Default fallback evidence list
-      const defaults = [
-        "manifest.yaml",
-        "config/inference.yaml",
-        "config/robot_params.yaml",
-        "deployments/events.json",
-        "traces/otel.json",
-        "logs/cloud-service.jsonl",
-        "logs/ros-nodes.jsonl",
-        "logs/system.log",
-        "metrics/gpu.csv",
-        "metrics/network.csv",
-        "recordings/robot_run.mcap",
-        "source/cloud-service/Dockerfile",
-        "source/cloud-service/inference_server.py",
-        "source/robot-stack/src/main.cpp",
-        "source/robot-stack/src/detection_client.py",
-        "observations/operator_note.md",
-        "media/incident.mp4",
-        "README.md"
-      ];
-      defaults.forEach((p) => {
-        items.push({
-          id: `ev-${p}`,
-          name: p,
-          type: "evidence",
-          status: "OBSERVED",
-          description: `Synchronized incident bundle artifact`,
-          path: p
+          path: ev.file_path,
+          priority: priorityOrder.findIndex(p => ev.file_path.startsWith(p))
         });
       });
     }
 
-    // 2. Hypotheses
-    items.push({
-      id: "hyp-001",
-      name: "H1: Dynamic Batching Window Latency Spike",
-      type: "hypothesis",
-      status: "CONFIRMED",
-      description: "Increased dynamic batching window in v42 caused inference latency to breach robot freshness budget (120ms)",
-      path: "hypotheses/h1_batching_window"
-    });
-    items.push({
-      id: "hyp-002",
-      name: "H2: ROS 2 QoS Stale Message Retention",
-      type: "hypothesis",
-      status: "REFUTED",
-      description: "Refuted in digital twin: failure reproduced even with depth=1",
-      path: "hypotheses/h2_qos_stale_messages"
-    });
+    // 2. Hypotheses from report (from API - no hardcoded values)
+    if (report?.hypotheses) {
+      report.hypotheses.forEach((hyp, idx) => {
+        items.push({
+          id: hyp.hypothesis_id || hyp.id || `hyp-${idx}`,
+          name: hyp.title || hyp.hypothesis_id || hyp.id,
+          type: "hypothesis",
+          status: hyp.status || "PENDING",
+          description: hyp.causal_claim || hyp.description || "Hypothesis investigation",
+          path: `hypotheses/${hyp.hypothesis_id || hyp.id}`,
+          priority: idx
+        });
+      });
+    }
 
-    // 3. Experiments
-    items.push({
-      id: "exp-001",
-      name: "exp-h1: Batching Window Reduction to 100ms",
-      type: "experiment",
-      status: "SIMULATED",
-      description: "Counterfactual simulation: 0/20 failures (0.0% reproduction)",
-      path: "experiments/exp-h1_batching_window"
-    });
+    // 3. Experiments from report (from API)
+    if (report?.experiments) {
+      report.experiments.forEach((exp, idx) => {
+        items.push({
+          id: exp.experiment_id || exp.id || `exp-${idx}`,
+          name: exp.name || exp.experiment_id || exp.id,
+          type: "experiment",
+          status: exp.status || "PENDING",
+          description: exp.name || exp.intervention || "Digital twin simulation",
+          path: `experiments/${exp.experiment_id || exp.id}`,
+          priority: idx
+        });
+      });
+    }
 
-    // 4. Patches
-    items.push({
-      id: "patch-001",
-      name: "PATCH-001: batching_window_ms = 100",
-      type: "patch",
-      status: "VERIFIED",
-      description: "Verified fix passed all 9 gates (score: 0.97)",
-      path: "report/CAU-0001/patch-package/fix.patch"
-    });
+    // 4. Patches from report (from API)
+    if (report?.patch_candidates) {
+      report.patch_candidates.forEach((patch, idx) => {
+        items.push({
+          id: patch.candidate_id || patch.id || `patch-${idx}`,
+          name: patch.title || patch.candidate_id || patch.id,
+          type: "patch",
+          status: patch.verified ? "VERIFIED" : "PENDING",
+          description: patch.rationale || "Patch candidate for investigation",
+          path: "report",
+          priority: idx
+        });
+      });
+    }
 
-    // 5. Report
-    items.push({
-      id: "report-001",
-      name: "Comprehensive Incident Investigation Report",
-      type: "report",
-      status: "COMPLETED",
-      description: "Full audit report with provenance links, telemetry, and fix package",
-      path: `report/${incidentId}/incident_report.json`
-    });
+    // 5. Report itself
+    if (report) {
+      items.push({
+        id: `report-${incidentId}`,
+        name: `Incident Report: ${report.title || incidentId}`,
+        type: "report",
+        status: report.status || "COMPLETED",
+        description: report.description || "Comprehensive investigation report with provenance",
+        path: `report/${incidentId}/incident_report.json`,
+        priority: 99
+      });
+    }
 
     return items;
-  }, [incident, incidentId]);
+  }, [incident, report, incidentId]);
 
   // Filtered items
   const filteredItems = useMemo(() => {
@@ -219,6 +263,80 @@ export default function EvidenceVault() {
     }
   };
 
+  // Open inspector for artifact
+  const handleOpenArtifactInspector = (item: VaultItem) => {
+    if (item.type === "evidence") {
+      const evidenceItem = incident?.evidence_items?.find(e => `ev-${e.file_path}` === item.id);
+      const data: InspectorData = {
+        mode: "evidence",
+        evidenceId: item.id,
+        evidenceData: {
+          name: item.name,
+          type: evidenceItem?.file_type || "Unknown",
+          path: item.path,
+          size: evidenceItem?.size_bytes,
+          checksum: evidenceItem?.checksum_sha256,
+          status: item.status,
+          is_required: evidenceItem?.is_required,
+          ingested_at: new Date().toISOString(),
+          confidence: item.status === "CONFIRMED" ? 0.9 : 0.7,
+        },
+      };
+      openInspector("evidence", data);
+    } else if (item.type === "hypothesis") {
+      const hyp = report?.hypotheses?.find(h => `hyp-${h.hypothesis_id || h.id}` === item.id || h.id === item.id);
+      const data: InspectorData = {
+        mode: "hypothesis",
+        hypothesisId: item.id,
+        hypothesisData: {
+          ...hyp,
+          type: "Causal Claim",
+          confidence: hyp?.confidence ? hyp.confidence * 100 : 70,
+          limitations: ["Based on available evidence", "Requires experimental validation"],
+        },
+      };
+      openInspector("hypothesis", data);
+    } else if (item.type === "experiment") {
+      const exp = report?.experiments?.find(e => `exp-${e.experiment_id || e.id}` === item.id || e.id === item.id);
+      const data: InspectorData = {
+        mode: "experiment",
+        experimentId: item.id,
+        experimentData: {
+          ...exp,
+          type: "Digital Twin Simulation",
+          confidence: exp?.reproduction_rate !== undefined ? Math.round((1 - exp.reproduction_rate) * 100) : 50,
+        },
+      };
+      openInspector("experiment", data);
+    } else if (item.type === "patch") {
+      const patch = report?.patch_candidates?.find(p => `patch-${p.candidate_id || p.id}` === item.id || p.id === item.id);
+      const data: InspectorData = {
+        mode: "patch",
+        patchId: item.id,
+        patchData: {
+          ...patch,
+          type: "Code Fix",
+          confidence: patch?.score ? patch.score * 100 : patch?.verified ? 97 : 42,
+          limitations: patch?.verified ? ["Limited to simulated verification"] : ["Failed invariant gates"],
+        },
+      };
+      openInspector("patch", data);
+    } else if (item.type === "report") {
+      const data: InspectorData = {
+        mode: "patch", // Using patch mode as fallback for report
+        patchId: item.id,
+        patchData: {
+          title: item.name,
+          type: "Investigation Report",
+          status: item.status,
+          description: item.description,
+          path: item.path,
+        },
+      };
+      openInspector("patch", data);
+    }
+  };
+
   // Download standalone patch installer script
   const handleDownloadPatchScript = async () => {
     setLoading(true);
@@ -247,7 +365,7 @@ export default function EvidenceVault() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-6">
+    <div className="min-h-screen bg-[var(--theme-background)] text-[var(--theme-foreground)] p-6">
       {/* Header */}
       <PageHeader
         title="Evidence Vault"
@@ -261,137 +379,169 @@ export default function EvidenceVault() {
 
       {/* Error Message */}
       {error && (
-        <div className="mb-6 p-4 bg-danger/10 border border-danger/25 rounded-xl text-danger text-sm flex items-center justify-between">
+        <div className="mb-6 p-4 bg-[var(--color-brand-danger)]/10 border border-[var(--color-brand-danger)]/25 rounded-xl text-[var(--color-brand-danger)] text-sm flex items-center justify-between">
           <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-danger hover:text-white text-xs font-semibold uppercase">Dismiss</button>
+          <button onClick={() => setError(null)} className="text-[var(--color-brand-danger)] hover:text-[var(--color-brand-primary)] text-xs font-semibold uppercase">Dismiss</button>
         </div>
       )}
 
-      {/* Claims Summary */}
+      {/* Claims Summary - Derived from actual API response */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        <Stat label="Total Artifacts" value={allItems.length} sub="Synchronized across 6 lanes" trend="flat" />
-        <Stat label="Required Evidence" value="14 / 14" sub="100% Completeness" trend="success" />
-        <Stat label="Integrity Status" value="VERIFIED" sub="SHA-256 Checksums Valid" trend="success" />
+        <Stat
+          label="Evidence Items"
+          value={incident?.evidence_count || 0}
+          sub={`Required: ${incident?.required_evidence_count || 0} • Missing: ${incident?.missing_required_evidence?.length || 0}`}
+          trend={incident && (incident.missing_required_evidence?.length || 0) === 0 ? "success" : "warning"}
+        />
+        <Stat
+          label="Report Status"
+          value={report?.status || "UNKNOWN"}
+          sub={report ? `Hypotheses: ${report.hypotheses?.length || 0} • Patches: ${report.patch_candidates?.filter((p: any) => p.verified).length || 0}` : "No report data"}
+          trend={report?.status === "COMPLETED" ? "success" : "secondary"}
+        />
+        <Stat
+          label="Verification"
+          value={report?.patch_candidates?.filter((p: any) => p.verified).length || 0}
+          sub="Verified patches available"
+          trend={(report?.patch_candidates?.filter((p: any) => p.verified).length || 0) > 0 ? "success" : "muted"}
+        />
       </div>
 
       {/* Artifact Inventory */}
       <Card title="Artifact Inventory & Explorer">
         <div className="space-y-4">
           {/* Interactive Filters & Search */}
-          <div className="flex flex-wrap items-center gap-3 pb-2">
-            <div className="relative flex-1 min-w-[200px]">
-              <input
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pb-2">
+            <div className="relative w-full sm:flex-1 min-w-[240px]">
+              <Input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search artifacts, files, checksums..."
-                className="w-full bg-surface/60 text-white placeholder-muted/60 border border-white/10 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-primary/50"
+                leftIcon={<Search className="h-4 w-4" />}
+                rightElement={searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-brand-primary)] hover:bg-[var(--color-surface-2)] transition-colors"
+                    aria-label="Clear search"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                className="w-full"
               />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-white text-xs"
-                >
-                  ✕
-                </button>
-              )}
             </div>
 
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="bg-surface/60 text-white border border-white/10 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-primary/50 cursor-pointer"
-            >
-              <option value="all">All Types ({allItems.length})</option>
-              <option value="evidence">Evidence Files</option>
-              <option value="hypothesis">Hypotheses</option>
-              <option value="experiment">Experiments</option>
-              <option value="patch">Patches</option>
-              <option value="report">Reports</option>
-            </select>
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <Select
+                label="Filter by artifact type"
+                value={typeFilter}
+                onValueChange={setTypeFilter}
+                className="w-full sm:w-40"
+                options={[
+                  { value: "all", label: `All Types (${allItems.length})` },
+                  { value: "evidence", label: "Evidence Files" },
+                  { value: "hypothesis", label: "Hypotheses" },
+                  { value: "experiment", label: "Experiments" },
+                  { value: "patch", label: "Patches" },
+                  { value: "report", label: "Reports" },
+                ]}
+              />
 
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="bg-surface/60 text-white border border-white/10 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-primary/50 cursor-pointer"
-            >
-              <option value="all">All Statuses</option>
-              <option value="OBSERVED">OBSERVED</option>
-              <option value="CONFIRMED">CONFIRMED</option>
-              <option value="REFUTED">REFUTED</option>
-              <option value="VERIFIED">VERIFIED</option>
-              <option value="COMPLETED">COMPLETED</option>
-            </select>
+              <Select
+                label="Filter by status"
+                value={statusFilter}
+                onValueChange={setStatusFilter}
+                className="w-full sm:w-36"
+                options={[
+                  { value: "all", label: "All Statuses" },
+                  { value: "OBSERVED", label: "OBSERVED" },
+                  { value: "CONFIRMED", label: "CONFIRMED" },
+                  { value: "REFUTED", label: "REFUTED" },
+                  { value: "VERIFIED", label: "VERIFIED" },
+                  { value: "COMPLETED", label: "COMPLETED" },
+                ]}
+              />
+            </div>
           </div>
 
           {/* Results Count */}
-          <div className="text-xs text-muted">
-            Showing <strong className="text-white">{filteredItems.length}</strong> of {allItems.length} artifacts
+          <div className="text-xs text-[var(--color-text-muted)]">
+            Showing <strong className="text-[var(--color-brand-primary)]">{filteredItems.length}</strong> of {allItems.length} artifacts
           </div>
 
-          {/* Artifact List */}
-          <div className="space-y-3">
-            {filteredItems.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => setSelectedItem(item)}
-                className={`p-4 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-4 ${
-                  selectedItem?.id === item.id
-                    ? "bg-primary/10 border-primary shadow-lg shadow-primary/10"
-                    : "bg-surface/40 border-white/5 hover:border-white/20 hover:bg-surface/60"
-                }`}
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 text-primary flex items-center justify-center flex-shrink-0 text-xs font-mono font-bold">
-                    {item.type.slice(0, 3).toUpperCase()}
+          {/* Artifact List - Virtualized for Performance */}
+          <div className="h-[500px] w-full" style={{ minHeight: 400 }}>
+            <VirtualizedList
+              items={filteredItems}
+              itemHeight={92}
+              height={500}
+              overscanCount={5}
+              renderItem={(item, index, style) => (
+                <div
+                  key={item.id}
+                  onClick={() => setSelectedItem(item)}
+                  onDoubleClick={() => handleOpenArtifactInspector(item)}
+                  style={style}
+                  className={`p-4 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-4 ${
+                    selectedItem?.id === item.id
+                      ? "bg-[var(--color-brand-primary)]/10 border-[var(--color-brand-primary)] shadow-lg shadow-[var(--color-brand-primary)]/10"
+                      : "bg-[var(--color-surface)]/40 border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface)]/60"
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-[var(--color-brand-primary)]/10 border border-[var(--color-brand-primary)]/20 text-[var(--color-brand-primary)] flex items-center justify-center flex-shrink-0 text-xs font-mono font-bold">
+                      {item.type.slice(0, 3).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="font-semibold text-[var(--color-brand-primary)] text-xs truncate">{item.name}</h3>
+                      <p className="text-[11px] text-[var(--color-text-muted)] truncate mt-0.5">{item.description}</p>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <h3 className="font-semibold text-white text-xs truncate">{item.name}</h3>
-                    <p className="text-[11px] text-muted truncate mt-0.5">{item.description}</p>
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  {item.size && (
-                    <span className="text-[10px] font-mono text-muted hidden sm:inline">{item.size}</span>
-                  )}
-                  <Badge
-                    tone={
-                      item.status === "CONFIRMED" || item.status === "VERIFIED" || item.status === "COMPLETED"
-                        ? "success"
-                        : item.status === "REFUTED"
-                          ? "danger"
-                          : "primary"
-                    }
-                  >
-                    {item.status}
-                  </Badge>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    {item.size && (
+                      <span className="text-[10px] font-mono text-[var(--color-text-muted)] hidden sm:inline">{item.size}</span>
+                    )}
+                    <Badge
+                      tone={
+                        item.status === "CONFIRMED" || item.status === "VERIFIED" || item.status === "COMPLETED"
+                          ? "success"
+                          : item.status === "REFUTED"
+                            ? "danger"
+                            : "primary"
+                      }
+                    >
+                      {item.status}
+                    </Badge>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )}
+            />
           </div>
 
           {/* Detail Drawer / Modal for Selected Item */}
           {selectedItem && (
-            <div className="p-4 rounded-xl bg-black/50 border border-primary/30 mt-4 space-y-2">
+            <div className="p-4 rounded-xl bg-[var(--theme-background)]/50 border border-[var(--color-brand-primary)]/30 mt-4 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-primary uppercase tracking-wider">
+                <span className="text-xs font-bold text-[var(--color-brand-primary)] uppercase tracking-wider">
                   Artifact Provenance Details
                 </span>
                 <button
                   onClick={() => setSelectedItem(null)}
-                  className="text-muted hover:text-white text-xs font-semibold"
+                  className="text-[var(--color-text-muted)] hover:text-[var(--color-brand-primary)] text-xs font-semibold flex items-center gap-1"
                 >
-                  ✕ Close
+                  <X className="h-3 w-3" />
+                  Close
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                <div><span className="text-muted">ID:</span> <code className="text-white font-mono">{selectedItem.id}</code></div>
-                <div><span className="text-muted">Type:</span> <span className="text-white font-mono">{selectedItem.type}</span></div>
-                <div><span className="text-muted">Path:</span> <code className="text-white font-mono">{selectedItem.path || selectedItem.name}</code></div>
-                <div><span className="text-muted">Status:</span> <span className="text-success font-mono">{selectedItem.status}</span></div>
+                <div><span className="text-[var(--color-text-muted)]">ID:</span> <code className="text-[var(--color-brand-primary)] font-mono">{selectedItem.id}</code></div>
+                <div><span className="text-[var(--color-text-muted)]">Type:</span> <span className="text-[var(--color-brand-primary)] font-mono">{selectedItem.type}</span></div>
+                <div><span className="text-[var(--color-text-muted)]">Path:</span> <code className="text-[var(--color-brand-primary)] font-mono">{selectedItem.path || selectedItem.name}</code></div>
+                <div><span className="text-[var(--color-text-muted)]">Status:</span> <span className="text-[var(--color-brand-success)] font-mono">{selectedItem.status}</span></div>
                 {selectedItem.checksum && (
-                  <div className="col-span-2"><span className="text-muted">SHA-256:</span> <code className="text-primary font-mono">{selectedItem.checksum}</code></div>
+                  <div className="col-span-2"><span className="text-[var(--color-text-muted)]">SHA-256:</span> <code className="text-[var(--color-brand-primary)] font-mono">{selectedItem.checksum}</code></div>
                 )}
               </div>
             </div>
@@ -400,17 +550,27 @@ export default function EvidenceVault() {
       </Card>
 
       {/* Export & Download Actions */}
-      <div className="mt-8 pt-4 border-t border-white/10 flex flex-wrap justify-end gap-3">
-        <Button variant="outline" onClick={handleDownloadReport} disabled={loading}>
-          {loading ? "Exporting..." : "Download Full Report (JSON)"}
-        </Button>
-        <Button variant="outline" onClick={handleDownloadPatchScript} disabled={loading}>
-          {loading ? "Exporting..." : "Download Patch Script (.py)"}
-        </Button>
+      <div className="mt-8 pt-4 border-t border-[var(--color-border)] flex flex-col sm:flex-row items-start sm:items-center justify-end gap-3 w-full">
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+          <Button variant="outline" onClick={handleDownloadReport} disabled={loading}>
+            {loading ? "Exporting..." : "Download Full Report (JSON)"}
+          </Button>
+          <Button variant="outline" onClick={handleDownloadPatchScript} disabled={loading}>
+            {loading ? "Exporting..." : "Download Patch Script (.py)"}
+          </Button>
+        </div>
         <Button variant="primary" onClick={handleDownloadPatchPackage} disabled={loading}>
           {loading ? "Exporting..." : "Download Patch Package (ZIP)"}
         </Button>
       </div>
     </div>
+  );
+}
+
+export default function EvidenceVault() {
+  return (
+    <DataErrorBoundary>
+      <EvidenceVaultContent />
+    </DataErrorBoundary>
   );
 }

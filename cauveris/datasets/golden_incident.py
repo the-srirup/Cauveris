@@ -71,9 +71,12 @@ class GoldenIncidentGenerator:
         """Write manifest.yaml."""
         manifest = {
             "incident_id": "CAU-0001",
-            "title": "Warehouse robot emergency stop after deployment v42",
+            "title": "Warehouse robot emergency stop after deployment v42 [DEMO DATA]",
             "description": "Autonomous mobile robot consumes stale object detections from remote GPU inference service after deployment v42 increases dynamic batching window, causing P99 latency to exceed freshness budget.",
             "system_name": "warehouse-amr-01",
+            "is_demonstration": True,
+            "demonstration_label": "DEMONSTRATION BENCHMARK (CAU-0001)",
+            "deterministic_seed": 42,
             "approximate_time": "2026-09-20T10:30:00Z",
             "source_repositories": [
                 "https://github.com/example/inference-service",
@@ -492,7 +495,8 @@ perception:
             source_repositories=manifest.get("source_repositories", []),
             commit_hash=manifest.get("commit_hash", ""),
             manifest=manifest,
-            status=StatusLabel.OBSERVED
+            status=StatusLabel.OBSERVED,
+            is_demonstration=True
         )
 
         evidence_paths = [

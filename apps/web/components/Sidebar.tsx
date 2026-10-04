@@ -1,173 +1,241 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { tv } from "tailwind-variants";
+import { ChevronLeft, ChevronRight, Menu, X, LayoutDashboard, Clock, GitBranch, Eye, FlaskConical, Wrench, RotateCcw, Database, FileText, Settings } from "lucide-react";
+import { Tooltip } from "./Tooltip";
+import { useShell } from "@/lib/useShell";
+import type { NavItemKey } from "@/lib/useShell";
 
-const NAV = [
-  {
-    href: "/",
-    label: "Mission Control",
-    icon: (
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9.75 17 9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2Z"
-      />
-    ),
+const sidebarStyles = tv({
+  base: `
+    fixed inset-y-0 left-0 z-40 flex flex-col
+    bg-[var(--theme-surface)]/80 backdrop-blur-xl border-r border-[var(--color-border)]
+    transition-all duration-200 ease-out
+    motion-reduce:transition-none
+  `,
+  variants: {
+    collapsed: {
+      true: "w-16 lg:w-16",
+      false: "w-60 lg:w-60",
+    },
+    isDrawer: {
+      true: "transform -translate-x-full lg:translate-x-0",
+      false: "translate-x-0",
+    },
   },
-  {
-    href: "/reality-rewind",
-    label: "Reality Rewind",
-    icon: (
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M12 8v4l3 3m6-3a9 9 0 1 1-2.64-6.36M17.25 2h.01"
-      />
-    ),
+  defaultVariants: {
+    collapsed: false,
+    isDrawer: false,
   },
-  {
-    href: "/causal-constellation",
-    label: "Causal Constellation",
-    icon: (
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M6 6h.01M6 18h.01M18 6h.01M18 18h.01M12 12l-3.5-6M12 12 8.5 18M12 12h6M12 12H6"
-      />
-    ),
+});
+
+const navItemStyles = tv({
+  base: `
+    relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium
+    transition-all duration-150 ease-out
+    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-background)]
+  `,
+  variants: {
+    active: {
+      true: "bg-[var(--color-accent)]/10 text-[var(--color-accent)]",
+      false: "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text-primary)]",
+    },
+    collapsed: {
+      true: "justify-center px-2",
+      false: "justify-start px-3",
+    },
   },
-  {
-    href: "/ghost-lab",
-    label: "Ghost Lab",
-    icon: (
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9.75 3.104A6.75 6.75 0 0 1 21.75 9.9M21.75 21v-2.25M3.75 21v-2.25M12 21v-3a3 3 0 0 0-3-3h-1.5a3 3 0 0 1-3-3V8.25A6.75 6.75 0 0 1 11.25 1.5h1.5"
-      />
-    ),
+  defaultVariants: {
+    active: false,
+    collapsed: false,
   },
-  {
-    href: "/patch-forge",
-    label: "Patch Forge",
-    icon: (
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3 3 0 0 1-2.25.881l-2.85-.475m2.34-2.346.475 2.85M11.42 15.17l6.155-5.024"
-      />
-    ),
-  },
-  {
-    href: "/victory-replay",
-    label: "Victory Replay",
-    icon: (
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
-      />
-    ),
-  },
-  {
-    href: "/evidence-vault",
-    label: "Evidence Vault",
-    icon: (
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M16.5 10.5V7.5a4.5 4.5 0 1 0-9 0v3m-3-3h15v12a.75.75 0 0 1-.75.75h-13.5a.75.75 0 0 1-.75-.75v-12Z"
-      />
-    ),
-  },
+});
+
+const NAV: { href: string; label: NavItemKey; icon: React.ReactNode; group: "investigation" | "analysis" | "operations" }[] = [
+  { href: "/", label: "mission-control", icon: <LayoutDashboard className="h-5 w-5" />, group: "investigation" },
+  { href: "/reality-rewind", label: "reality-rewind", icon: <Clock className="h-5 w-5" />, group: "investigation" },
+  { href: "/causal-constellation", label: "causal-constellation", icon: <GitBranch className="h-5 w-5" />, group: "investigation" },
+  { href: "/holographic-reconstruction", label: "holographic-reconstruction", icon: <Eye className="h-5 w-5" />, group: "analysis" },
+  { href: "/ghost-lab", label: "ghost-lab", icon: <FlaskConical className="h-5 w-5" />, group: "analysis" },
+  { href: "/patch-forge", label: "patch-forge", icon: <Wrench className="h-5 w-5" />, group: "analysis" },
+  { href: "/victory-replay", label: "victory-replay", icon: <RotateCcw className="h-5 w-5" />, group: "operations" },
+  { href: "/evidence-vault", label: "evidence-vault", icon: <Database className="h-5 w-5" />, group: "operations" },
+  { href: "/reports", label: "reports", icon: <FileText className="h-5 w-5" />, group: "operations" },
+  { href: "/settings", label: "settings", icon: <Settings className="h-5 w-5" />, group: "operations" },
 ];
+
+const GROUP_LABELS = {
+  investigation: "Investigation",
+  analysis: "Analysis",
+  operations: "Operations",
+};
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { state, setNavDrawer, toggleNavCollapse } = useShell();
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+  // Sync drawer state
+  useEffect(() => {
+    setIsDrawerOpen(state.isNavDrawerOpen);
+  }, [state.isNavDrawerOpen]);
+
+  const handleDrawerToggle = (open: boolean) => {
+    setIsDrawerOpen(open);
+    setNavDrawer(open);
+  };
+
+  // Determine active state
+  const getActive = (href: string) => {
+    if (href === "/") return pathname === "/";
+    return pathname?.startsWith(href);
+  };
+
+  // Group nav items
+  const groupedNav = NAV.reduce((acc, item) => {
+    if (!acc[item.group]) acc[item.group] = [];
+    acc[item.group].push(item);
+    return acc;
+  }, {} as Record<string, typeof NAV>);
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-white/5 bg-surface/60 backdrop-blur-xl">
-      {/* Brand */}
-      <div className="flex items-center gap-3 px-6 py-6">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 ring-1 ring-primary/30">
-          <svg
-            className="h-5 w-5 text-primary"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M13 10V3L4 14h7v7l9-11h-7Z"
-            />
-          </svg>
-        </div>
-        <div className="leading-tight">
-          <div className="text-sm font-bold tracking-wide text-white">
-            Cauveris
-          </div>
-          <div className="text-[10px] uppercase tracking-widest text-muted">
-            Reality Debugger
-          </div>
-        </div>
-      </div>
+    <>
+      {/* Mobile Overlay */}
+      {state.isNavDrawerOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-[var(--theme-background)]/50 lg:hidden"
+          onClick={() => handleDrawerToggle(false)}
+          aria-hidden="true"
+        />
+      )}
 
-      {/* Nav */}
-      <nav className="flex-1 overflow-y-auto px-3 py-2">
-        <div className="mb-3 px-3 text-[10px] font-medium uppercase tracking-widest text-muted">
-          Investigation
-        </div>
-        <ul className="space-y-1">
-          {NAV.map((item) => {
-            const active =
-              item.href === "/"
-                ? pathname === "/"
-                : pathname?.startsWith(item.href);
-            return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  className={`group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all ${
-                    active
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted hover:bg-white/5 hover:text-white"
-                  }`}
+      {/* Sidebar */}
+      <aside
+        className={sidebarStyles({ collapsed: state.isNavCollapsed, isDrawer: state.isNavDrawerOpen })}
+        aria-label="Sidebar"
+        data-collapsed={state.isNavCollapsed}
+      >
+        {/* Brand Header */}
+        <div className="flex items-center justify-between h-16 px-4 border-b border-[var(--color-border)]">
+          {!state.isNavCollapsed && (
+            <Link href="/" className="flex items-center gap-3 flex-1 min-w-0" aria-label="Cauveris Home">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-accent)]/15 ring-1 ring-[var(--color-accent)]/30 flex-shrink-0">
+                <svg className="h-5 w-5 text-[var(--color-brand-primary)]" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7Z" />
+                </svg>
+              </div>
+              <div className="leading-tight min-w-0">
+                <div className="text-sm font-bold tracking-wide text-[var(--color-text-primary)] truncate">Cauveris</div>
+                <div className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)] truncate">Reality Debugger</div>
+              </div>
+            </Link>
+          )}
+
+          {/* Collapse/Drawer Toggle */}
+          <div className="flex items-center gap-1">
+            {state.isNavDrawerOpen && (
+              <Tooltip content="Close sidebar" position="right">
+                <button
+                  onClick={() => handleDrawerToggle(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-2)] transition-colors lg:hidden"
+                  aria-label="Close sidebar"
                 >
-                  {active && (
-                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r bg-primary" />
-                  )}
-                  <svg
-                    className={`h-5 w-5 transition-colors ${
-                      active ? "text-primary" : "text-muted group-hover:text-white"
-                    }`}
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={1.5}
-                    viewBox="0 0 24 24"
-                  >
-                    {item.icon}
-                  </svg>
-                  <span>{item.label}</span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
-
-      {/* Footer */}
-      <div className="border-t border-white/5 px-6 py-4">
-        <div className="flex items-center gap-2 text-xs text-muted">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-          </span>
-          Systems Nominal
+                  <X className="h-4 w-4" />
+                </button>
+              </Tooltip>
+            )}
+            <Tooltip content={state.isNavCollapsed ? "Expand sidebar" : "Collapse sidebar"} position={state.isNavCollapsed ? "right" : "bottom"}>
+              <button
+                onClick={toggleNavCollapse}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-2)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-background)]"
+                aria-label={state.isNavCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              >
+                {state.isNavCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+              </button>
+            </Tooltip>
+          </div>
         </div>
-      </div>
-    </aside>
+
+        {/* Mobile drawer close button (when open) */}
+        {state.isNavDrawerOpen && !state.isNavCollapsed && (
+          <div className="lg:hidden px-4 py-2">
+            <button
+              onClick={() => handleDrawerToggle(false)}
+              className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text-primary)] transition-colors"
+            >
+              <X className="h-4 w-4" />
+              <span>Close Sidebar</span>
+            </button>
+          </div>
+        )}
+
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto px-2 py-3" aria-label="Navigation sections">
+          {Object.entries(groupedNav).map(([group, items]) => (
+            <div key={group} className="mb-4">
+              {!state.isNavCollapsed && (
+                <div className="mb-2 px-3 text-[10px] font-medium uppercase tracking-widest text-[var(--color-text-muted)]">
+                  {GROUP_LABELS[group as keyof typeof GROUP_LABELS] || group}
+                </div>
+              )}
+              <ul className="space-y-1" role="list">
+                {items.map((item) => {
+                  const active = getActive(item.href);
+                  const label = item.label.replace("-", " ");
+                  return (
+                    <li key={item.href}>
+                      {state.isNavCollapsed ? (
+                        <Tooltip content={label} position="right">
+                          <Link
+                            href={item.href}
+                            className={navItemStyles({ active, collapsed: true })}
+                            aria-current={active ? "page" : undefined}
+                            onClick={() => handleDrawerToggle(false)}
+                          >
+                            {active && (
+                              <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r bg-[var(--color-accent)]" />
+                            )}
+                            <span className="flex-shrink-0" aria-hidden="true">{item.icon}</span>
+                          </Link>
+                        </Tooltip>
+                      ) : (
+                        <Link
+                          href={item.href}
+                          className={navItemStyles({ active, collapsed: false })}
+                          aria-current={active ? "page" : undefined}
+                          onClick={() => handleDrawerToggle(false)}
+                        >
+                          {active && (
+                            <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r bg-[var(--color-brand-primary)]" />
+                          )}
+                          <span className="flex-shrink-0" aria-hidden="true">{item.icon}</span>
+                          <span className="truncate">{label}</span>
+                        </Link>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+
+          {/* Footer status */}
+          {!state.isNavCollapsed && (
+            <div className="mt-auto border-t border-[var(--color-border)] pt-4 px-3">
+              <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--color-brand-success)] opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--color-brand-success)]" />
+                </span>
+                Systems Nominal
+              </div>
+            </div>
+          )}
+        </nav>
+      </aside>
+    </>
   );
 }

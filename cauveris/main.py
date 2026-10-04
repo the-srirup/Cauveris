@@ -6,20 +6,15 @@ import logging
 import sys
 from cauveris.config import get_settings
 import uvicorn
+from cauveris.logging_config import setup_structured_logging, get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
-def setup_logging():
-    """Setup logging configuration."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler("cauveris.log")
-        ]
-    )
+def setup_logging(debug: bool = False):
+    """Setup structured JSON logging configuration."""
+    level = logging.DEBUG if debug else logging.INFO
+    setup_structured_logging(level=level, json_output=True)
 
 
 def main():
@@ -86,6 +81,7 @@ def main():
         # Create a namespace with serve defaults
         class ServeArgs:
             def __init__(self):
+                self.command = "serve"
                 self.host = get_settings().host
                 self.port = get_settings().port
                 self.debug = False

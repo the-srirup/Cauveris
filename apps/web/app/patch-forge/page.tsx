@@ -1,13 +1,69 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Button, Card, Stat, Badge, PageHeader } from "@/components/ui";
 import { api, PatchCandidate, VerificationReport } from "@/lib/api";
 import { notify } from "@/components/Notification";
 import { useActiveIncident } from "@/lib/useIncident";
+import { useShell } from "@/lib/useShell";
+import type { InspectorData } from "@/lib/useShell";
+import { useAuthStore } from "@/lib/auth";
+import { Check, Wrench, Package, Download } from "lucide-react";
 
 export default function PatchForge() {
-  const { incidentId } = useActiveIncident();
+  const { incidentId, judgeMode, engineerMode } = useActiveIncident();
+  const { openInspector, setIncidentContext } = useShell();
+  const { isAuthenticated, isLoading: authLoading } = useAuthStore();
+  const router = useRouter();
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push('/login?redirect=/patch-forge');
+    }
+  }, [isAuthenticated, authLoading, router]);
+
+  // Show loading while auth is initializing
+  if (authLoading) {
+    return (
+      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
+        <div className="flex h-8 w-8 animate-spin text-primary">
+          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+        </div>
+        <p className="text-sm text-[var(--color-text-muted)]">Loading Patch Forge...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
+        <div className="flex h-8 w-8 animate-spin text-primary">
+          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+        </div>
+        <p className="text-sm text-[var(--color-text-muted)]">Redirecting to login...</p>
+      </div>
+    );
+  }
+
+  useEffect(() => {
+    if (incidentId) {
+      setIncidentContext({
+        id: incidentId,
+        title: "Patch Forge",
+        state: "IDLE",
+        pipelineStage: "IDLE",
+        evidenceCoverage: 0,
+        modelProvider: "Local Fixtures",
+        backendStatus: "online",
+        processingMode: judgeMode ? "judge" : engineerMode ? "engineer" : "autonomous",
+        isDemonstration: false,
+      });
+    } else {
+      setIncidentContext(null);
+    }
+  }, [incidentId, judgeMode, engineerMode]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [patches, setPatches] = useState<PatchCandidate[]>([]);
@@ -85,7 +141,8 @@ export default function PatchForge() {
     }
   ];
 
-  const activePatches = patches.length > 0 ? patches : defaultPatches;
+  // Use actual patches from API (remove hardcoded fallback for production use)
+  const activePatches = patches;
   const verifiedCount = activePatches.filter(p => p.verified).length;
 
   // Generate candidates
@@ -121,6 +178,23 @@ export default function PatchForge() {
     }
   };
 
+  // Open inspector for patch candidate
+  const handleOpenPatchInspector = (patch: PatchCandidate) => {
+    const data: InspectorData = {
+      mode: "patch",
+      patchId: patch.candidate_id || patch.id,
+      patchData: {
+        ...patch,
+        type: "Code Fix",
+        confidence: patch.score * 100,
+        limitations: patch.verified
+          ? ["Limited to simulated verification", "No production deployment data"]
+          : ["Failed one or more invariant gates", "Cannot be safely deployed"],
+      },
+    };
+    openInspector("patch", data);
+  };
+
   // Download verified patch
   const handleDownloadPatch = async () => {
     setLoading(true);
@@ -148,7 +222,7 @@ export default function PatchForge() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-6">
+    <div className="min-h-screen bg-[var(--theme-background)] text-[var(--theme-foreground)] p-6">
       {/* Header */}
       <PageHeader
         title="Patch Forge"
@@ -162,9 +236,9 @@ export default function PatchForge() {
 
       {/* Error Message */}
       {error && (
-        <div className="mb-6 p-4 bg-danger/10 border border-danger/25 rounded-xl text-danger text-sm flex items-center justify-between">
+        <div className="mb-6 p-4 bg-[var(--color-brand-danger)]/10 border border-[var(--color-brand-danger)]/25 rounded-xl text-[var(--color-brand-danger)] text-sm flex items-center justify-between">
           <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-danger hover:text-white text-xs font-semibold uppercase">Dismiss</button>
+          <button onClick={() => setError(null)} className="text-[var(--color-brand-danger)] hover:text-[var(--color-text-primary)] text-xs font-semibold uppercase">Dismiss</button>
         </div>
       )}
 
@@ -177,23 +251,24 @@ export default function PatchForge() {
               {activePatches.map((patch, idx) => (
                 <div
                   key={patch.candidate_id || patch.id || idx}
-                  className={`p-5 rounded-xl border transition-all ${
+                  onClick={() => handleOpenPatchInspector(patch)}
+                  className={`p-5 rounded-xl border transition-all cursor-pointer ${
                     patch.verified
-                      ? "bg-success/5 border-success/30 shadow-lg shadow-success/5"
-                      : "bg-danger/5 border-danger/20 opacity-80"
-                  }`}
+                      ? "bg-[var(--color-brand-success)]/5 border-[var(--color-brand-success)]/30 shadow-lg shadow-[var(--color-brand-success)]/5"
+                      : "bg-[var(--color-brand-danger)]/5 border-[var(--color-brand-danger)]/20 opacity-80"
+                  } hover:ring-2 hover:ring-[var(--color-brand-primary)]/50`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-bold text-white text-base">
+                      <h3 className="font-bold text-[var(--color-text-primary)] text-base">
                         {patch.title || patch.candidate_id}
                       </h3>
-                      <div className="flex items-center gap-2 mt-1 text-xs text-muted">
-                        <span>Score: <strong className="font-mono text-white">{patch.score}</strong></span>
+                      <div className="flex items-center gap-2 mt-1 text-xs text-[var(--color-text-muted)]">
+                        <span>Score: <strong className="font-mono text-[var(--color-text-primary)]">{patch.score}</strong></span>
                         <span>•</span>
-                        <span>Files: <strong className="font-mono text-white">{patch.affected_files?.join(", ") || "1 file"}</strong></span>
+                        <span>Files: <strong className="font-mono text-[var(--color-text-primary)]">{patch.affected_files?.join(", ") || "1 file"}</strong></span>
                         <span>•</span>
-                        <span>Lines: <strong className="font-mono text-white">±{patch.lines_changed || 1}</strong></span>
+                        <span>Lines: <strong className="font-mono text-[var(--color-text-primary)]">±{patch.lines_changed || 1}</strong></span>
                       </div>
                     </div>
                     <Badge tone={patch.verified ? "success" : "danger"} dot={true}>
@@ -203,25 +278,25 @@ export default function PatchForge() {
 
                   {/* Unified Diff */}
                   <div className="mt-4">
-                    <span className="text-[10px] uppercase font-bold text-muted tracking-wider block mb-1">
+                    <span className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider block mb-1">
                       Universal Unified Diff
                     </span>
-                    <pre className="p-3 rounded-lg bg-black/60 border border-white/5 text-xs font-mono text-foreground overflow-x-auto leading-relaxed">
+                    <pre className="p-3 rounded-lg bg-[var(--theme-background)]/60 border border-[var(--color-border)] text-xs font-mono text-[var(--color-text-primary)] overflow-x-auto leading-relaxed">
                       {patch.unified_diff || patch.diff}
                     </pre>
                   </div>
 
                   {/* Rationale */}
                   {patch.rationale && (
-                    <p className={`mt-3 text-xs ${patch.verified ? "text-muted" : "text-danger"}`}>
+                    <p className={`mt-3 text-xs ${patch.verified ? "text-[var(--color-text-muted)]" : "text-[var(--color-brand-danger)]"}`}>
                       {patch.rationale}
                     </p>
                   )}
 
                   {/* 9-Point Verification Checklist (for verified patch) */}
                   {patch.verified && (
-                    <div className="mt-4 pt-4 border-t border-white/5">
-                      <h4 className="text-xs font-bold text-primary uppercase tracking-wider mb-2">
+                    <div className="mt-4 pt-4 border-t border-[var(--color-border)]">
+                      <h4 className="text-xs font-bold text-[var(--color-brand-primary)] uppercase tracking-wider mb-2">
                         9-Point Invariant Verification Checklist
                       </h4>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
@@ -236,8 +311,9 @@ export default function PatchForge() {
                           "8. Forbidden Change Scan Passed (No secrets/bypasses)",
                           "9. Reversible Zero-Impact Rollback Confirmed"
                         ].map((check, i) => (
-                          <div key={i} className="flex items-center gap-2 text-[11px] text-muted">
-                            <span className="text-success font-bold font-mono">✓ PASS</span>
+                          <div key={i} className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+                            <Check className="h-3.5 w-3.5 text-[var(--color-brand-success)] flex-shrink-0" />
+                            <span className="text-[var(--color-brand-success)] font-bold font-mono">PASS</span>
                             <span className="truncate">{check}</span>
                           </div>
                         ))}
@@ -266,34 +342,42 @@ export default function PatchForge() {
 
               {/* Action Buttons */}
               <div className="space-y-3 pt-2">
-                <Button
-                  variant="primary"
-                  onClick={handleGenerateCandidates}
-                  disabled={loading}
-                  className="w-full"
-                >
-                  {loading ? "Synthesizing..." : "Generate New Candidates"}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleCreatePatchPackage}
-                  disabled={loading}
-                  className="w-full"
-                >
-                  {loading ? "Assembling..." : "Create Patch Package"}
-                </Button>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleGenerateCandidates}
+                    disabled={loading}
+                    className="w-full"
+                  >
+                    <Wrench className="h-3.5 w-3.5" />
+                    <span>{loading ? "Synthesizing..." : "Generate Candidates"}</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCreatePatchPackage}
+                    disabled={loading}
+                    className="w-full"
+                  >
+                    <Package className="h-3.5 w-3.5" />
+                    <span>{loading ? "Assembling..." : "Create Package"}</span>
+                  </Button>
+                </div>
                 <Button
                   variant="success"
+                  size="sm"
                   onClick={handleDownloadPatch}
                   disabled={loading}
                   className="w-full"
                 >
-                  {loading ? "Downloading..." : "Download Verified Patch"}
+                  <Download className="h-3.5 w-3.5" />
+                  <span>{loading ? "Downloading..." : "Download Verified Patch"}</span>
                 </Button>
               </div>
 
-              <div className="p-3 rounded-lg bg-surface/50 border border-white/5 text-xs text-muted leading-relaxed">
-                The verified patch package includes zero-dependency executable <code className="text-primary font-mono">apply_patch.py</code>, standard universal unified diff <code className="text-primary font-mono">fix.patch</code>, safety rollback script, and automated reviewer verification checklist.
+              <div className="p-3 rounded-lg bg-[var(--color-surface)]/50 border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] leading-relaxed">
+                The verified patch package includes zero-dependency executable <code className="text-[var(--color-brand-primary)] font-mono">apply_patch.py</code>, standard universal unified diff <code className="text-[var(--color-brand-primary)] font-mono">fix.patch</code>, safety rollback script, and automated reviewer verification checklist.
               </div>
             </div>
           </Card>

@@ -140,25 +140,27 @@ async def test_direct_import_and_execution_in_infected_space(sample_h1_experimen
 
 
 @pytest.mark.asyncio
-async def test_api_export_and_apply_patch_endpoints():
+async def test_api_export_and_apply_patch_endpoints(test_user):
     """Verify GET /export-patch and POST /apply-patch API endpoints."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers.update(test_user["headers"])
         # Load incident and run pipeline
-        await client.post("/api/v1/incidents?golden=true")
-        incident = incidents["CAU-0001"]
+        create_res = await client.post("/api/v1/incidents?golden=true")
+        incident_id = create_res.json()["incident_id"]
+        incident = incidents[incident_id]
         orchestrator = PipelineOrchestrator()
         context = await orchestrator.process_incident(incident)
-        pipeline_contexts["CAU-0001"] = context
+        pipeline_contexts[incident_id] = context
 
         # 1. Export installer format
-        res_inst = await client.get("/api/v1/incidents/CAU-0001/export-patch?format=installer")
+        res_inst = await client.get(f"/api/v1/incidents/{incident_id}/export-patch?format=installer")
         assert res_inst.status_code == 200
         assert res_inst.headers["content-type"] == "text/x-python; charset=utf-8"
         assert b"apply_patch" in res_inst.content
 
         # 2. Export patch format
-        res_patch = await client.get("/api/v1/incidents/CAU-0001/export-patch?format=patch")
+        res_patch = await client.get(f"/api/v1/incidents/{incident_id}/export-patch?format=patch")
         assert res_patch.status_code == 200
         assert res_patch.headers["content-type"] == "text/x-diff; charset=utf-8"
         assert b"batching_window_ms: 100" in res_patch.content
@@ -180,7 +182,7 @@ async def test_api_export_and_apply_patch_endpoints():
 
             # POST /apply-patch
             apply_res = await client.post(
-                "/api/v1/incidents/CAU-0001/apply-patch",
+                f"/api/v1/incidents/{incident_id}/apply-patch",
                 json={"target_directory": str(target_ws), "dry_run": False}
             )
             assert apply_res.status_code == 200
@@ -191,7 +193,7 @@ async def test_api_export_and_apply_patch_endpoints():
 
             # POST /apply-patch with rollback
             rb_res = await client.post(
-                "/api/v1/incidents/CAU-0001/apply-patch",
+                f"/api/v1/incidents/{incident_id}/apply-patch",
                 json={"target_directory": str(target_ws), "rollback": True}
             )
             assert rb_res.status_code == 200

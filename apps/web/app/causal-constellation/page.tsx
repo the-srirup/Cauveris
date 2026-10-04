@@ -1,13 +1,48 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Button, Card, Badge, PageHeader } from "@/components/ui";
 import { api, Hypothesis } from "@/lib/api";
 import { notify } from "@/components/Notification";
 import { useActiveIncident } from "@/lib/useIncident";
+import { useAuthStore } from "@/lib/auth";
 
 export default function CausalConstellation() {
   const { incidentId } = useActiveIncident();
+  const { isAuthenticated, isLoading: authLoading } = useAuthStore();
+  const router = useRouter();
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push('/login?redirect=/causal-constellation');
+    }
+  }, [isAuthenticated, authLoading, router]);
+
+  // Show loading while auth is initializing
+  if (authLoading) {
+    return (
+      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
+        <div className="flex h-8 w-8 animate-spin text-primary">
+          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+        </div>
+        <p className="text-sm text-[var(--color-text-muted)]">Loading causal constellation...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
+        <div className="flex h-8 w-8 animate-spin text-primary">
+          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+        </div>
+        <p className="text-sm text-[var(--color-text-muted)]">Redirecting to login...</p>
+      </div>
+    );
+  }
+
   const [loading, setLoading] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -129,7 +164,7 @@ export default function CausalConstellation() {
   ];
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-6">
+    <div className="min-h-screen bg-[var(--theme-background)] text-[var(--theme-foreground)] p-6">
       {/* Header */}
       <PageHeader
         title="Causal Constellation"
@@ -143,9 +178,9 @@ export default function CausalConstellation() {
 
       {/* Error Message */}
       {error && (
-        <div className="mb-6 p-4 bg-danger/10 border border-danger/25 rounded-xl text-danger text-sm flex items-center justify-between">
+        <div className="mb-6 p-4 bg-[var(--color-brand-danger)]/10 border border-[var(--color-brand-danger)]/25 rounded-xl text-[var(--color-brand-danger)] text-sm flex items-center justify-between">
           <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-danger hover:text-white text-xs font-semibold uppercase">Dismiss</button>
+          <button onClick={() => setError(null)} className="text-[var(--color-brand-danger)] hover:text-[var(--color-brand-primary)] text-xs font-semibold uppercase">Dismiss</button>
         </div>
       )}
 
@@ -166,16 +201,16 @@ export default function CausalConstellation() {
                     key={hypKey}
                     className={`p-5 rounded-xl border transition-all ${
                       testResult?.status === "CONFIRMED"
-                        ? "bg-success/5 border-success/30 shadow-lg shadow-success/5"
+                        ? "bg-[var(--color-brand-success)]/5 border-[var(--color-brand-success)]/30 shadow-lg shadow-[var(--color-brand-success)]/5"
                         : testResult?.status === "REFUTED"
-                          ? "bg-danger/5 border-danger/20 opacity-80"
-                          : "bg-surface/50 border-white/5 hover:border-primary/20"
+                          ? "bg-[var(--color-brand-danger)]/5 border-[var(--color-brand-danger)]/20 opacity-80"
+                          : "bg-[var(--color-surface)]/50 border-[var(--color-border)] hover:border-[var(--color-brand-primary)]/20"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <h3 className="font-bold text-white text-base flex items-center gap-2">
-                          <span className="text-primary font-mono">#{index + 1}</span>
+                        <h3 className="font-bold text-[var(--color-brand-primary)] text-base flex items-center gap-2">
+                          <span className="text-[var(--color-brand-primary)] font-mono">#{index + 1}</span>
                           {hyp.title}
                         </h3>
                       </div>
@@ -190,15 +225,15 @@ export default function CausalConstellation() {
                       </div>
                     </div>
 
-                    <p className="text-xs text-muted mt-2 leading-relaxed">
+                    <p className="text-xs text-[var(--color-text-muted)] mt-2 leading-relaxed">
                       {hyp.causal_claim || hyp.description}
                     </p>
 
                     {/* Intervention details */}
                     {hyp.intervention && (
-                      <div className="mt-3 p-2.5 rounded-lg bg-black/30 border border-white/5 text-xs">
-                        <span className="text-muted block text-[10px] uppercase tracking-wider font-semibold">Planned Intervention:</span>
-                        <code className="text-primary font-mono mt-0.5 block">{hyp.intervention}</code>
+                      <div className="mt-3 p-2.5 rounded-lg bg-[var(--theme-background)]/30 border border-[var(--color-border)] text-xs">
+                        <span className="text-[var(--color-text-muted)] block text-[10px] uppercase tracking-wider font-semibold">Planned Intervention:</span>
+                        <code className="text-[var(--color-brand-primary)] font-mono mt-0.5 block">{hyp.intervention}</code>
                       </div>
                     )}
 
@@ -213,16 +248,16 @@ export default function CausalConstellation() {
                     <div className="mt-4 flex items-center justify-between gap-4">
                       <div className="flex-1">
                         <div className="flex justify-between text-xs mb-1">
-                          <span className="text-muted">Prior Confidence:</span>
-                          <span className="font-mono text-primary font-bold">{confidenceVal}%</span>
+                          <span className="text-[var(--color-text-muted)]">Prior Confidence:</span>
+                          <span className="font-mono text-[var(--color-brand-primary)] font-bold">{confidenceVal}%</span>
                         </div>
-                        <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                        <div className="w-full h-1.5 bg-[var(--color-border)] rounded-full overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all duration-500 ${
                               testResult?.status === "CONFIRMED"
-                                ? "bg-success"
+                                ? "bg-[var(--color-brand-success)]"
                                 : testResult?.status === "REFUTED"
-                                  ? "bg-danger"
+                                  ? "bg-[var(--color-brand-danger)]"
                                   : "bg-primary"
                             }`}
                             style={{ width: `${confidenceVal}%` }}
@@ -245,8 +280,8 @@ export default function CausalConstellation() {
                     {testResult && (
                       <div className={`mt-3 p-3 rounded-lg border text-xs ${
                         testResult.status === "CONFIRMED"
-                          ? "bg-success/10 border-success/30 text-success"
-                          : "bg-danger/10 border-danger/30 text-danger"
+                          ? "bg-[var(--color-brand-success)]/10 border-success/30 text-success"
+                          : "bg-[var(--color-brand-danger)]/10 border-danger/30 text-danger"
                       }`}>
                         <div className="font-semibold flex items-center gap-1.5">
                           <span>{testResult.status === "CONFIRMED" ? "✓" : "✕"}</span>
@@ -269,80 +304,80 @@ export default function CausalConstellation() {
         {/* Right: Interactive Causal Graph */}
         <div className="space-y-6">
           <Card title="Interactive Causal Topology Graph">
-            <div className="p-4 bg-surface/40 rounded-xl border border-white/5 space-y-4">
-              <p className="text-xs text-muted">
+            <div className="p-4 bg-[var(--color-surface)]/40 rounded-xl border border-[var(--color-border)] space-y-4">
+              <p className="text-xs text-[var(--color-text-muted)]">
                 Directed acyclic causal graph reconstructed from synchronized logs, telemetry, code revisions, and simulation counters.
               </p>
 
               {/* Node Inspector */}
-              <div className="p-4 rounded-xl bg-black/40 border border-primary/20">
+              <div className="p-4 rounded-xl bg-[var(--theme-background)]/40 border border-[var(--color-brand-primary)]/20">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] uppercase font-bold text-primary tracking-wider">Causal Chain Inspection</span>
+                  <span className="text-[10px] uppercase font-bold text-[var(--color-brand-primary)] tracking-wider">Causal Chain Inspection</span>
                   <Badge tone="success">Verified Path</Badge>
                 </div>
                 <div className="space-y-2 text-xs">
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-primary" />
-                    <span className="font-mono text-white">deployments/events.json</span>
-                    <span className="text-muted text-[11px]">→ v42 deployed at 08:00:00Z</span>
+                    <span className="font-mono text-[var(--color-brand-primary)]">deployments/events.json</span>
+                    <span className="text-[var(--color-text-muted)] text-[11px]">→ v42 deployed at 08:00:00Z</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-primary" />
-                    <span className="font-mono text-white">config/inference.yaml</span>
-                    <span className="text-muted text-[11px]">→ batching_window_ms: 100 → 200</span>
+                    <span className="font-mono text-[var(--color-brand-primary)]">config/inference.yaml</span>
+                    <span className="text-[var(--color-text-muted)] text-[11px]">→ batching_window_ms: 100 → 200</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-secondary" />
-                    <span className="font-mono text-white">traces/otel.json</span>
-                    <span className="text-muted text-[11px]">→ inference latency: 155ms (accum delay ~115ms)</span>
+                    <span className="font-mono text-[var(--color-brand-primary)]">traces/otel.json</span>
+                    <span className="text-[var(--color-text-muted)] text-[11px]">→ inference latency: 155ms (accum delay ~115ms)</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-danger" />
-                    <span className="font-mono text-white">logs/ros-nodes.jsonl</span>
-                    <span className="text-muted text-[11px]">→ detection age: 140ms exceeds 120ms freshness budget</span>
+                    <span className="w-2 h-2 rounded-full bg-[var(--color-brand-danger)]" />
+                    <span className="font-mono text-[var(--color-brand-primary)]">logs/ros-nodes.jsonl</span>
+                    <span className="text-[var(--color-text-muted)] text-[11px]">→ detection age: 140ms exceeds 120ms freshness budget</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-danger" />
-                    <span className="font-mono text-white">recordings/robot_run.mcap</span>
+                    <span className="w-2 h-2 rounded-full bg-[var(--color-brand-danger)]" />
+                    <span className="font-mono text-[var(--color-brand-primary)]">recordings/robot_run.mcap</span>
                     <span className="text-danger font-bold text-[11px]">→ emergency_stop triggered at 10:30:00Z</span>
                   </div>
                 </div>
               </div>
 
               {/* Visual Graph Diagram */}
-              <div className="p-6 rounded-xl bg-[radial-gradient(at_top_left,_var(--color-surface-2)_0%,_var(--color-background)_80%)] border border-white/5 flex flex-col items-center justify-center space-y-4">
+              <div className="p-6 rounded-xl bg-[radial-gradient(at_top_left,_var(--color-surface-2)_0%,_var(--theme-background)_80%)] border border-[var(--color-border)] flex flex-col items-center justify-center space-y-4">
                 {/* Node 1: Root Cause */}
                 <div className="w-full max-w-sm p-3 rounded-lg border border-primary/40 bg-primary/10 text-center shadow-lg shadow-primary/10">
-                  <div className="text-[10px] text-primary uppercase font-bold">1. Root Trigger (v42 Release)</div>
-                  <div className="text-xs font-mono font-semibold text-white mt-0.5">batching_window_ms = 200</div>
-                  <div className="text-[10px] text-muted">source: config/inference.yaml</div>
+                  <div className="text-[10px] text-[var(--color-brand-primary)] uppercase font-bold">1. Root Trigger (v42 Release)</div>
+                  <div className="text-xs font-mono font-semibold text-[var(--color-brand-primary)] mt-0.5">batching_window_ms = 200</div>
+                  <div className="text-[10px] text-[var(--color-text-muted)]">source: config/inference.yaml</div>
                 </div>
 
-                <div className="text-primary font-mono text-xs">↓ (causes batch wait: ~105ms)</div>
+                <div className="text-[var(--color-brand-primary)] font-mono text-xs">↓ (causes batch wait: ~105ms)</div>
 
                 {/* Node 2: Latency Spike */}
                 <div className="w-full max-w-sm p-3 rounded-lg border border-secondary/40 bg-secondary/10 text-center shadow-lg shadow-secondary/10">
                   <div className="text-[10px] text-secondary uppercase font-bold">2. Latency Amplification</div>
-                  <div className="text-xs font-mono font-semibold text-white mt-0.5">Total Inference Latency = 155ms</div>
-                  <div className="text-[10px] text-muted">source: traces/otel.json (span: inference_request)</div>
+                  <div className="text-xs font-mono font-semibold text-[var(--color-brand-primary)] mt-0.5">Total Inference Latency = 155ms</div>
+                  <div className="text-[10px] text-[var(--color-text-muted)]">source: traces/otel.json (span: inference_request)</div>
                 </div>
 
                 <div className="text-secondary font-mono text-xs">↓ (delivered to robot at t+155ms)</div>
 
                 {/* Node 3: Budget Violation */}
-                <div className="w-full max-w-sm p-3 rounded-lg border border-danger/40 bg-danger/10 text-center shadow-lg shadow-danger/10">
+                <div className="w-full max-w-sm p-3 rounded-lg border border-danger/40 bg-[var(--color-brand-danger)]/10 text-center shadow-lg shadow-danger/10">
                   <div className="text-[10px] text-danger uppercase font-bold">3. Freshness Budget Breach</div>
-                  <div className="text-xs font-mono font-semibold text-white mt-0.5">Perception Age &gt; 120ms Budget</div>
-                  <div className="text-[10px] text-muted">source: detection_client.py (validate_freshness)</div>
+                  <div className="text-xs font-mono font-semibold text-[var(--color-brand-primary)] mt-0.5">Perception Age &gt; 120ms Budget</div>
+                  <div className="text-[10px] text-[var(--color-text-muted)]">source: detection_client.py (validate_freshness)</div>
                 </div>
 
                 <div className="text-danger font-mono text-xs">↓ (safety violation tripped)</div>
 
                 {/* Node 4: Terminal Event */}
-                <div className="w-full max-w-sm p-3 rounded-lg border border-danger bg-danger/20 text-center ring-2 ring-danger/30">
+                <div className="w-full max-w-sm p-3 rounded-lg border border-danger bg-[var(--color-brand-danger)]/20 text-center ring-2 ring-danger/30">
                   <div className="text-[10px] text-danger uppercase font-bold">4. Terminal Incident</div>
-                  <div className="text-xs font-bold text-white mt-0.5">EMERGENCY STOP (Warehouse AMR-01)</div>
-                  <div className="text-[10px] text-muted">source: recordings/robot_run.mcap</div>
+                  <div className="text-xs font-bold text-[var(--color-brand-primary)] mt-0.5">EMERGENCY STOP (Warehouse AMR-01)</div>
+                  <div className="text-[10px] text-[var(--color-text-muted)]">source: recordings/robot_run.mcap</div>
                 </div>
               </div>
             </div>

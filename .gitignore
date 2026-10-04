@@ -169,3 +169,13 @@ Thumbs.db
 .ruff_cache/
 
 
+
+# AI Assistant / Development Tool Configurations
+.claude/
+**/CLAUDE.md
+**/AGENTS.md
+**/BUILD_STATUS.md
+
+# Debug/Development logs (personal reference)
+DEBUGGING_LOG.md
+cauveris.log

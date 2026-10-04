@@ -34,6 +34,7 @@ class Incident(BaseEntity):
     bundle_path: Optional[str] = Field(None, description="Path to the incident bundle directory")
     timeline_events: List[Dict[str, Any]] = Field(default_factory=list, description="Normalized timeline events")
     temporal_analysis: Optional[Dict[str, Any]] = Field(default=None, description="Temporal causality analysis results")
+    is_demonstration: bool = Field(default=False, description="Whether this incident is demonstration benchmark data")
 
     # Computed properties
     evidence_count: int = Field(0, description="Number of evidence items")
