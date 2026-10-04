@@ -2,9 +2,9 @@
 Authentication and Authorization Module for Cauveris.
 Provides user authentication, JWT token management, session handling, and RBAC.
 """
+import asyncio
 import hashlib
 import secrets
-import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -14,17 +14,13 @@ from typing import Any, Dict, List, Optional, Set
 import logging
 
 import jwt
-from passlib.context import CryptContext
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
-from cauveris.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 # Password hashing context
 # Use a simple hash for testing (replace with proper bcrypt in production)
-import hashlib
-import secrets
 
 def hash_password(password: str) -> str:
     """Hash password using SHA-256 with salt."""
@@ -640,15 +636,15 @@ class InMemoryAuthStore(AuthStore):
     ) -> List[AuditLogEntry]:
         logs = self._audit_logs
         if user_id:
-            logs = [l for l in logs if l.user_id == user_id]
+            logs = [entry for entry in logs if entry.user_id == user_id]
         if org_id:
-            logs = [l for l in logs if l.org_id == org_id]
+            logs = [entry for entry in logs if entry.org_id == org_id]
         if action:
-            logs = [l for l in logs if l.action == action]
+            logs = [entry for entry in logs if entry.action == action]
         if start_time:
-            logs = [l for l in logs if l.timestamp >= start_time]
+            logs = [entry for entry in logs if entry.timestamp >= start_time]
         if end_time:
-            logs = [l for l in logs if l.timestamp <= end_time]
+            logs = [entry for entry in logs if entry.timestamp <= end_time]
         logs.sort(key=lambda x: x.timestamp, reverse=True)
         return logs[offset:offset + limit]
 
@@ -893,7 +889,3 @@ async def authorize_resource_owner(
         "Not authorized to access this resource",
         required_permission=permission,
     )
-
-
-# Import asyncio at module level for InMemoryAuthStore
-import asyncio

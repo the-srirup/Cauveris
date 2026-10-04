@@ -15,10 +15,9 @@ Tests cover:
 import io
 import zipfile
 import pytest
-import asyncio
 from httpx import AsyncClient, ASGITransport
-from cauveris.api.main import app, incidents, pipeline_tasks, pipeline_progress
-from cauveris.state_machine.orchestrator import PipelineOrchestrator, StageStatus, create_default_stages
+from cauveris.api.main import app
+from cauveris.state_machine.orchestrator import PipelineOrchestrator, StageStatus
 
 
 
@@ -183,7 +182,7 @@ async def test_terminal_states_and_dependency_blocking():
     from cauveris.datasets.golden_incident import GoldenIncidentGenerator
     gen = GoldenIncidentGenerator()
     inc = gen.generate()
-    ctx = await orch.process_incident(inc)
+    _ctx = await orch.process_incident(inc)
     assert orch.current_state == "SUCCESS"
     assert orch.current_progress == 1.0
     assert all(s.status == StageStatus.SUCCESS for s in orch.stages)
@@ -192,7 +191,7 @@ async def test_terminal_states_and_dependency_blocking():
     orch_fail = PipelineOrchestrator()
     orch_fail.simulate_failure_stage = "temporal_analysis"
     inc_fail = gen.generate()
-    ctx_fail = await orch_fail.process_incident(inc_fail)
+    _ctx_fail = await orch_fail.process_incident(inc_fail)
 
     assert orch_fail.current_state == "FAILED"
     assert orch_fail.get_stage("temporal_analysis").status == StageStatus.FAILED

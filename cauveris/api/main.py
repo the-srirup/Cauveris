@@ -2,40 +2,43 @@
 Main FastAPI application for Cauveris.
 """
 import asyncio
-import logging
 import shutil
 import time
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request, Response, Depends, Cookie
-from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import uuid
 import json
+import secrets
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Annotated
+from typing import Optional
 from datetime import datetime, timezone, timedelta
-from pydantic import BaseModel, EmailStr
+from collections import defaultdict
+from threading import Lock
+from passlib.context import CryptContext
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request, Response, Depends
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from cauveris.schemas.incident import Incident, EvidenceItem
 from cauveris.schemas.hypothesis import Hypothesis
 from cauveris.schemas.experiment import Experiment
 from cauveris.schemas.patch import PatchCandidate, VerificationReport
 from cauveris.datasets.golden_incident import GoldenIncidentGenerator
-from cauveris.state_machine.orchestrator import PipelineOrchestrator, PipelineContext, create_default_stages
+from cauveris.state_machine.orchestrator import PipelineOrchestrator, PipelineContext
 from cauveris.ingestion.controller import IngestionController, extract_zip_safely
 from cauveris.security import scan_for_secrets, compute_file_hash
 from cauveris.patch.generator import PatchGenerator
-from cauveris.config import get_settings
-from cauveris.logging_config import get_logger, bind_request_context, LogContext
+from cauveris.logging_config import get_logger, bind_request_context
 from cauveris.auth import (
     init_auth_store, get_auth_store, TokenManager,
     User, Organization, Session, APIKey, AuditLogEntry,
-    UserRole, TokenType, AuthMethod, AuthStore, InMemoryAuthStore,
-    LoginRequest, RegisterRequest, RefreshRequest, APIKeyCreateRequest,
-    TokenResponse, UserResponse, OrgResponse, APIKeyResponse,
-    authorize, authorize_resource_owner, AuthorizationError,
-    TokenExpiredError, TokenInvalidError,
+    UserRole, TokenType, LoginRequest, RegisterRequest, RefreshRequest, APIKeyCreateRequest,
+    TokenResponse, UserResponse, APIKeyResponse,
+    authorize, TokenExpiredError, TokenInvalidError,
 )
+from cauveris.rate_limit import init_rate_limiter, get_rate_limiter
+from cauveris.idempotency import init_idempotency_store
+from cauveris.concurrency import init_concurrency_store, close_concurrency_store, get_concurrency_manager
+from cauveris.job_queue import init_job_queue, close_job_queue
+from cauveris.config import get_settings
 
 class CreateIncidentRequest(BaseModel):
     title: Optional[str] = "Uploaded Incident"
@@ -60,14 +63,10 @@ class CustomSimulationRequest(BaseModel):
 
 logger = get_logger(__name__)
 
-app = FastAPI(title="Cauveris API", version="0.1.0")
+# Password hashing context for API keys
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Initialize rate limiter (Phase 3), idempotency store (Phase 4), concurrency manager (Phase 5), job queue (Phase 6)
-from cauveris.rate_limit import init_rate_limiter
-from cauveris.idempotency import init_idempotency_store
-from cauveris.concurrency import init_concurrency_store, close_concurrency_store
-from cauveris.job_queue import init_job_queue, close_job_queue
-from cauveris.config import get_settings
+app = FastAPI(title="Cauveris API", version="0.1.0")
 
 
 @app.on_event("startup")
@@ -126,7 +125,6 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up rate limiter, idempotency store, concurrency manager, job queue, and auth store on shutdown."""
-    from cauveris.rate_limit import get_rate_limiter
     from cauveris.idempotency import get_idempotency_store
     limiter = get_rate_limiter()
     await limiter.close()
@@ -136,20 +134,6 @@ async def shutdown_event():
     await close_concurrency_store()
     await close_job_queue()
     # Auth store cleanup (no explicit close needed for in-memory)
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up rate limiter, idempotency store, concurrency manager, and job queue on shutdown."""
-    from cauveris.rate_limit import get_rate_limiter
-    from cauveris.idempotency import get_idempotency_store
-    limiter = get_rate_limiter()
-    await limiter.close()
-    store = get_idempotency_store()
-    if store:
-        await store.close()
-    await close_concurrency_store()
-    await close_job_queue()
 
 
 # CORS middleware
@@ -238,7 +222,6 @@ async def rate_limit_middleware(request: Request, call_next):
 
     # Determine cost class for this endpoint
     from cauveris.rate_limit_config import get_cost_class_for_endpoint
-    from cauveris.rate_limit import check_rate_limit, get_rate_limiter
 
     cost_class = get_cost_class_for_endpoint(request.method, request.url.path)
 
@@ -491,8 +474,6 @@ pipeline_progress: dict[str, dict] = {}
 # Incident creation tracking for rate limiting (Phase 2)
 # Stores: {key: [timestamps]}
 # Keys: "global:minute", "global:hour", "global:day", "user:{user_id}:minute", etc.
-from collections import defaultdict
-from threading import Lock
 
 _incident_creation_timestamps: dict[str, list[float]] = defaultdict(list)
 _incident_creation_lock = Lock()
@@ -668,7 +649,6 @@ def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[st
 def _record_incident_created(request: Request, incident_id: str, is_demonstration: bool = False):
     """Record that an incident was created for tracking active/retained counts."""
     global _anonymous_incident_count, _global_active_incidents
-    settings = get_settings()
     user_id, org_id, is_anonymous = _get_client_identity(request)
 
     # Update active counts
@@ -851,7 +831,6 @@ async def login(request: Request, response: Response, body: LoginRequest):
     # Rate limit check for login attempts
     forwarded = request.headers.get("X-Forwarded-For")
     client_ip = forwarded.split(",")[0].strip() if forwarded else request.client.host if request.client else "unknown"
-    from cauveris.rate_limit import get_rate_limiter, check_rate_limit
     from cauveris.rate_limit_config import build_policies_from_settings
     policies = build_policies_from_settings()
     rate_limit_policy = policies.get("auth", policies.get("mutation"))
@@ -1163,7 +1142,6 @@ async def get_current_user_info(request: Request, user_data: tuple = Depends(get
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    org = await auth_store.get_org(org_id)
     return UserResponse(
         id=user.id,
         email=user.email,
@@ -1591,7 +1569,7 @@ async def submit_job(request: Request, user_data: tuple = Depends(get_current_us
     # Check permission
     await authorize(auth_store, user, "job_queue:submit")
 
-    from cauveris.job_queue import get_job_queue, Job, JobPriority, JobStatus
+    from cauveris.job_queue import get_job_queue, Job, JobPriority
     queue = get_job_queue()
     if not queue:
         raise HTTPException(status_code=503, detail="Job queue not initialized")
@@ -1649,7 +1627,7 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
         # Check ownership for non-admin users
         owner_user = getattr(inc, '_owner_user_id', None)
         owner_org = getattr(inc, '_owner_org_id', None)
-        is_anon = getattr(inc, '_is_anonymous', False)
+        _ = getattr(inc, '_is_anonymous', False)  # is_anon
 
         if not is_admin and user_id is not None:
             if owner_user != user_id and owner_org != org_id:
@@ -1754,10 +1732,10 @@ async def create_incident(
         generator = GoldenIncidentGenerator()
         incident = generator.generate()
         incident.is_demonstration = True
-        # Store ownership metadata
-        incident._owner_user_id = user_id
-        incident._owner_org_id = org_id
-        incident._is_anonymous = False
+        # Store ownership metadata (dynamically added attributes)
+        incident._owner_user_id = user_id  # type: ignore[attr-defined]
+        incident._owner_org_id = org_id  # type: ignore[attr-defined]
+        incident._is_anonymous = False  # type: ignore[attr-defined]
         incidents[incident.id] = incident
 
         orch = PipelineOrchestrator()
@@ -1808,10 +1786,10 @@ async def create_incident(
             system_name=sys_name,
             status="OBSERVED"
         )
-        # Store ownership metadata
-        incident._owner_user_id = user_id
-        incident._owner_org_id = org_id
-        incident._is_anonymous = False
+        # Store ownership metadata (dynamically added attributes)
+        incident._owner_user_id = user_id  # type: ignore[attr-defined]
+        incident._owner_org_id = org_id  # type: ignore[attr-defined]
+        incident._is_anonymous = False  # type: ignore[attr-defined]
         incidents[incident_id] = incident
         orch = PipelineOrchestrator()
         orch.context = PipelineContext(incident=incident)
@@ -1878,7 +1856,6 @@ async def upload_incident(request: Request, incident_id: str, file: UploadFile =
     incident = incidents[incident_id]
     owner_user = getattr(incident, '_owner_user_id', None)
     owner_org = getattr(incident, '_owner_org_id', None)
-    is_anon = getattr(incident, '_is_anonymous', False)
 
     if not user.has_permission("incident:update_any") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
@@ -2375,10 +2352,10 @@ async def reset_incident(request: Request, incident_id: str = "CAU-0001", user_d
         generator = GoldenIncidentGenerator()
         incident = generator.generate()
         incident.is_demonstration = True
-        # Reset ownership for demo incident
-        incident._owner_user_id = user_id
-        incident._owner_org_id = org_id
-        incident._is_anonymous = False
+        # Reset ownership for demo incident (dynamically added attributes)
+        incident._owner_user_id = user_id  # type: ignore[attr-defined]
+        incident._owner_org_id = org_id  # type: ignore[attr-defined]
+        incident._is_anonymous = False  # type: ignore[attr-defined]
         incidents[incident.id] = incident
     else:
         incident = _ensure_incident(incident_id)
@@ -2424,7 +2401,6 @@ async def get_incident(request: Request, incident_id: str, user_data: tuple = De
     # Check ownership
     owner_user = getattr(incident, '_owner_user_id', None)
     owner_org = getattr(incident, '_owner_org_id', None)
-    is_anon = getattr(incident, '_is_anonymous', False)
 
     if not user.has_permission("incident:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:

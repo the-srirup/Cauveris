@@ -3,7 +3,7 @@ Rate limit configuration parsing and policy building.
 Loads policies from environment variables via Settings.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List
 from cauveris.config import get_settings
 from cauveris.rate_limit import RateLimitPolicy, RateLimitConfig, RateLimitAlgorithm
 

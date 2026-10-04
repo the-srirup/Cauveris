@@ -49,7 +49,7 @@ def run():
 
     print("\n=== 5. Duplicate Start Prevention ===")
     try:
-        dup_res = post(f"{BASE}/incidents/CAU-0001/reconstruct")
+        _dup_res = post(f"{BASE}/incidents/CAU-0001/reconstruct")
         print("ERROR: Duplicate request was not blocked!")
     except urllib.error.HTTPError as e:
         print(f"SUCCESS: Blocked duplicate start with HTTP {e.code}")

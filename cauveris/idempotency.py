@@ -14,12 +14,12 @@ import json
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from enum import Enum
-from collections import defaultdict
 from threading import Lock
 import logging
 from fastapi import Request, Response
+from fastapi.responses import Response as FastAPIResponse
 
 logger = logging.getLogger(__name__)
 
@@ -502,9 +502,7 @@ async def save_idempotent_response(
     return await store.update(idempotency_key, response_body, status, headers, state)
 
 
-# Middleware helper
-from fastapi import Request, Response as FastAPIResponse
-import inspect
+# Middleware helper - Request and Response already imported at top
 
 
 async def idempotency_middleware(request: Request, call_next):

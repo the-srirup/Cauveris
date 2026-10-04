@@ -2,12 +2,10 @@
 Pytest configuration and shared fixtures for Cauveris tests.
 """
 import pytest
-import asyncio
 from cauveris.api.main import (
     incidents, pipeline_tasks, pipeline_progress, pipeline_contexts,
     _incident_creation_timestamps, _active_incidents_per_user, _retained_incidents_per_user,
-    _active_incidents_per_org, _retained_incidents_per_org, _anonymous_incident_count,
-    _global_active_incidents
+    _active_incidents_per_org, _retained_incidents_per_org
 )
 
 

@@ -17,7 +17,7 @@ import time
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List, Callable
 from collections import defaultdict
 from threading import Lock
 from enum import Enum
@@ -591,7 +591,7 @@ async def check_rate_limit(
 # Decorator for easy endpoint protection
 def rate_limited(
     cost_class: str = "NORMAL_READ",
-    key_func: Optional[callable] = None,
+    key_func: Optional[Callable] = None,
     cost: int = 1,
 ):
     """
@@ -599,7 +599,7 @@ def rate_limited(
     Usage:
         @app.get("/endpoint")
         @rate_limited(cost_class="COMPUTE")
-        async def my_endpoint(...):
+        async def my_endpoint(request: Request, ...):
             ...
     """
     def decorator(func):
@@ -607,7 +607,7 @@ def rate_limited(
             # Extract request from args/kwargs
             request = None
             for arg in args:
-                if isinstance(arg, Request):
+                if hasattr(arg, "url") and hasattr(arg, "headers") and hasattr(arg, "client"):
                     request = arg
                     break
             if request is None:

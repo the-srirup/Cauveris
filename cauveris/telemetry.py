@@ -10,8 +10,7 @@ import uuid
 import contextvars
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 from enum import Enum
 
 
@@ -66,7 +65,7 @@ class TelemetrySpan:
 
     def finish(self) -> None:
         self.end_time = time.time()
-        self.duration_ms = round((self.end_time - self.start_time) * 1000, 2)
+        self.duration_ms = round((self.end_time - self.start_time) * 1000, 2) if self.start_time else 0.0
 
 
 class TelemetryBackend(ABC):
@@ -223,14 +222,14 @@ class PrometheusBackend(TelemetryBackend):
             try:
                 gauge = self._gauge_cls(key, f"Telemetry metric: {metric.name}")
                 self._metrics[key] = gauge
-            except:
+            except Exception:
                 return
         else:
             gauge = self._metrics[key]
 
         try:
             gauge.set(metric.value)
-        except:
+        except Exception:
             pass
 
     def start_span(self, name: str, parent_span_id: Optional[str] = None) -> TelemetrySpan:
@@ -249,8 +248,9 @@ class PrometheusBackend(TelemetryBackend):
                 self._metrics[key] = histogram
             else:
                 histogram = self._metrics[key]
-            histogram.observe(span.duration_ms / 1000.0)
-        except:
+            duration_seconds = (span.duration_ms or 0.0) / 1000.0
+            histogram.observe(duration_seconds)
+        except Exception:
             pass
 
     def track_error(self, error: Exception, context: Optional[Dict[str, Any]] = None) -> None:
@@ -265,7 +265,7 @@ class PrometheusBackend(TelemetryBackend):
             else:
                 counter = self._metrics[key]
             counter.labels(error_type=type(error).__name__).inc()
-        except:
+        except Exception:
             pass
 
     async def flush(self) -> None:
@@ -303,7 +303,7 @@ class TelemetryClient:
             # Try to use Prometheus if available
             try:
                 self.backend = PrometheusBackend()
-            except:
+            except Exception:
                 self.backend = NoOpBackend()
 
         await self.backend.initialize(self.config)

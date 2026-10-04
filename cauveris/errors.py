@@ -9,11 +9,15 @@ Provides structured error information with:
 - Troubleshooting steps for user guidance
 """
 
+import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from enum import Enum
+
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 
 
 class ErrorSeverity(str, Enum):
@@ -416,10 +420,8 @@ def unknown_error(message: str, cause: Optional[Exception] = None, context: Opti
 
 
 # Error handler utility for FastAPI
-async def handle_api_error(request, exc: Exception) -> Dict[str, Any]:
+async def handle_api_error(_request, exc: Exception) -> JSONResponse:
     """Global error handler for FastAPI that returns structured error responses."""
-    from fastapi import Request, HTTPException
-    from fastapi.responses import JSONResponse
 
     correlation_id = get_correlation_id()
 
@@ -434,7 +436,7 @@ async def handle_api_error(request, exc: Exception) -> Dict[str, Any]:
 
     if isinstance(exc, HTTPException):
         # Convert HTTPException to CauverisError
-        cauveris_error = api_error(exc.status_code, exc.detail, str(request.url))
+        cauveris_error = api_error(exc.status_code, exc.detail, str(_request.url))
         return JSONResponse(
             status_code=cauveris_error.status_code or 500,
             content={
@@ -444,7 +446,7 @@ async def handle_api_error(request, exc: Exception) -> Dict[str, Any]:
         )
 
     # Unknown error
-    cauveris_error = unknown_error(str(exc), cause=exc, context={"url": str(request.url)})
+    cauveris_error = unknown_error(str(exc), cause=exc, context={"url": str(_request.url)})
     return JSONResponse(
         status_code=500,
         content={
@@ -456,11 +458,11 @@ async def handle_api_error(request, exc: Exception) -> Dict[str, Any]:
 
 # Retry utility with exponential backoff
 async def retry_with_backoff(
-    operation: callable,
+    operation: Callable,
     max_retries: int = 3,
     base_delay_ms: int = 1000,
     max_delay_ms: int = 30000,
-    is_retryable: callable = lambda e: isinstance(e, CauverisError) and e.retryable
+    is_retryable: Callable = lambda e: isinstance(e, CauverisError) and e.retryable
 ):
     """Execute operation with exponential backoff retry logic."""
     last_error: Optional[Exception] = None
@@ -477,8 +479,6 @@ async def retry_with_backoff(
             delay = min(base_delay_ms * (2 ** attempt), max_delay_ms)
             await asyncio.sleep(delay / 1000.0)
 
-    raise last_error
+    raise last_error if last_error else Exception("Unknown error in retry_with_backoff")
 
 
-# Import asyncio for retry_with_backoff
-import asyncio

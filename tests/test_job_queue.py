@@ -10,7 +10,6 @@ from cauveris.job_queue import (
     Job,
     JobPriority,
     JobStatus,
-    QueueFullError,
 )
 
 
@@ -93,7 +92,7 @@ async def test_complete_job(backend):
     """Test completing a job."""
     job = Job(type="test", payload={}, owner_id="user1")
     await backend.enqueue(job)
-    jobs = await backend.dequeue("worker1", ["test"], 1)
+    _jobs = await backend.dequeue("worker1", ["test"], 1)
 
     success = await backend.complete(job.id, {"result": "ok"})
     assert success is True

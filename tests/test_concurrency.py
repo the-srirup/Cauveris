@@ -7,9 +7,7 @@ from cauveris.concurrency import (
     InMemoryConcurrencyStore,
     ConcurrencyManager,
     ConcurrencyLimitExceeded,
-    ConcurrencySlot,
 )
-from cauveris.config import get_settings
 
 
 @pytest.fixture

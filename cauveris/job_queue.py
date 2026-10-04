@@ -8,17 +8,14 @@ Production-grade job queue with:
 - Dead job detection and recovery
 """
 import asyncio
-import json
 import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from enum import IntEnum, Enum
-from typing import Any, Callable, Dict, List, Optional, Set
-from contextlib import asynccontextmanager
+from typing import Any, Callable, Dict, List, Optional
 import logging
 
-from cauveris.config import get_settings
 
 logger = logging.getLogger(__name__)
 

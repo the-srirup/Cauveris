@@ -7,11 +7,10 @@ Semaphore-based capacity acquisition for expensive operations with:
 """
 import asyncio
 import time
-import uuid
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Set
+from typing import Dict, Optional
 import logging
 
 from cauveris.config import get_settings
@@ -149,7 +148,7 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
             slots = self._slots.get(key, {})
             if owner_id in slots:
                 del slots[owner_id]
-                logger.debug(f"Released concurrency slot: {key} for {owner_id} ({len(slots)}/{limit if 'limit' in dir() else '?'})")
+                logger.debug(f"Released concurrency slot: {key} for {owner_id} ({len(slots)} slots)")
 
                 # Notify waiting owners
                 if key in self._waiting:
