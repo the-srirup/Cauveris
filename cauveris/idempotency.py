@@ -19,6 +19,7 @@ from enum import Enum
 from collections import defaultdict
 from threading import Lock
 import logging
+from fastapi import Request, Response
 
 logger = logging.getLogger(__name__)
 
