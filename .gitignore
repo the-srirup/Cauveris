@@ -148,10 +148,9 @@ out/
 *.tsbuildinfo
 .package-lock.json
 
-# IDE / Editor / Assistant configs
+# IDE / Editor configs
 .vscode/
 .idea/
-.claude/
 *.swp
 *.swo
 *~
@@ -170,9 +169,7 @@ Thumbs.db
 
 
 
-# AI Assistant / Development Tool Configurations
-.claude/
-**/CLAUDE.md
+# Assistant / Development Tool Configurations
 **/AGENTS.md
 **/BUILD_STATUS.md
 
