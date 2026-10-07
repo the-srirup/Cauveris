@@ -19,6 +19,7 @@ from .solver import solve_holographic_inverse, SolverConfig
 from .measurement import build_measurement_system, MeasurementConfig
 from .heu_kernel import CausalKernelBuilder
 from .topology import SystemTopology
+from .advanced_kernels import EntanglementEntropyCalculator, build_advanced_kernels
 
 
 class CompressionMethod(Enum):
@@ -69,8 +70,102 @@ class HolographicCompressor:
         self.config = config or CompressionConfig()
         self._kernel_builder = CausalKernelBuilder(topology)
         self._kernel_builder.build_all_kernels()
+        self._entropy_calculator = EntanglementEntropyCalculator()
+        self._advanced_kernels = build_advanced_kernels(topology)
         self._last_pca_basis = None
         self._last_cluster_assignments = None
+
+    def compute_quantum_compression_bounds(self, heus: List[HolographicEvidenceUnit]) -> Dict[str, float]:
+        """
+        Compute fundamental quantum limits on compression using entanglement entropy.
+
+        Returns:
+            Dictionary with compression bounds:
+            - holevo_bound: Maximum accessible information (Holevo χ)
+            - entanglement_compression: Entanglement entropy based limit
+            - mutual_info_compression: Mutual information based limit
+        """
+        if len(heus) < 2:
+            return {"holevo_bound": 0.0, "entanglement_compression": 1.0, "mutual_info_compression": 1.0}
+
+        # Extract phase vectors and create density matrix
+        phase_vectors = np.stack([h.phase_vector for h in heus])  # (n_heus, 8)
+
+        # Create ensemble of states (each HEU as a quantum state)
+        # Normalize each phase vector to create pure states
+        normalized_states = []
+        for pv in phase_vectors:
+            norm = np.linalg.norm(pv)
+            if norm > 0:
+                normalized_states.append(pv / norm)
+            else:
+                normalized_states.append(pv)
+
+        if len(normalized_states) == 0:
+            return {"holevo_bound": 0.0, "entanglement_compression": 1.0, "mutual_info_compression": 1.0}
+
+        # Create density matrix for ensemble: ρ = Σ p_i |ψ_i><ψ_i|
+        # Assume uniform probability for simplicity
+        n_states = len(normalized_states)
+        prob = 1.0 / n_states
+
+        # Compute ensemble density matrix
+        rho_ensemble = np.zeros((8, 8), dtype=np.complex128)
+        for state in normalized_states:
+            rho_ensemble += prob * np.outer(state, state.conj())
+
+        # Holevo bound: χ = S(ρ) - Σ p_i S(ρ_i)
+        # Since each ρ_i is pure state, S(ρ_i) = 0
+        # So χ = S(ρ_ensemble)
+        holevo_bound = self._entropy_calculator.von_neumann_entropy(rho_ensemble.real)
+
+        # For entanglement-based compression, we consider how much we can compress
+        # while preserving entanglement structure
+        # The entanglement entropy gives us the number of significant Schmidt coefficients
+        # For an 8-dimensional system, maximum entanglement is log2(8) = 3 bits
+        max_entanglement = np.log2(8)  # 3 bits for 8-dim system
+        # Compression ratio is inversely related to entanglement (more entanglement = less compressible)
+        entanglement_compression = max(1.0, 2.0 ** (max_entanglement - holevo_bound)) if holevo_bound < max_entanglement else 1.0
+
+        # Mutual information bound (for classical correlations)
+        # Compute mutual information between first half and second half of phase vector dimensions
+        if phase_vectors.shape[1] >= 2:
+            mid = phase_vectors.shape[1] // 2
+            first_half = phase_vectors[:, :mid]
+            second_half = phase_vectors[:, mid:]
+
+            # Compute correlation matrix
+            with np.errstate(all='ignore'):
+                corr_matrix = np.corrcoef(np.hstack([first_half, second_half]).T)
+            if corr_matrix.shape[0] >= 2 and not np.isnan(corr_matrix).any():
+                # Approximate mutual information from correlation
+                # For Gaussian variables: I = -1/2 log(det(C))
+                try:
+                    det_first = float(np.linalg.det(corr_matrix[:mid, :mid]))
+                    det_second = float(np.linalg.det(corr_matrix[mid:, mid:]))
+                    det_full = float(np.linalg.det(corr_matrix))
+                    if det_full > 1e-12 and det_first > 0 and det_second > 0:
+                        det_corr = det_first * det_second / det_full
+                        if det_corr > 0:
+                            mutual_info = -0.5 * np.log(det_corr)
+                        else:
+                            mutual_info = 0.0
+                    else:
+                        mutual_info = 0.0
+                except (np.linalg.LinAlgError, ZeroDivisionError, ValueError):
+                    mutual_info = 0.0
+
+                mutual_info_compression = max(1.0, 2.0 ** mutual_info) if mutual_info > 0 else 1.0
+            else:
+                mutual_info_compression = 1.0
+        else:
+            mutual_info_compression = 1.0
+
+        return {
+            "holevo_bound": float(holevo_bound),
+            "entanglement_compression": float(entanglement_compression),
+            "mutual_info_compression": float(mutual_info_compression)
+        }
 
     def compress(
         self,
@@ -79,6 +174,9 @@ class HolographicCompressor:
     ) -> CompressionResult:
         """
         Compress HEU set while maintaining fidelity.
+
+        Uses quantum entanglement bounds to inform compression limits when
+        target_compression_ratio is not explicitly set or is set to 0 (auto).
 
         Args:
             heus: Original HEUs
@@ -97,6 +195,21 @@ class HolographicCompressor:
                 fidelity_retention=1.0,
                 method=self.config.method,
             )
+
+        # Compute quantum compression bounds for auto-adjustment
+        quantum_bounds = self.compute_quantum_compression_bounds(heus)
+
+        # Auto-adjust target compression ratio based on quantum bounds if set to 0
+        target_ratio = self.config.target_compression_ratio
+        if target_ratio <= 0:
+            # Use the most restrictive bound (minimum compression ratio)
+            auto_ratio = min(
+                quantum_bounds["entanglement_compression"],
+                quantum_bounds["mutual_info_compression"],
+                2.0  # Holevo bound is in bits, convert to ratio approximation
+            )
+            target_ratio = max(auto_ratio, 1.0)  # At least 1:1 (no compression)
+            target_ratio = min(target_ratio, 100.0)  # Cap at 100:1
 
         # Compute original fidelity
         orig_fidelity = self._compute_fidelity(heus, incident_duration_ns)
@@ -171,8 +284,13 @@ class HolographicCompressor:
         U, S, Vt = np.linalg.svd(phase_matrix, full_matrices=False)
 
         # Variance explained
-        var_explained = (S ** 2) / np.sum(S ** 2)
-        cumsum_var = np.cumsum(var_explained)
+        sum_s2 = np.sum(S ** 2)
+        if sum_s2 <= 1e-12 or np.isnan(sum_s2):
+            var_explained = np.zeros_like(S)
+            cumsum_var = np.zeros_like(S)
+        else:
+            var_explained = (S ** 2) / sum_s2
+            cumsum_var = np.cumsum(var_explained)
 
         # Find number of components for threshold
         n_components: int = int(min(int(np.searchsorted(cumsum_var, self.config.pca_variance_threshold)) + 1, 8))

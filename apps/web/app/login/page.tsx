@@ -72,7 +72,7 @@ function LoginForm() {
     <div className="min-h-screen flex items-center justify-center bg-[var(--theme-background)] p-4">
       <NotificationContainer />
 
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-2xl">
         <CardHeader className="text-center pb-4">
           <CardTitle className="text-2xl font-bold">Cauveris</CardTitle>
           <CardDescription className="text-[var(--color-text-muted)]">
@@ -140,32 +140,36 @@ function LoginForm() {
                   <label htmlFor="org_name" className="text-sm font-medium">
                     Organization Name
                   </label>
-                  <Input
-                    id="org_name"
-                    name="org_name"
-                    type="text"
-                    value={formData.org_name}
-                    onChange={handleInputChange}
-                    placeholder="Acme Corp"
-                    className="pl-10"
-                    disabled={isLoading}
-                  />
+                  <div className="relative">
+                    <Input
+                      id="org_name"
+                      name="org_name"
+                      type="text"
+                      value={formData.org_name}
+                      onChange={handleInputChange}
+                      placeholder="Acme Corp"
+                      className="pl-10"
+                      disabled={isLoading}
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-2">
                   <label htmlFor="org_slug" className="text-sm font-medium">
                     Organization Slug
                   </label>
-                  <Input
-                    id="org_slug"
-                    name="org_slug"
-                    type="text"
-                    value={formData.org_slug}
-                    onChange={handleInputChange}
-                    placeholder="acme-corp"
-                    className="pl-10"
-                    disabled={isLoading}
-                  />
+                  <div className="relative">
+                    <Input
+                      id="org_slug"
+                      name="org_slug"
+                      type="text"
+                      value={formData.org_slug}
+                      onChange={handleInputChange}
+                      placeholder="acme-corp"
+                      className="pl-10"
+                      disabled={isLoading}
+                    />
+                  </div>
                 </div>
               </>
             )}
@@ -196,17 +200,19 @@ function LoginForm() {
                 <label htmlFor="mfa_code" className="text-sm font-medium">
                   MFA Code (if enabled)
                 </label>
-                <Input
-                  id="mfa_code"
-                  name="mfa_code"
-                  type="text"
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value)}
-                  placeholder="123456"
-                  className="pl-10"
-                  disabled={isLoading}
-                  autoComplete="one-time-code"
-                />
+                <div className="relative">
+                  <Input
+                    id="mfa_code"
+                    name="mfa_code"
+                    type="text"
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value)}
+                    placeholder="123456"
+                    className="pl-10"
+                    disabled={isLoading}
+                    autoComplete="one-time-code"
+                  />
+                </div>
               </div>
             )}
 

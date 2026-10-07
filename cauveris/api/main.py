@@ -39,6 +39,7 @@ from cauveris.idempotency import init_idempotency_store
 from cauveris.concurrency import init_concurrency_store, close_concurrency_store, get_concurrency_manager
 from cauveris.job_queue import init_job_queue, close_job_queue
 from cauveris.config import get_settings
+from cauveris.api.holographic import router as holographic_router
 
 class CreateIncidentRequest(BaseModel):
     title: Optional[str] = "Uploaded Incident"
@@ -799,6 +800,10 @@ try:
     _ensure_incident("CAU-0001")
 except Exception as _e:
     logger.debug(f"Preload golden incident skipped: {_e}")
+
+
+# Include holographic router
+app.include_router(holographic_router, prefix="/api/v1")
 
 
 @app.get("/")

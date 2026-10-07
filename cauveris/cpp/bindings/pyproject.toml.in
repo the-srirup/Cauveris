@@ -1,0 +1,30 @@
+[build-system]
+requires = ["cmake>=3.18", "scikit-build-core>=0.5", "pybind11>=2.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "cauveris-kernels"
+version = "@CAUVERIS_VERSION_MAJOR@.@CAUVERIS_VERSION_MINOR@.@CAUVERIS_VERSION_PATCH@"
+description = "GPU-accelerated holographic causal kernels for Cauveris"
+readme = "README.md"
+authors = [{name = "Cauveris Team"}]
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pybind11>=2.10",
+]
+
+[tool.scikit-build]
+cmake.args = [
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DPYTHON_INSTALL_DIR=@PYTHON_INSTALL_DIR@",
+]

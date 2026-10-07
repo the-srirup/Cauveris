@@ -12,10 +12,19 @@ from typing import Any, Dict, List, Optional, Tuple, Set, Callable
 from enum import Enum
 
 
-from .topology import SystemTopology
-from .reconstruction import (
-    HolographicReconstruction,
-)
+if __package__ is None or __package__ == "":
+    import sys
+    from pathlib import Path
+    _repo_root = Path(__file__).resolve().parent.parent.parent
+    if str(_repo_root) not in sys.path:
+        sys.path.insert(0, str(_repo_root))
+    from cauveris.holographic.topology import SystemTopology
+    from cauveris.holographic.reconstruction import HolographicReconstruction
+else:
+    from .topology import SystemTopology
+    from .reconstruction import (
+        HolographicReconstruction,
+    )
 
 
 class AnomalyType(Enum):
@@ -93,6 +102,7 @@ class Anomaly:
             "description": self.description,
             "evidence": self.evidence,
             "related": self.related_anomalies,
+            "timestamp_ns": self.timestamp_ns,
         }
 
 
@@ -278,9 +288,9 @@ class HolographicAnomalyDetector:
             for dim, value in dimensions.items():
                 expected_min, expected_max = ranges.get(dim, (0.0, 1.0))
                 # Higher sensitivity = lower threshold = more anomalies detected
-                # sensitivity=0.5 means half the threshold (more sensitive)
-                # sensitivity=2.0 means double the threshold (less sensitive)
-                adjusted_max = expected_max / self.sensitivity
+                # sensitivity=0.5 means double the threshold (less sensitive)
+                # sensitivity=2.0 means half the threshold (more sensitive)
+                adjusted_max = expected_max / max(self.sensitivity, 1e-6)
 
                 if value > adjusted_max:
                     severity = self._compute_severity(value, expected_max)
@@ -291,9 +301,10 @@ class HolographicAnomalyDetector:
                         dimension=dim,
                         value=value,
                         expected_range=(expected_min, expected_max),
-                        confidence=min(1.0, value / max(adjusted_max, 1e-6)),
+                        confidence=min(1.0, max(0.0, value / max(adjusted_max, 1e-6))),
                         description=f"{comp_name} {dim} = {value:.3f} exceeds normal max {expected_max:.3f}",
                         evidence=[f"Reconstructed {dim} = {value:.3f}"],
+                        timestamp_ns=reconstruction.reconstruction_timestamp_ns,
                     )
                     report.anomalies.append(anomaly)
 
@@ -303,7 +314,8 @@ class HolographicAnomalyDetector:
                     base_value = getattr(base_state, dim, 0.0)
                     if base_value > 0:
                         ratio = value / base_value
-                        if ratio > 2.0 * self.sensitivity:  # 2x baseline
+                        threshold_ratio = 2.0 / max(self.sensitivity, 1e-6)
+                        if ratio > threshold_ratio:  # Scaled by sensitivity
                             anomaly = Anomaly(
                                 anomaly_type=AnomalyType.SUDDEN_SHIFT,
                                 severity=AnomalySeverity.HIGH if ratio > 3 else AnomalySeverity.MEDIUM,
@@ -311,9 +323,10 @@ class HolographicAnomalyDetector:
                                 dimension=dim,
                                 value=value,
                                 expected_range=(base_value * 0.8, base_value * 1.2),
-                                confidence=min(1.0, (ratio - 1.0) / 3.0),
+                                confidence=min(1.0, max(0.0, (ratio - 1.0) / 3.0)),
                                 description=f"{comp_name} {dim} shifted {ratio:.1f}x from baseline",
                                 evidence=[f"Baseline: {base_value:.3f}, Current: {value:.3f}"],
+                                timestamp_ns=reconstruction.reconstruction_timestamp_ns,
                             )
                             report.anomalies.append(anomaly)
 
@@ -354,6 +367,7 @@ class HolographicAnomalyDetector:
                     confidence=0.7,
                     description=f"Isolated component {comp_name} showing high load ({state.cpu_usage:.2f})",
                     evidence=["No causal edges but high resource usage"],
+                    timestamp_ns=reconstruction.reconstruction_timestamp_ns,
                 )
                 report.anomalies.append(anomaly)
 
@@ -380,18 +394,27 @@ class HolographicAnomalyDetector:
                 if edge.source in components and edge.target in components:
                     src_idx = components.index(edge.source)
                     tgt_idx = components.index(edge.target)
+                    src_comp = self.topology.components.get(edge.source)
+                    tgt_comp = self.topology.components.get(edge.target)
+                    src_type = src_comp.component_type if src_comp else "service"
+                    tgt_type = tgt_comp.component_type if tgt_comp else "service"
+                    src_range = self.normal_ranges.get(src_type, self.normal_ranges["service"]).get(dim, (0.0, 1.0))
+                    tgt_range = self.normal_ranges.get(tgt_type, self.normal_ranges["service"]).get(dim, (0.0, 1.0))
+                    src_thresh = src_range[1]
+                    tgt_thresh = tgt_range[1]
                     # Flag if both are high on a causal edge (indicates potential cascade)
-                    if values[src_idx] > 0.7 and values[tgt_idx] > 0.7:
+                    if values[src_idx] > src_thresh and values[tgt_idx] > tgt_thresh:
                         anomaly = Anomaly(
                             anomaly_type=AnomalyType.CASCADING_FAILURE,
                             severity=AnomalySeverity.HIGH,
                             component=f"{edge.source}->{edge.target}",
                             dimension=dim,
                             value=(values[src_idx] + values[tgt_idx]) / 2,
-                            expected_range=(0.0, 0.5),
+                            expected_range=(0.0, max(src_thresh, tgt_thresh)),
                             confidence=0.8,
                             description=f"Correlated high {dim} on edge {edge.source}->{edge.target}",
                             evidence=[f"Source: {values[src_idx]:.2f}, Target: {values[tgt_idx]:.2f}"],
+                            timestamp_ns=reconstruction.reconstruction_timestamp_ns,
                         )
                         report.anomalies.append(anomaly)
 
@@ -417,7 +440,7 @@ class HolographicAnomalyDetector:
                     dimension="ambiguity",
                     value=region.ambiguity_score,
                     expected_range=(0.0, 0.3),
-                    confidence=region.ambiguity_score,
+                    confidence=min(1.0, max(0.0, region.ambiguity_score)),
                     description=(
                         f"High reconstruction ambiguity for {region.component} "
                         f"({dims}): score {region.ambiguity_score:.2f}"
@@ -427,6 +450,7 @@ class HolographicAnomalyDetector:
                         f"affected_dimensions=[{dims}]",
                         f"missing_layers={region.missing_layers}",
                     ],
+                    timestamp_ns=reconstruction.reconstruction_timestamp_ns,
                 )
                 report.anomalies.append(anomaly)
 
@@ -445,6 +469,7 @@ class HolographicAnomalyDetector:
                         f"{region.component}: {', '.join(region.missing_layers)}"
                     ),
                     evidence=[f"missing_layers={region.missing_layers}"],
+                    timestamp_ns=reconstruction.reconstruction_timestamp_ns,
                 )
                 report.anomalies.append(anomaly)
 
@@ -461,9 +486,10 @@ class HolographicAnomalyDetector:
                     dimension="cpu_usage",
                     value=state.cpu_usage,
                     expected_range=(0.0, 0.7),
-                    confidence=state.cpu_usage,
+                    confidence=min(1.0, max(0.0, state.cpu_usage)),
                     description=f"CPU saturation: {state.cpu_usage:.1%} usage",
                     evidence=[f"cpu_usage={state.cpu_usage:.3f}"],
+                    timestamp_ns=recon.reconstruction_timestamp_ns,
                 ))
         return anomalies
 
@@ -480,9 +506,10 @@ class HolographicAnomalyDetector:
                     dimension="memory_usage",
                     value=state.memory_usage,
                     expected_range=(0.0, 0.75),
-                    confidence=state.memory_usage,
+                    confidence=min(1.0, max(0.0, state.memory_usage)),
                     description=f"Memory exhaustion: {state.memory_usage:.1%} usage",
                     evidence=[f"memory_usage={state.memory_usage:.3f}"],
+                    timestamp_ns=recon.reconstruction_timestamp_ns,
                 ))
         return anomalies
 
@@ -499,9 +526,10 @@ class HolographicAnomalyDetector:
                         dimension="network",
                         value=edge.loss_rate,
                         expected_range=(0.0, 0.01),
-                        confidence=edge.loss_rate * 10,
+                        confidence=min(1.0, max(0.0, edge.loss_rate * 10)),
                         description=f"Network congestion: {edge.loss_rate:.1%} loss, {edge.latency_ms:.0f}ms latency",
                         evidence=[f"loss_rate={edge.loss_rate:.4f}", f"latency={edge.latency_ms:.0f}ms"],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
                     ))
         return anomalies
 
@@ -517,9 +545,10 @@ class HolographicAnomalyDetector:
                     dimension="error_rate",
                     value=state.error_rate,
                     expected_range=(0.0, 0.01),
-                    confidence=state.error_rate * 2,
+                    confidence=min(1.0, max(0.0, state.error_rate * 2)),
                     description=f"Error spike: {state.error_rate:.1%} error rate",
                     evidence=[f"error_rate={state.error_rate:.4f}"],
+                    timestamp_ns=recon.reconstruction_timestamp_ns,
                 ))
         return anomalies
 
@@ -535,9 +564,10 @@ class HolographicAnomalyDetector:
                     dimension="latency_p99_ms",
                     value=state.latency_p99_ms,
                     expected_range=(0.0, 500.0),
-                    confidence=min(1.0, state.latency_p99_ms / 5000.0),
+                    confidence=min(1.0, max(0.0, state.latency_p99_ms / 5000.0)),
                     description=f"Latency degradation: P99={state.latency_p99_ms:.0f}ms",
                     evidence=[f"latency_p99_ms={state.latency_p99_ms:.0f}"],
+                    timestamp_ns=recon.reconstruction_timestamp_ns,
                 ))
         return anomalies
 
@@ -556,6 +586,7 @@ class HolographicAnomalyDetector:
                     confidence=0.9,
                     description=f"Throughput collapse: high CPU ({state.cpu_usage:.0%}) + high errors ({state.error_rate:.0%})",
                     evidence=[f"cpu={state.cpu_usage:.2f}", f"errors={state.error_rate:.2f}"],
+                    timestamp_ns=recon.reconstruction_timestamp_ns,
                 ))
         return anomalies
 
@@ -576,11 +607,12 @@ class HolographicAnomalyDetector:
                             severity=AnomalySeverity.CRITICAL,
                             component="->".join(chain),
                             dimension="cascade",
-                            value=len(chain),
+                            value=float(len(chain)),
                             expected_range=(0.0, 2.0),
                             confidence=0.85,
                             description=f"Cascading failure chain: {' -> '.join(chain)}",
                             evidence=[f"Chain length: {len(chain)}"],
+                            timestamp_ns=recon.reconstruction_timestamp_ns,
                         ))
         return anomalies
 
@@ -591,25 +623,33 @@ class HolographicAnomalyDetector:
         visited.add(start)
 
         chain = [start]
+        longest_subchain = []
         for edge in self.topology.causal_edges:
-            if edge.source == start and edge.target in recon.reconstructed_services:
+            if edge.source == start and edge.target in recon.reconstructed_services and edge.target not in visited:
                 tgt_state = recon.reconstructed_services[edge.target]
                 if tgt_state.error_rate > 0.1:
-                    chain.extend(self._find_cascade_chain(edge.target, recon, visited))
-                    break
+                    subchain = self._find_cascade_chain(edge.target, recon, visited)
+                    if len(subchain) > len(longest_subchain):
+                        longest_subchain = subchain
+        chain.extend(longest_subchain)
         return chain
 
     def _detect_feedback_loop(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
         """Detect feedback loops in causal graph."""
         anomalies = []
+        seen_pairs: Set[Tuple[str, str]] = set()
         # Simple cycle detection in high-load components
         high_load = {c for c, s in recon.reconstructed_services.items() if s.cpu_usage > 0.7}
         for edge in self.topology.causal_edges:
             if edge.source in high_load and edge.target in high_load:
+                pair = tuple(sorted([edge.source, edge.target]))
+                if pair in seen_pairs:
+                    continue
                 # Check for reverse edge
                 rev_edge = next((e for e in self.topology.causal_edges
                                 if e.source == edge.target and e.target == edge.source), None)
                 if rev_edge:
+                    seen_pairs.add(pair)
                     anomalies.append(Anomaly(
                         anomaly_type=AnomalyType.FEEDBACK_LOOP,
                         severity=AnomalySeverity.HIGH,
@@ -620,6 +660,7 @@ class HolographicAnomalyDetector:
                         confidence=0.7,
                         description=f"Potential feedback loop: {edge.source} <-> {edge.target} both under high load",
                         evidence=[f"Edge {edge.source}->{edge.target}", "Reverse edge exists"],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
                     ))
         return anomalies
 
@@ -642,6 +683,7 @@ class HolographicAnomalyDetector:
                         confidence=0.75,
                         description=f"Resource starvation: {edge.source} starved ({src.cpu_usage:.0%}) while {edge.target} idle ({tgt.cpu_usage:.0%})",
                         evidence=[f"Source CPU: {src.cpu_usage:.2f}", f"Target CPU: {tgt.cpu_usage:.2f}"],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
                     ))
         return anomalies
 
@@ -661,6 +703,7 @@ class HolographicAnomalyDetector:
                     confidence=0.6,
                     description=f"Dependency cycle involving {comp}",
                     evidence=["Cycle detected in causal graph"],
+                    timestamp_ns=recon.reconstruction_timestamp_ns,
                 ))
         return anomalies
 
@@ -694,28 +737,32 @@ class HolographicAnomalyDetector:
                     confidence=0.8,
                     description=f"Config mismatch: recent config change + elevated errors ({state.error_rate:.1%})",
                     evidence=["config_changed=true", f"error_rate={state.error_rate:.3f}"],
+                    timestamp_ns=recon.reconstruction_timestamp_ns,
                 ))
         return anomalies
 
     def _detect_deployment_anomaly(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
         """Detect deployment-related anomalies."""
         anomalies = []
-        deployed = [c for c, s in recon.reconstructed_services.items() if s.config_version]
-        if len(deployed) >= 2:
-            for comp_name in deployed:
-                state = recon.reconstructed_services[comp_name]
-                if state.error_rate > 0.1 and state.cpu_usage > 0.7:
-                    anomalies.append(Anomaly(
-                        anomaly_type=AnomalyType.DEPLOYMENT_ANOMALY,
-                        severity=AnomalySeverity.HIGH,
-                        component=comp_name,
-                        dimension="deployment",
-                        value=state.error_rate,
-                        expected_range=(0.0, 0.05),
-                        confidence=0.85,
-                        description=f"Deployment anomaly: {comp_name} shows high errors post-deployment",
-                        evidence=[f"error_rate={state.error_rate:.3f}", f"cpu_usage={state.cpu_usage:.2f}"],
-                    ))
+        deployed = [
+            c for c, s in recon.reconstructed_services.items()
+            if s.deployment_version or s.deployment_time_ns > 0 or s.config_version
+        ]
+        for comp_name in deployed:
+            state = recon.reconstructed_services[comp_name]
+            if state.error_rate > 0.1 and (state.cpu_usage > 0.7 or state.latency_p99_ms > 500):
+                anomalies.append(Anomaly(
+                    anomaly_type=AnomalyType.DEPLOYMENT_ANOMALY,
+                    severity=AnomalySeverity.HIGH,
+                    component=comp_name,
+                    dimension="deployment",
+                    value=state.error_rate,
+                    expected_range=(0.0, 0.05),
+                    confidence=0.85,
+                    description=f"Deployment anomaly: {comp_name} shows high errors post-deployment",
+                    evidence=[f"error_rate={state.error_rate:.3f}", f"cpu_usage={state.cpu_usage:.2f}"],
+                    timestamp_ns=recon.reconstruction_timestamp_ns,
+                ))
         return anomalies
 
     def _map_dimension_to_anomaly(self, dimension: str) -> AnomalyType:
@@ -748,15 +795,28 @@ class HolographicAnomalyDetector:
     ) -> Dict[str, float]:
         """Compute anomaly score per component."""
         scores = {}
-        for comp_name in reconstruction.reconstructed_services:
-            comp_anomalies = [a for a in report.anomalies if a.component == comp_name]
+        all_comps = set(self.topology.components.keys()) | set(reconstruction.reconstructed_services.keys())
+        for comp_name in all_comps:
+            comp_anomalies = []
+            for a in report.anomalies:
+                if a.component == comp_name:
+                    comp_anomalies.append((a, 1.0))
+                elif "->" in a.component:
+                    parts = a.component.split("->")
+                    if comp_name in parts:
+                        comp_anomalies.append((a, 0.5))
+                elif "<->" in a.component:
+                    parts = a.component.split("<->")
+                    if comp_name in parts:
+                        comp_anomalies.append((a, 0.5))
+
             if not comp_anomalies:
                 scores[comp_name] = 0.0
                 continue
 
-            score = sum(a.confidence * (a.severity.value + 1) for a in comp_anomalies)
+            score = sum(weight * a.confidence * (a.severity.value + 1) for a, weight in comp_anomalies)
             # Normalize
-            max_possible = len(comp_anomalies) * 1.0 * 5.0
+            max_possible = sum(weight * 1.0 * 5.0 for _, weight in comp_anomalies)
             scores[comp_name] = min(1.0, score / max_possible) if max_possible > 0 else 0.0
 
         return scores
@@ -782,7 +842,7 @@ class HolographicAnomalyDetector:
             parts.append(f"{low} low")
 
         top_component = max(report.component_scores.items(), key=lambda x: x[1], default=(None, 0))
-        if top_component[0]:
+        if top_component[0] and top_component[1] > 0:
             parts.append(f"top: {top_component[0]} ({top_component[1]:.0%})")
 
         return f"Detected {len(report.anomalies)} anomalies: {', '.join(parts)}"
@@ -796,7 +856,14 @@ def create_anomaly_detector(topology: SystemTopology) -> HolographicAnomalyDetec
 if __name__ == "__main__":
     # Quick test
     import sys
-    sys.path.insert(0, 'tests/holographic')
+    from pathlib import Path
+    _repo_root = Path(__file__).resolve().parent.parent.parent
+    if str(_repo_root) not in sys.path:
+        sys.path.insert(0, str(_repo_root))
+    _tests_holo = str(_repo_root / "tests" / "holographic")
+    if _tests_holo not in sys.path:
+        sys.path.insert(0, _tests_holo)
+
     from synthetic import SyntheticIncidentGenerator, IncidentType
     from cauveris.holographic.integration import analyze_incident_holographically, HolographicConfig
 

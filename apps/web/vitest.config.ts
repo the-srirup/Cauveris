@@ -8,10 +8,14 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.tsx'],
-    include: ['components/__tests__/**/*.test.tsx'],
+    include: [
+      'components/__tests__/**/*.test.tsx',
+      'src/**/__tests__/**/*.test.ts*',
+    ],
   },
   resolve: {
     alias: {
+      '@/holographic': path.resolve(__dirname, './src/holographic'),
       '@': path.resolve(__dirname, './'),
     },
   },

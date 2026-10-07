@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .topology import SystemTopology, build_topology_from_timeline
 from .heu import HolographicEvidenceUnit, BoundaryLayer, convert_timeline_to_heus
 from .heu_kernel import CausalKernelBuilder, KernelConfig
+from .gpu_kernels import GPUConfig, create_gpu_kernel_builder, is_gpu_available
 from .measurement import build_measurement_system, MeasurementConfig
 from .solver import HolographicSolver, SolverConfig, SolverMethod
 from .multiscale import MultiScaleReconstructor, MultiScaleConfig, ReconstructionScale, reconstruct_multiscale
@@ -69,6 +70,10 @@ class HolographicConfig:
     # Performance
     max_heus_for_full_solve: int = 5000
     use_incremental_for_large: bool = True
+
+    # GPU acceleration
+    use_gpu: bool = True
+    gpu_config: Optional[GPUConfig] = None
 
 
 @dataclass
@@ -127,7 +132,7 @@ class HolographicAnalyzer:
         config: Optional[HolographicConfig] = None,
     ):
         self.config = config or HolographicConfig()
-        self._kernel_builder: Optional[CausalKernelBuilder] = None
+        self._kernel_builder: Any = None  # Can be CausalKernelBuilder or GPUAcceleratedKernelBuilder
         self._topology: Optional[SystemTopology] = None
         self._reconstructor: Optional[MultiScaleReconstructor] = None
         self._compressor: Optional[HolographicCompressor] = None
@@ -190,9 +195,15 @@ class HolographicAnalyzer:
             logger.info(f"Compressed to {len(heus)} HEUs (ratio: {compression_result.compression_ratio:.1f}x, "
                        f"fidelity: {compression_result.fidelity_retention:.3f})")
 
-        # Build causal kernels
-        kernel_config = KernelConfig()
-        self._kernel_builder = CausalKernelBuilder(topology, kernel_config)
+        # Build causal kernels - use GPU acceleration if available and configured
+        if self.config.use_gpu and is_gpu_available():
+            logger.info("Using GPU-accelerated kernel builder")
+            gpu_config = self.config.gpu_config or GPUConfig()
+            self._kernel_builder = create_gpu_kernel_builder(topology, gpu_config)
+        else:
+            logger.info("Using CPU kernel builder")
+            kernel_config = KernelConfig()
+            self._kernel_builder = CausalKernelBuilder(topology, kernel_config)
         self._kernel_builder.build_all_kernels()
 
         # Build measurement system
@@ -514,7 +525,12 @@ class HolographicAnalyzer:
             raise RuntimeError("No topology available; run analyze_incident first")
 
         if self._kernel_builder is None:
-            self._kernel_builder = CausalKernelBuilder(topology)
+            if self.config.use_gpu and is_gpu_available():
+                logger.info("Using GPU-accelerated kernel builder for counterfactuals")
+                gpu_config = self.config.gpu_config or GPUConfig()
+                self._kernel_builder = create_gpu_kernel_builder(topology, gpu_config)
+            else:
+                self._kernel_builder = CausalKernelBuilder(topology)
             self._kernel_builder.build_all_kernels()
 
         holographer = CounterfactualHolographer(topology, self._kernel_builder)

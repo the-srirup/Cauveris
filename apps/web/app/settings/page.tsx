@@ -582,10 +582,8 @@ export default function SettingsPage() {
     );
   }
 
+  // Not authenticated - redirect happens in useEffect, show loading state
   if (!isAuthenticated) {
-    if (typeof window !== "undefined") {
-      router.push("/login?redirect=/settings");
-    }
     return (
       <div className="flex flex-col gap-8 max-w-7xl mx-auto w-full min-h-screen items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand-primary)]" />

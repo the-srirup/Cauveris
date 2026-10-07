@@ -1,0 +1,21 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Dependencies
+find_dependency(CUDA REQUIRED)
+find_dependency(Python3 REQUIRED COMPONENTS Development)
+find_dependency(pybind11 REQUIRED)
+
+# Targets
+if(NOT TARGET cauveris::cauveris_kernels)
+    include("@CMAKE_CURRENT_LIST_DIR@/cauverisTargets.cmake")
+endif()
+
+# Provide cauveris::cauveris_kernels_py target if needed
+if(NOT TARGET cauveris::cauveris_kernels_py)
+    add_library(cauveris::cauveris_kernels_py INTERFACE IMPORTED)
+    set_target_properties(cauveris::cauveris_kernels_py PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "@PACKAGE_INCLUDE_INSTALL_DIR@"
+    )
+endif()
