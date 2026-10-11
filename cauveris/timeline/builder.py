@@ -1,6 +1,7 @@
 """
 Timeline builder for normalizing and aligning evidence.
 """
+
 import logging
 import json
 import csv
@@ -69,7 +70,10 @@ class TimelineBuilder:
 
         # Also search for any other OTel / trace JSON files in real data
         for otel_candidate in bundle_path.glob("**/*.json"):
-            if otel_candidate.resolve() not in parsed_trace_files and "trace" in otel_candidate.stem.lower():
+            if (
+                otel_candidate.resolve() not in parsed_trace_files
+                and "trace" in otel_candidate.stem.lower()
+            ):
                 try:
                     trace_events = await self._parse_otel_traces(otel_candidate, bundle_path)
                     timeline_events.extend(trace_events)
@@ -140,7 +144,11 @@ class TimelineBuilder:
 
         # Normalize timestamps to relative seconds and relative nanoseconds
         if timeline_events:
-            base_time = min(event.get("timestamp_ns", 0) for event in timeline_events if event.get("timestamp_ns", 0) > 0)
+            base_time = min(
+                event.get("timestamp_ns", 0)
+                for event in timeline_events
+                if event.get("timestamp_ns", 0) > 0
+            )
             for event in timeline_events:
                 t_ns = event.get("timestamp_ns", base_time)
                 rel_ns = t_ns - base_time
@@ -155,7 +163,7 @@ class TimelineBuilder:
         """Parse OpenTelemetry JSON trace file."""
         events = []
         try:
-            with open(otel_path, 'r', encoding='utf-8') as f:
+            with open(otel_path, "r", encoding="utf-8") as f:
                 trace_data = json.load(f)
 
             trace_id_top = trace_data.get("traceID") or trace_data.get("traceId", "")
@@ -165,7 +173,7 @@ class TimelineBuilder:
                     try:
                         timestamp_ns = int(raw_ts)
                     except ValueError:
-                        dt = datetime.fromisoformat(raw_ts.replace('Z', '+00:00'))
+                        dt = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
                         timestamp_ns = int(dt.timestamp() * 1_000_000_000)
                 else:
                     timestamp_ns = int(raw_ts)
@@ -178,14 +186,20 @@ class TimelineBuilder:
 
                 span_name = span.get("name", "span")
                 status_dict = span.get("status", {})
-                status_msg = status_dict.get("message", "") if isinstance(status_dict, dict) else str(status_dict)
+                status_msg = (
+                    status_dict.get("message", "")
+                    if isinstance(status_dict, dict)
+                    else str(status_dict)
+                )
 
                 event = {
                     "timestamp_ns": timestamp_ns,
                     "original_timestamp": str(raw_ts),
                     "event_type": "trace_span",
                     "source_type": "otel_trace",
-                    "lane": "controller_latency" if "control" in span_name.lower() else "cloud_requests",
+                    "lane": "controller_latency"
+                    if "control" in span_name.lower()
+                    else "cloud_requests",
                     "source": str(otel_path.relative_to(bundle_path)).replace("\\", "/"),
                     "message": f"Trace span '{span_name}' (duration: {duration_ms}ms){': ' + status_msg if status_msg else ''}",
                     "attributes": {
@@ -198,7 +212,7 @@ class TimelineBuilder:
                     "trace_id": trace_id,
                     "span_id": span_id,
                     "confidence": 0.95,
-                    "status": status_msg
+                    "status": status_msg,
                 }
 
                 if "attributes" in span and isinstance(span["attributes"], dict):
@@ -246,7 +260,7 @@ class TimelineBuilder:
                 pass
 
             try:
-                dt = datetime.fromisoformat(val.replace('Z', '+00:00'))
+                dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
                 return int(dt.timestamp() * 1_000_000_000)
             except Exception:
                 pass
@@ -257,7 +271,7 @@ class TimelineBuilder:
         """Parse JSONL log file with flexible real-world schema support."""
         events = []
         try:
-            with open(log_path, 'r', encoding='utf-8') as f:
+            with open(log_path, "r", encoding="utf-8") as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
@@ -277,7 +291,12 @@ class TimelineBuilder:
                         if timestamp_ns is None:
                             continue
 
-                        level = str(log_entry.get("level") or log_entry.get("severity") or log_entry.get("lvl") or "INFO").upper()
+                        level = str(
+                            log_entry.get("level")
+                            or log_entry.get("severity")
+                            or log_entry.get("lvl")
+                            or "INFO"
+                        ).upper()
                         node = str(
                             log_entry.get("node")
                             or log_entry.get("service")
@@ -318,17 +337,24 @@ class TimelineBuilder:
                             "lane": lane,
                             "source": str(log_path.relative_to(bundle_path)).replace("\\", "/"),
                             "message": f"[{node}] {message}",
-                            "attributes": {
-                                "level": level,
-                                "node": node,
-                                "line_number": line_num
-                            },
+                            "attributes": {"level": level, "node": node, "line_number": line_num},
                             "confidence": 0.9,
-                            "status": level
+                            "status": level,
                         }
                         # Merge extra payload attributes
                         for k, v in log_entry.items():
-                            if k not in ["timestamp", "time", "ts", "@timestamp", "message", "msg", "level", "node", "service", "lane"]:
+                            if k not in [
+                                "timestamp",
+                                "time",
+                                "ts",
+                                "@timestamp",
+                                "message",
+                                "msg",
+                                "level",
+                                "node",
+                                "service",
+                                "lane",
+                            ]:
                                 event["attributes"][k] = v
 
                         events.append(event)
@@ -342,7 +368,7 @@ class TimelineBuilder:
         """Parse plain text log file."""
         events = []
         try:
-            with open(log_path, 'r', encoding='utf-8') as f:
+            with open(log_path, "r", encoding="utf-8") as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
@@ -368,11 +394,8 @@ class TimelineBuilder:
                         "lane": lane,
                         "source": str(log_path.relative_to(bundle_path)).replace("\\", "/"),
                         "message": line,
-                        "attributes": {
-                            "line_number": line_num,
-                            "log_file": log_path.name
-                        },
-                        "confidence": 0.8
+                        "attributes": {"line_number": line_num, "log_file": log_path.name},
+                        "confidence": 0.8,
                     }
                     events.append(event)
         except Exception as e:
@@ -382,16 +405,16 @@ class TimelineBuilder:
     def _extract_timestamp_from_text_line(self, line: str) -> tuple[Optional[int], str]:
         """Extract timestamp from various text log formats (ISO8601, syslog, brackets)."""
         patterns = [
-            r'(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)',
-            r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)\]',
-            r'([A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)',
+            r"(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)",
+            r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?)\]",
+            r"([A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)",
         ]
         for pattern in patterns:
             match = re.search(pattern, line)
             if match:
                 ts_str = match.group(1)
                 try:
-                    dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                    dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     return int(dt.timestamp() * 1_000_000_000), ts_str
                 except ValueError:
                     pass
@@ -408,12 +431,14 @@ class TimelineBuilder:
         """Parse CSV metrics file."""
         events = []
         try:
-            with open(csv_path, 'r', encoding='utf-8') as f:
+            with open(csv_path, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 if not reader.fieldnames:
                     return events
 
-                timestamp_col = next((c for c in reader.fieldnames if 'time' in c.lower()), reader.fieldnames[0])
+                timestamp_col = next(
+                    (c for c in reader.fieldnames if "time" in c.lower()), reader.fieldnames[0]
+                )
 
                 for row in reader:
                     ts_str = row.get(timestamp_col, "").strip()
@@ -421,7 +446,7 @@ class TimelineBuilder:
                         continue
 
                     try:
-                        dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                        dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                         timestamp_ns = int(dt.timestamp() * 1_000_000_000)
 
                         for column, value in row.items():
@@ -435,15 +460,23 @@ class TimelineBuilder:
                                         "original_timestamp": ts_str,
                                         "event_type": "metric_sample",
                                         "source_type": "csv_metrics",
-                                        "lane": "gpu_queue" if "gpu" in column.lower() or "queue" in column.lower() else ("network" if "network" in str(csv_path).lower() else "cloud_requests"),
-                                        "source": str(csv_path.relative_to(bundle_path)).replace("\\", "/"),
+                                        "lane": "gpu_queue"
+                                        if "gpu" in column.lower() or "queue" in column.lower()
+                                        else (
+                                            "network"
+                                            if "network" in str(csv_path).lower()
+                                            else "cloud_requests"
+                                        ),
+                                        "source": str(csv_path.relative_to(bundle_path)).replace(
+                                            "\\", "/"
+                                        ),
                                         "message": f"Metric {column}: {num_val}",
                                         "attributes": {
                                             "metric_name": column,
                                             "metric_value": num_val,
-                                            "unit": self._get_metric_unit(column)
+                                            "unit": self._get_metric_unit(column),
                                         },
-                                        "confidence": 0.95
+                                        "confidence": 0.95,
                                     }
                                     events.append(event)
                             except ValueError:
@@ -454,16 +487,18 @@ class TimelineBuilder:
             logger.error(f"Failed to parse metrics CSV {csv_path}: {e}")
         return events
 
-    async def _parse_deployment_events(self, deploy_path: Path, bundle_path: Path) -> List[Dict[str, Any]]:
+    async def _parse_deployment_events(
+        self, deploy_path: Path, bundle_path: Path
+    ) -> List[Dict[str, Any]]:
         """Parse deployment event file."""
         events = []
         try:
-            with open(deploy_path, 'r', encoding='utf-8') as f:
+            with open(deploy_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
             ts_str = data.get("timestamp")
             if ts_str:
-                dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                 timestamp_ns = int(dt.timestamp() * 1_000_000_000)
 
                 dep_id = data.get("deployment_id", "v42")
@@ -480,24 +515,26 @@ class TimelineBuilder:
                         "deployment_id": dep_id,
                         "service": service,
                         "changes": data.get("changes", []),
-                        "author": data.get("author", "")
+                        "author": data.get("author", ""),
                     },
                     "confidence": 1.0,
-                    "status": "DEPLOYED"
+                    "status": "DEPLOYED",
                 }
                 events.append(event)
         except Exception as e:
             logger.error(f"Failed to parse deployment events: {e}")
         return events
 
-    async def _parse_operator_note(self, note_path: Path, bundle_path: Path) -> List[Dict[str, Any]]:
+    async def _parse_operator_note(
+        self, note_path: Path, bundle_path: Path
+    ) -> List[Dict[str, Any]]:
         """Parse operator observation note."""
         events = []
         try:
-            content = note_path.read_text(encoding='utf-8')
-            match = re.search(r'\*\*Time\*\*:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', content)
+            content = note_path.read_text(encoding="utf-8")
+            match = re.search(r"\*\*Time\*\*:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", content)
             if match:
-                time_str = match.group(1).replace(' ', 'T') + "+00:00"
+                time_str = match.group(1).replace(" ", "T") + "+00:00"
                 dt = datetime.fromisoformat(time_str)
                 timestamp_ns = int(dt.timestamp() * 1_000_000_000)
 
@@ -509,12 +546,9 @@ class TimelineBuilder:
                     "lane": "safety_state",
                     "source": str(note_path.relative_to(bundle_path)).replace("\\", "/"),
                     "message": "Operator observed AMR-01 sudden emergency stop in aisle B",
-                    "attributes": {
-                        "robot_id": "AMR-01",
-                        "location": "Aisle B, Warehouse 3"
-                    },
+                    "attributes": {"robot_id": "AMR-01", "location": "Aisle B, Warehouse 3"},
                     "confidence": 0.9,
-                    "status": "EMERGENCY_STOP"
+                    "status": "EMERGENCY_STOP",
                 }
                 events.append(event)
         except Exception as e:
@@ -524,29 +558,34 @@ class TimelineBuilder:
     def _is_significant_metric(self, column_name: str) -> bool:
         """Determine if a metric column is significant."""
         c = column_name.lower()
-        return any(k in c for k in ['latency', 'utilization', 'queue', 'delay', 'loss', 'jitter', 'error'])
+        return any(
+            k in c for k in ["latency", "utilization", "queue", "delay", "loss", "jitter", "error"]
+        )
 
     def _get_metric_unit(self, column_name: str) -> str:
         """Get unit for a metric column."""
         c = column_name.lower()
-        if 'latency' in c or 'delay' in c:
-            return 'ms'
-        if 'utilization' in c or 'percent' in c:
-            return '%'
-        if 'loss' in c:
-            return '%'
-        return ''
+        if "latency" in c or "delay" in c:
+            return "ms"
+        if "utilization" in c or "percent" in c:
+            return "%"
+        if "loss" in c:
+            return "%"
+        return ""
 
-    async def _parse_mcap_recording(self, mcap_path: Path, bundle_path: Path) -> List[Dict[str, Any]]:
+    async def _parse_mcap_recording(
+        self, mcap_path: Path, bundle_path: Path
+    ) -> List[Dict[str, Any]]:
         """Parse MCAP recording for robot events (TF, detection arrival, control commands, safety)."""
         events = []
         try:
             from mcap.reader import make_reader
-            with open(mcap_path, 'rb') as f:
+
+            with open(mcap_path, "rb") as f:
                 reader = make_reader(f)
                 for schema, channel, message in reader.iter_messages():
                     try:
-                        payload = json.loads(message.data.decode('utf-8'))
+                        payload = json.loads(message.data.decode("utf-8"))
                     except Exception:
                         payload = {"raw": str(message.data)}
 
@@ -571,34 +610,38 @@ class TimelineBuilder:
                         elif channel.topic == "/detections":
                             summary = f"Received {len(payload.get('detections', []))} detections (age: {payload.get('age_ms', 0)}ms)"
 
-                    events.append({
-                        "timestamp_ns": message.log_time,
-                        "original_timestamp": str(message.log_time),
-                        "event_type": "mcap_message",
-                        "source_type": "mcap_recording",
-                        "lane": lane,
-                        "source": str(mcap_path.relative_to(bundle_path)).replace("\\", "/"),
-                        "message": summary,
-                        "attributes": {
-                            "topic": channel.topic,
-                            "schema_name": schema.name if schema else "",
-                            "payload": payload
-                        },
-                        "confidence": 1.0,
-                        "status": "OBSERVED"
-                    })
+                    events.append(
+                        {
+                            "timestamp_ns": message.log_time,
+                            "original_timestamp": str(message.log_time),
+                            "event_type": "mcap_message",
+                            "source_type": "mcap_recording",
+                            "lane": lane,
+                            "source": str(mcap_path.relative_to(bundle_path)).replace("\\", "/"),
+                            "message": summary,
+                            "attributes": {
+                                "topic": channel.topic,
+                                "schema_name": schema.name if schema else "",
+                                "payload": payload,
+                            },
+                            "confidence": 1.0,
+                            "status": "OBSERVED",
+                        }
+                    )
         except Exception as e:
             logger.error(f"Failed to parse MCAP {mcap_path}: {e}")
         return events
 
-    def _estimate_clock_offsets(self, bundle_path: Path, events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _estimate_clock_offsets(
+        self, bundle_path: Path, events: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Estimate clock offsets across cloud, host, robot, and simulation domains."""
         timesync_offset_s = 0.001241  # From systemd-timesyncd
         system_log = bundle_path / "logs" / "system.log"
         if system_log.exists():
             try:
-                content = system_log.read_text(encoding='utf-8')
-                match = re.search(r'offset\s+([+-]?\d+\.?\d*)s', content)
+                content = system_log.read_text(encoding="utf-8")
+                match = re.search(r"offset\s+([+-]?\d+\.?\d*)s", content)
                 if match:
                     timesync_offset_s = float(match.group(1))
             except Exception:
@@ -607,12 +650,16 @@ class TimelineBuilder:
         return {
             "domains": {
                 "cloud": {"offset_ms": 0.0, "status": "REFERENCE", "stratum": 1},
-                "host": {"offset_ms": round(timesync_offset_s * 1000.0, 3), "status": "SYNCHRONIZED", "stratum": 2},
+                "host": {
+                    "offset_ms": round(timesync_offset_s * 1000.0, 3),
+                    "status": "SYNCHRONIZED",
+                    "stratum": 2,
+                },
                 "robot": {"offset_ms": 2.15, "status": "SYNCHRONIZED", "stratum": 3},
-                "simulation": {"offset_ms": 0.0, "status": "SYNCHRONIZED", "stratum": 1}
+                "simulation": {"offset_ms": 0.0, "status": "SYNCHRONIZED", "stratum": 1},
             },
             "estimated_jitter_ms": 0.42,
             "max_discrepancy_ms": 2.15,
             "clock_skew_exceeds_threshold": False,
-            "threshold_ms": 10.0
+            "threshold_ms": 10.0,
         }

@@ -1,6 +1,7 @@
 """
 Golden incident generator for CAU-0001: Warehouse robot inference latency incident.
 """
+
 import yaml
 import json
 import csv
@@ -44,7 +45,9 @@ class GoldenIncidentGenerator:
         # Build incident object
         incident = self._build_incident_object()
 
-        logger.info(f"Generated golden incident {self.incident_id} with {incident.evidence_count} evidence items")
+        logger.info(
+            f"Generated golden incident {self.incident_id} with {incident.evidence_count} evidence items"
+        )
         return incident
 
     def _create_bundle_structure(self):
@@ -52,6 +55,7 @@ class GoldenIncidentGenerator:
         # Remove existing bundle if present
         if self.bundle_path.exists():
             import shutil
+
             shutil.rmtree(self.bundle_path)
 
         dirs = [
@@ -79,7 +83,7 @@ class GoldenIncidentGenerator:
             "approximate_time": "2026-09-20T10:30:00Z",
             "source_repositories": [
                 "github.com/cauveris/robot-stack",
-                "github.com/cauveris/inference-service"
+                "github.com/cauveris/inference-service",
             ],
             "commit_hash": "a1b2c3d4e5f6789012345678901234567890abcd",
             "required_evidence": [
@@ -95,20 +99,20 @@ class GoldenIncidentGenerator:
                 "config/inference.yaml",
                 "config/robot_params.yaml",
                 "deployments/events.json",
-                "observations/operator_note.md"
+                "observations/operator_note.md",
             ],
-            "evidence_schema_version": "1.0.0"
+            "evidence_schema_version": "1.0.0",
         }
 
         manifest_path = self.bundle_path / "manifest.yaml"
-        with open(manifest_path, 'w') as f:
+        with open(manifest_path, "w") as f:
             yaml.dump(manifest, f, default_flow_style=False)
         logger.debug(f"Written manifest to {manifest_path}")
 
     def _write_source_files(self):
         """Write source code files."""
         # Cloud service Dockerfile
-        dockerfile_content = '''FROM nvidia/cuda:12.1-runtime-ubuntu22.04
+        dockerfile_content = """FROM nvidia/cuda:12.1-runtime-ubuntu22.04
 RUN apt-get update && apt-get install -y python3-pip
 WORKDIR /app
 COPY requirements.txt .
@@ -116,13 +120,13 @@ RUN pip3 install -r requirements.txt
 COPY . .
 EXPOSE 8080
 CMD ["python3", "inference_server.py"]
-'''
+"""
         dockerfile_path = self.bundle_path / "source/cloud-service/Dockerfile"
-        with open(dockerfile_path, 'w') as f:
+        with open(dockerfile_path, "w") as f:
             f.write(dockerfile_content)
 
         # Robot stack main.cpp
-        main_cpp_content = '''/**
+        main_cpp_content = """/**
  * Warehouse robot navigation stack
  * Subscribes to object detections and controls robot movement
  */
@@ -210,9 +214,9 @@ int main(int argc, char ** argv) {
     rclcpp::shutdown();
     return 0;
 }
-'''
+"""
         main_cpp_path = self.bundle_path / "source/robot-stack/src/main.cpp"
-        with open(main_cpp_path, 'w') as f:
+        with open(main_cpp_path, "w") as f:
             f.write(main_cpp_content)
 
         logger.debug(f"Written source files to {self.bundle_path}/source/")
@@ -235,22 +239,20 @@ int main(int argc, char ** argv) {
                         "http.url": "/detect",
                         "http.status_code": 200,
                         "net.peer.ip": "10.0.1.100",
-                        "net.peer.port": "8080"
+                        "net.peer.port": "8080",
                     },
                     "events": [
                         {
                             "timestamp": "1663657800000000000",
                             "name": "message.received",
-                            "attributes": {
-                                "message.size": "2048"
-                            }
+                            "attributes": {"message.size": "2048"},
                         },
                         {
                             "timestamp": "1663657800100000000",
                             "name": "inference.start",
                             "attributes": {},
-                        }
-                    ]
+                        },
+                    ],
                 },
                 {
                     "spanID": "2222222222222222",
@@ -263,8 +265,8 @@ int main(int argc, char ** argv) {
                     "attributes": {
                         "messaging.system": "ros2",
                         "messaging.destination": "object_detections",
-                        "messaging.destination_kind": "topic"
-                    }
+                        "messaging.destination_kind": "topic",
+                    },
                 },
                 {
                     "spanID": "3333333333333333",
@@ -276,7 +278,7 @@ int main(int argc, char ** argv) {
                     "duration": "200000000",  # 200ms (exceeds freshness budget!)
                     "attributes": {
                         "tf2.frame_id": "base_link",
-                        "tf2.child_frame_id": "camera_optical_frame"
+                        "tf2.child_frame_id": "camera_optical_frame",
                     },
                     "events": [
                         {
@@ -284,16 +286,16 @@ int main(int argc, char ** argv) {
                             "name": "transform.timeout",
                             "attributes": {
                                 "error": "Lookup would exceed timeout",
-                                "timeout_ms": "120"
-                            }
+                                "timeout_ms": "120",
+                            },
                         }
-                    ]
-                }
-            ]
+                    ],
+                },
+            ],
         }
 
         otel_path = self.bundle_path / "traces/otel.json"
-        with open(otel_path, 'w') as f:
+        with open(otel_path, "w") as f:
             json.dump(otel_trace, f, indent=2)
         logger.debug(f"Written OTel trace to {otel_path}")
 
@@ -301,33 +303,81 @@ int main(int argc, char ** argv) {
         """Write log files."""
         # Cloud service logs
         cloud_logs = [
-            {"timestamp": "2026-09-20T10:29:58.123Z", "level": "INFO", "message": "Deployment v42 started, batching_window_ms=200"},
-            {"timestamp": "2026-09-20T10:29:59.456Z", "level": "INFO", "message": "Received inference request from 10.0.1.100"},
-            {"timestamp": "2026-09-20T10:30:00.000Z", "level": "INFO", "message": "Inference started (batch size: 8)"},
-            {"timestamp": "2026-09-20T10:30:00.150Z", "level": "INFO", "message": "Inference completed, returning results"},
-            {"timestamp": "2026-09-20T10:30:00.200Z", "level": "INFO", "message": "Published detection to ROS topic"},
-            {"timestamp": "2026-09-20T10:30:00.350Z", "level": "WARN", "message": "Detection queue depth increasing: 5->12"},
-            {"timestamp": "2026-09-20T10:30:00.500Z", "level": "ERROR", "message": "TF lookup timeout in robot transformation"},
+            {
+                "timestamp": "2026-09-20T10:29:58.123Z",
+                "level": "INFO",
+                "message": "Deployment v42 started, batching_window_ms=200",
+            },
+            {
+                "timestamp": "2026-09-20T10:29:59.456Z",
+                "level": "INFO",
+                "message": "Received inference request from 10.0.1.100",
+            },
+            {
+                "timestamp": "2026-09-20T10:30:00.000Z",
+                "level": "INFO",
+                "message": "Inference started (batch size: 8)",
+            },
+            {
+                "timestamp": "2026-09-20T10:30:00.150Z",
+                "level": "INFO",
+                "message": "Inference completed, returning results",
+            },
+            {
+                "timestamp": "2026-09-20T10:30:00.200Z",
+                "level": "INFO",
+                "message": "Published detection to ROS topic",
+            },
+            {
+                "timestamp": "2026-09-20T10:30:00.350Z",
+                "level": "WARN",
+                "message": "Detection queue depth increasing: 5->12",
+            },
+            {
+                "timestamp": "2026-09-20T10:30:00.500Z",
+                "level": "ERROR",
+                "message": "TF lookup timeout in robot transformation",
+            },
         ]
 
         cloud_log_path = self.bundle_path / "logs/cloud-service.jsonl"
-        with open(cloud_log_path, 'w') as f:
+        with open(cloud_log_path, "w") as f:
             for log_entry in cloud_logs:
-                f.write(json.dumps(log_entry) + '\n')
+                f.write(json.dumps(log_entry) + "\n")
 
         # ROS nodes logs
         ros_logs = [
-            {"timestamp": "2026-09-20T10:29:59.000Z", "level": "INFO", "message": "navigation_node: Subscribed to object_detections"},
-            {"timestamp": "2026-09-20T10:30:00.250Z", "level": "INFO", "message": "navigation_node: Detection received, age=50ms"},
-            {"timestamp": "2026-09-20T10:30:00.400Z", "level": "WARN", "message": "navigation_node: Detection age approaching limit: 110ms"},
-            {"timestamp": "2026-09-20T10:30:00.550Z", "level": "ERROR", "message": "navigation_node: Transform lookup failed - timeout"},
-            {"timestamp": "2026-09-20T10:30:00.600Z", "level": "ERROR", "message": "navigation_node: EMERGENCY STOP TRIGGERED"},
+            {
+                "timestamp": "2026-09-20T10:29:59.000Z",
+                "level": "INFO",
+                "message": "navigation_node: Subscribed to object_detections",
+            },
+            {
+                "timestamp": "2026-09-20T10:30:00.250Z",
+                "level": "INFO",
+                "message": "navigation_node: Detection received, age=50ms",
+            },
+            {
+                "timestamp": "2026-09-20T10:30:00.400Z",
+                "level": "WARN",
+                "message": "navigation_node: Detection age approaching limit: 110ms",
+            },
+            {
+                "timestamp": "2026-09-20T10:30:00.550Z",
+                "level": "ERROR",
+                "message": "navigation_node: Transform lookup failed - timeout",
+            },
+            {
+                "timestamp": "2026-09-20T10:30:00.600Z",
+                "level": "ERROR",
+                "message": "navigation_node: EMERGENCY STOP TRIGGERED",
+            },
         ]
 
         ros_log_path = self.bundle_path / "logs/ros-nodes.jsonl"
-        with open(ros_log_path, 'w') as f:
+        with open(ros_log_path, "w") as f:
             for log_entry in ros_logs:
-                f.write(json.dumps(log_entry) + '\n')
+                f.write(json.dumps(log_entry) + "\n")
 
         # System logs
         system_logs = [
@@ -340,8 +390,8 @@ int main(int argc, char ** argv) {
         ]
 
         system_log_path = self.bundle_path / "logs/system.log"
-        with open(system_log_path, 'w') as f:
-            f.write('\n'.join(system_logs))
+        with open(system_log_path, "w") as f:
+            f.write("\n".join(system_logs))
 
         logger.debug(f"Written log files to {self.bundle_path}/logs/")
 
@@ -349,7 +399,14 @@ int main(int argc, char ** argv) {
         """Write metrics CSV files."""
         # GPU metrics - showing increasing latency
         gpu_metrics = [
-            ["timestamp", "gpu_utilization_percent", "memory_utilization_percent", "temperature_celsius", "power_watts", "inference_latency_ms"],
+            [
+                "timestamp",
+                "gpu_utilization_percent",
+                "memory_utilization_percent",
+                "temperature_celsius",
+                "power_watts",
+                "inference_latency_ms",
+            ],
             ["2026-09-20T10:29:58Z", "45", "60", "65", "120", "85"],
             ["2026-09-20T10:29:59Z", "52", "65", "67", "125", "92"],
             ["2026-09-20T10:30:00Z", "78", "80", "72", "150", "150"],  # Spike in latency
@@ -358,13 +415,21 @@ int main(int argc, char ** argv) {
         ]
 
         gpu_path = self.bundle_path / "metrics/gpu.csv"
-        with open(gpu_path, 'w', newline='') as f:
+        with open(gpu_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerows(gpu_metrics)
 
         # Network metrics - showing increasing queue depth/latency
         network_metrics = [
-            ["timestamp", "rx_bytes_per_sec", "tx_bytes_per_sec", "rx_drop_percent", "tx_drop_percent", "latency_ms", "queue_depth"],
+            [
+                "timestamp",
+                "rx_bytes_per_sec",
+                "tx_bytes_per_sec",
+                "rx_drop_percent",
+                "tx_drop_percent",
+                "latency_ms",
+                "queue_depth",
+            ],
             ["2026-09-20T10:29:58Z", "1000000", "800000", "0.0", "0.0", "5", "2"],
             ["2026-09-20T10:29:59Z", "1200000", "900000", "0.1", "0.0", "8", "4"],
             ["2026-09-20T10:30:00Z", "1500000", "1000000", "0.2", "0.1", "15", "8"],  # Increasing
@@ -373,13 +438,20 @@ int main(int argc, char ** argv) {
         ]
 
         network_path = self.bundle_path / "metrics/network.csv"
-        with open(network_path, 'w', newline='') as f:
+        with open(network_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerows(network_metrics)
 
         # CPU metrics
         cpu_metrics = [
-            ["timestamp", "cpu_utilization_percent", "load_avg_1m", "load_avg_5m", "load_avg_15m", "temperature_celsius"],
+            [
+                "timestamp",
+                "cpu_utilization_percent",
+                "load_avg_1m",
+                "load_avg_5m",
+                "load_avg_15m",
+                "temperature_celsius",
+            ],
             ["2026-09-20T10:29:58Z", "35", "0.8", "0.9", "1.0", "55"],
             ["2026-09-20T10:29:59Z", "42", "1.0", "1.1", "1.2", "57"],
             ["2026-09-20T10:30:00Z", "68", "1.5", "1.6", "1.7", "62"],
@@ -388,13 +460,20 @@ int main(int argc, char ** argv) {
         ]
 
         cpu_path = self.bundle_path / "metrics/cpu.csv"
-        with open(cpu_path, 'w', newline='') as f:
+        with open(cpu_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerows(cpu_metrics)
 
         # Memory metrics
         memory_metrics = [
-            ["timestamp", "memory_total_mb", "memory_used_mb", "memory_free_mb", "memory_utilization_percent", "swap_used_mb"],
+            [
+                "timestamp",
+                "memory_total_mb",
+                "memory_used_mb",
+                "memory_free_mb",
+                "memory_utilization_percent",
+                "swap_used_mb",
+            ],
             ["2026-09-20T10:29:58Z", "8192", "2048", "6144", "25", "512"],
             ["2026-09-20T10:29:59Z", "8192", "2560", "5632", "31", "512"],
             ["2026-09-20T10:30:00Z", "8192", "3072", "5120", "37", "512"],
@@ -403,7 +482,7 @@ int main(int argc, char ** argv) {
         ]
 
         memory_path = self.bundle_path / "metrics/memory.csv"
-        with open(memory_path, 'w', newline='') as f:
+        with open(memory_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerows(memory_metrics)
 
@@ -413,22 +492,42 @@ int main(int argc, char ** argv) {
         """Write a minimal MCAP recording file."""
         # Create a minimal valid MCAP file (just the header for demo purposes)
         # Real MCAP is complex, so we'll create a placeholder that validates as having MCAP structure
-        mcap_header = bytearray([
-            0x89, 0x4D, 0x43, 0x41, 0x50,  # Magic: "MCAP"
-            0x0D, 0x0A,                  # Newline
-            0x1A, 0x0A,                  # More newline
-            0x00, 0x00, 0x00, 0x00,      # TODO: Library/version
-            0x00, 0x00, 0x00, 0x00,      # TODO: Header length
-            0x00, 0x00, 0x00, 0x00,      # TODO: Footer start offset
-            0x00, 0x00, 0x00, 0x00,      # TODO: Header CRC
-        ])
+        mcap_header = bytearray(
+            [
+                0x89,
+                0x4D,
+                0x43,
+                0x41,
+                0x50,  # Magic: "MCAP"
+                0x0D,
+                0x0A,  # Newline
+                0x1A,
+                0x0A,  # More newline
+                0x00,
+                0x00,
+                0x00,
+                0x00,  # TODO: Library/version
+                0x00,
+                0x00,
+                0x00,
+                0x00,  # TODO: Header length
+                0x00,
+                0x00,
+                0x00,
+                0x00,  # TODO: Footer start offset
+                0x00,
+                0x00,
+                0x00,
+                0x00,  # TODO: Header CRC
+            ]
+        )
 
         # Add some minimal content to make it look more realistic
         mcap_content = mcap_header
-        mcap_content.extend(b'\x00' * 1000)  # Padding
+        mcap_content.extend(b"\x00" * 1000)  # Padding
 
         recording_path = self.bundle_path / "recordings/robot_run.mcap"
-        with open(recording_path, 'wb') as f:
+        with open(recording_path, "wb") as f:
             f.write(mcap_content)
 
         logger.debug(f"Written MCAP recording to {recording_path}")
@@ -446,14 +545,14 @@ int main(int argc, char ** argv) {
                 "enabled": True,
                 "max_batch_size": 8,
                 "batching_window_ms": 200,  # This is the key problematic value
-                "timeout_ms": 500
+                "timeout_ms": 500,
             },
             "device": "cuda:0",
-            "precision": "fp16"
+            "precision": "fp16",
         }
 
         inference_path = self.bundle_path / "config/inference.yaml"
-        with open(inference_path, 'w') as f:
+        with open(inference_path, "w") as f:
             yaml.dump(inference_config, f, default_flow_style=False)
 
         # Robot parameters
@@ -463,23 +562,23 @@ int main(int argc, char ** argv) {
                 "max_speed_mps": 2.0,
                 "min_speed_mps": 0.1,
                 "acceleration_limit_mps2": 0.5,
-                "deceleration_limit_mps2": 0.8
+                "deceleration_limit_mps2": 0.8,
             },
             "safety": {
                 "detection_freshness_budget_ms": 120,  # Robot's freshness budget
                 "transform_timeout_ms": 100,
                 "control_loop_deadline_ms": 100,
                 "emergency_stop_on_transform_fail": True,
-                "emergency_stop_on_stale_data": True
+                "emergency_stop_on_stale_data": True,
             },
             "perception": {
                 "detection_topics": ["object_detections"],
-                "required_detection_frequency_hz": 10
-            }
+                "required_detection_frequency_hz": 10,
+            },
         }
 
         robot_params_path = self.bundle_path / "config/robot_params.yaml"
-        with open(robot_params_path, 'w') as f:
+        with open(robot_params_path, "w") as f:
             yaml.dump(robot_params, f, default_flow_style=False)
 
         # Launch snapshot
@@ -488,18 +587,26 @@ int main(int argc, char ** argv) {
             "arguments": {
                 "use_sim_time": "false",
                 "robot_namespace": "flotilla_01",
-                "enable_safety_monitoring": "true"
+                "enable_safety_monitoring": "true",
             },
             "nodes": [
-                {"package": "robot_navigation", "executable": "navigation_node", "name": "navigation_node"},
-                {"package": "object_detection", "executable": "detection_client", "name": "detection_client"},
-                {"package": "tf2_ros", "executable": "buffer_server", "name": "tf_buffer"}
+                {
+                    "package": "robot_navigation",
+                    "executable": "navigation_node",
+                    "name": "navigation_node",
+                },
+                {
+                    "package": "object_detection",
+                    "executable": "detection_client",
+                    "name": "detection_client",
+                },
+                {"package": "tf2_ros", "executable": "buffer_server", "name": "tf_buffer"},
             ],
-            "timestamp": "2026-09-20T10:29:50Z"
+            "timestamp": "2026-09-20T10:29:50Z",
         }
 
         launch_path = self.bundle_path / "config/launch_snapshot.json"
-        with open(launch_path, 'w') as f:
+        with open(launch_path, "w") as f:
             json.dump(launch_snapshot, f, indent=2)
 
         # Environment
@@ -510,11 +617,11 @@ int main(int argc, char ** argv) {
             "PYTHONPATH": "/opt/ros/humble/lib/python3.10/site-packages:/app",
             "LD_LIBRARY_PATH": "/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu",
             "GAZEBO_MODEL_PATH": "/opt/ros/huble/share/gazebo-11/models",
-            "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp"
+            "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
         }
 
         env_path = self.bundle_path / "config/environment.json"
-        with open(env_path, 'w') as f:
+        with open(env_path, "w") as f:
             json.dump(environment, f, indent=2)
 
         logger.debug(f"Written config files to {self.bundle_path}/config/")
@@ -534,26 +641,26 @@ int main(int argc, char ** argv) {
                     "change": "batching_window_ms increased from 100 to 200",
                     "old_value": 100,
                     "new_value": 200,
-                    "reason": "Increase throughput for handling peak load"
+                    "reason": "Increase throughput for handling peak load",
                 }
             ],
             "approval": {
                 "approved_by": "ml-platform-team",
                 "approved_at": "2026-09-20T10:00:00Z",
                 "rollout_strategy": "rolling",
-                "health_checks_passed": True
-            }
+                "health_checks_passed": True,
+            },
         }
 
         deploy_path = self.bundle_path / "deployments/events.json"
-        with open(deploy_path, 'w') as f:
+        with open(deploy_path, "w") as f:
             json.dump(deployment_events, f, indent=2)
 
         logger.debug(f"Written deployment events to {deploy_path}")
 
     def _write_observations(self):
         """Write operator observations."""
-        operator_note = '''# Operator Observation Log
+        operator_note = """# Operator Observation Log
 ## Incident Report: Warehouse Robot Emergency Stop
 
 **Date/Time:** 2026-09-20 10:30:00 UTC
@@ -595,10 +702,10 @@ Based on telemetry data and operator experience, this appears to be related to:
 
 **Signature:** ___________________
 **Time:** 10:35 AM
-'''
+"""
 
         obs_path = self.bundle_path / "observations/operator_note.md"
-        with open(obs_path, 'w') as f:
+        with open(obs_path, "w") as f:
             f.write(operator_note)
 
         logger.debug(f"Written operator note to {obs_path}")
@@ -607,24 +714,53 @@ Based on telemetry data and operator experience, this appears to be related to:
         """Write a placeholder media file."""
         # Create a minimal MP4-like file (just header for demo)
         # Real MP4 is complex, so we'll create a placeholder
-        mp4_header = bytearray([
-            0x00, 0x00, 0x00, 0x18,  # Size
-            0x66, 0x74, 0x79, 0x70,  # "ftyp"
-            0x6D, 0x70, 0x34, 0x31,  # "mp41"
-            0x00, 0x00, 0x00, 0x00,
-            0x6D, 0x70, 0x34, 0x31,  # "mp41"
-            0x69, 0x73, 0x6F, 0x6D,   # "isom"
-            0x69, 0x73, 0x6F, 0x32,   # "iso2"
-            0x61, 0x76, 0x63, 0x31,   # "avc1"
-            0x6D, 0x70, 0x34, 0x32,   # "mp42"
-        ])
+        mp4_header = bytearray(
+            [
+                0x00,
+                0x00,
+                0x00,
+                0x18,  # Size
+                0x66,
+                0x74,
+                0x79,
+                0x70,  # "ftyp"
+                0x6D,
+                0x70,
+                0x34,
+                0x31,  # "mp41"
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x6D,
+                0x70,
+                0x34,
+                0x31,  # "mp41"
+                0x69,
+                0x73,
+                0x6F,
+                0x6D,  # "isom"
+                0x69,
+                0x73,
+                0x6F,
+                0x32,  # "iso2"
+                0x61,
+                0x76,
+                0x63,
+                0x31,  # "avc1"
+                0x6D,
+                0x70,
+                0x34,
+                0x32,  # "mp42"
+            ]
+        )
 
         # Add some minimal content
         mp4_content = mp4_header
-        mp4_content.extend(b'\x00' * 5000)  # Reasonable size for demo
+        mp4_content.extend(b"\x00" * 5000)  # Reasonable size for demo
 
         media_path = self.bundle_path / "media/incident.mp4"
-        with open(media_path, 'wb') as f:
+        with open(media_path, "wb") as f:
             f.write(mp4_content)
 
         logger.debug(f"Written media file to {media_path}")
@@ -637,40 +773,31 @@ Based on telemetry data and operator experience, this appears to be related to:
         evidence_definitions = [
             # Manifest
             ("manifest.yaml", "text/yaml", True),
-
             # Source files
             ("source/cloud-service/Dockerfile", "text/dockerfile", True),
             ("source/robot-stack/src/main.cpp", "text/xc++src", True),
-
             # Traces
             ("traces/otel.json", "application/json", True),
-
             # Logs
             ("logs/cloud-service.jsonl", "application/jsonlines", True),
             ("logs/ros-nodes.jsonl", "application/jsonlines", True),
             ("logs/system.log", "text/plain", True),
-
             # Metrics
             ("metrics/gpu.csv", "text/csv", True),
             ("metrics/cpu.csv", "text/csv", True),
             ("metrics/memory.csv", "text/csv", True),
             ("metrics/network.csv", "text/csv", True),
-
             # Recordings
             ("recordings/robot_run.mcap", "application/octet-stream", True),
-
             # Configs
             ("config/inference.yaml", "text/yaml", True),
             ("config/robot_params.yaml", "text/yaml", True),
             ("config/launch_snapshot.json", "application/json", True),
             ("config/environment.json", "application/json", True),
-
             # Deployments
             ("deployments/events.json", "application/json", True),
-
             # Observations
             ("observations/operator_note.md", "text/markdown", True),
-
             # Media
             ("media/incident.mp4", "video/mp4", False),  # Not required for processing
         ]
@@ -684,7 +811,7 @@ Based on telemetry data and operator experience, this appears to be related to:
             # Calculate SHA-256 checksum
             checksum_sha256 = ""
             if full_path.exists():
-                with open(full_path, 'rb') as f:
+                with open(full_path, "rb") as f:
                     content = f.read()
                     checksum_sha256 = hashlib.sha256(content).hexdigest()
 
@@ -695,7 +822,7 @@ Based on telemetry data and operator experience, this appears to be related to:
                 checksum_sha256=checksum_sha256,
                 status="OBSERVED" if full_path.exists() else "MISSING",
                 is_required=is_required,
-                metadata={"generated": True, "source": "golden_incident_generator"}
+                metadata={"generated": True, "source": "golden_incident_generator"},
             )
 
             evidence_items.append(evidence)
@@ -708,7 +835,7 @@ Based on telemetry data and operator experience, this appears to be related to:
             approximate_time=datetime.fromisoformat("2026-09-20T10:30:00"),
             source_repositories=[
                 "github.com/cauveris/robot-stack",
-                "github.com/cauveris/inference-service"
+                "github.com/cauveris/inference-service",
             ],
             commit_hash="a1b2c3d4e5f6789012345678901234567890abcd",
             evidence_items=evidence_items,

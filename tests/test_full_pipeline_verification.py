@@ -1,6 +1,7 @@
 """
 End-to-end integration test verifying all 8 core components of Cauveris.
 """
+
 import pytest
 from pathlib import Path
 from cauveris.datasets.golden_incident import GoldenIncidentGenerator

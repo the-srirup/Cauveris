@@ -8,6 +8,7 @@ import sys
 import contextvars
 from datetime import datetime, timezone
 from typing import Any, Dict
+
 try:
     from pythonjsonlogger import json as jsonlogger
 except ImportError:
@@ -17,10 +18,13 @@ except ImportError:
 request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
 incident_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("incident_id", default="")
 
+
 class StructuredLogFormatter(jsonlogger.JsonFormatter):
     """Custom JSON formatter that adds context variables to every log record."""
 
-    def add_fields(self, log_record: Dict[str, Any], record: logging.LogRecord, message_dict: Dict[str, Any]) -> None:
+    def add_fields(
+        self, log_record: Dict[str, Any], record: logging.LogRecord, message_dict: Dict[str, Any]
+    ) -> None:
         super().add_fields(log_record, record, message_dict)
 
         # Add standard fields
@@ -47,11 +51,29 @@ class StructuredLogFormatter(jsonlogger.JsonFormatter):
         # Add extra fields from record
         for key, value in record.__dict__.items():
             if key not in {
-                "name", "msg", "args", "created", "filename", "funcName",
-                "levelname", "levelno", "lineno", "module", "msecs",
-                "message", "name", "pathname", "process", "processName",
-                "relativeCreated", "thread", "threadName", "exc_info",
-                "exc_text", "stack_info", "getMessage"
+                "name",
+                "msg",
+                "args",
+                "created",
+                "filename",
+                "funcName",
+                "levelname",
+                "levelno",
+                "lineno",
+                "module",
+                "msecs",
+                "message",
+                "name",
+                "pathname",
+                "process",
+                "processName",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "getMessage",
             }:
                 log_record[key] = value
 
@@ -69,12 +91,11 @@ def setup_structured_logging(level: int = logging.INFO, json_output: bool = True
     if json_output:
         formatter = StructuredLogFormatter(
             fmt="%(timestamp)s %(level)s %(logger)s %(message)s",
-            rename_fields={"message": "message"}
+            rename_fields={"message": "message"},
         )
     else:
         formatter = logging.Formatter(
-            fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
 
     # Console handler
@@ -150,7 +171,7 @@ def log_request(
     duration_ms: float,
     request_id: str = "",
     incident_id: str = "",
-    **extra: Any
+    **extra: Any,
 ) -> None:
     """Log HTTP request with structured fields."""
     with LogContext(request_id=request_id, incident_id=incident_id):
@@ -161,8 +182,8 @@ def log_request(
                 "http_path": path,
                 "http_status": status_code,
                 "duration_ms": duration_ms,
-                **extra
-            }
+                **extra,
+            },
         )
 
 
@@ -173,7 +194,7 @@ def log_pipeline_stage(
     duration_ms: float,
     incident_id: str = "",
     request_id: str = "",
-    **extra: Any
+    **extra: Any,
 ) -> None:
     """Log pipeline stage execution with structured fields."""
     with LogContext(request_id=request_id, incident_id=incident_id):
@@ -183,8 +204,8 @@ def log_pipeline_stage(
                 "stage_name": stage_name,
                 "stage_status": stage_status,
                 "duration_ms": duration_ms,
-                **extra
-            }
+                **extra,
+            },
         )
 
 
@@ -196,7 +217,7 @@ def log_experiment(
     reproduction_rate: float,
     incident_id: str = "",
     request_id: str = "",
-    **extra: Any
+    **extra: Any,
 ) -> None:
     """Log experiment execution with structured fields."""
     with LogContext(request_id=request_id, incident_id=incident_id):
@@ -207,8 +228,8 @@ def log_experiment(
                 "hypothesis_id": hypothesis_id,
                 "status": status,
                 "reproduction_rate": reproduction_rate,
-                **extra
-            }
+                **extra,
+            },
         )
 
 
@@ -219,18 +240,13 @@ def log_patch_verification(
     verified: bool,
     incident_id: str = "",
     request_id: str = "",
-    **extra: Any
+    **extra: Any,
 ) -> None:
     """Log patch verification with structured fields."""
     with LogContext(request_id=request_id, incident_id=incident_id):
         logger.info(
             f"Patch verification {'passed' if verified else 'failed'}",
-            extra={
-                "patch_id": patch_id,
-                "score": score,
-                "verified": verified,
-                **extra
-            }
+            extra={"patch_id": patch_id, "score": score, "verified": verified, **extra},
         )
 
 
@@ -241,7 +257,7 @@ def log_security_event(
     description: str,
     incident_id: str = "",
     request_id: str = "",
-    **extra: Any
+    **extra: Any,
 ) -> None:
     """Log security-related events."""
     with LogContext(request_id=request_id, incident_id=incident_id):
@@ -251,8 +267,8 @@ def log_security_event(
                 "security_event_type": event_type,
                 "severity": severity,
                 "description": description,
-                **extra
-            }
+                **extra,
+            },
         )
 
 
@@ -262,7 +278,7 @@ def log_error(
     context: str = "",
     incident_id: str = "",
     request_id: str = "",
-    **extra: Any
+    **extra: Any,
 ) -> None:
     """Log error with structured context."""
     with LogContext(request_id=request_id, incident_id=incident_id):
@@ -272,6 +288,6 @@ def log_error(
                 "error_type": type(error).__name__,
                 "error_message": str(error),
                 "context": context,
-                **extra
-            }
+                **extra,
+            },
         )

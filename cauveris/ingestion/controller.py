@@ -1,6 +1,7 @@
 """
 Ingestion controller for processing incident bundles.
 """
+
 import logging
 import zipfile
 import yaml
@@ -30,10 +31,10 @@ def extract_zip_safely(zip_path: Path, extract_to: Path) -> List[Path]:
     extracted_files = []
     extract_to.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
         for member in zip_ref.namelist():
             member_path = Path(member)
-            if member_path.is_absolute() or '..' in member_path.parts:
+            if member_path.is_absolute() or ".." in member_path.parts:
                 raise ValueError(f"Invalid path in ZIP: {member}")
 
             safe_path = extract_to / member_path
@@ -42,12 +43,12 @@ def extract_zip_safely(zip_path: Path, extract_to: Path) -> List[Path]:
             except ValueError:
                 raise ValueError(f"Path traversal attempt detected: {member}")
 
-            if member.endswith('/') or member.endswith('\\'):
+            if member.endswith("/") or member.endswith("\\"):
                 safe_path.mkdir(parents=True, exist_ok=True)
                 continue
 
             safe_path.parent.mkdir(parents=True, exist_ok=True)
-            with zip_ref.open(member) as source, open(safe_path, 'wb') as target:
+            with zip_ref.open(member) as source, open(safe_path, "wb") as target:
                 shutil.copyfileobj(source, target)
 
             extracted_files.append(safe_path)
@@ -99,20 +100,28 @@ class IngestionController:
             manifest_file = bundle_path / "manifest.yaml"
             if manifest_file.exists():
                 try:
-                    with open(manifest_file, 'r', encoding='utf-8') as f:
+                    with open(manifest_file, "r", encoding="utf-8") as f:
                         manifest_data = yaml.safe_load(f)
                     if manifest_data and isinstance(manifest_data, dict):
                         incident.manifest = manifest_data
                         if not incident.title or incident.title == "Uploaded Incident":
                             incident.title = manifest_data.get("title", incident.title)
                         if not incident.description:
-                            incident.description = manifest_data.get("description", incident.description)
+                            incident.description = manifest_data.get(
+                                "description", incident.description
+                            )
                         if not incident.system_name:
-                            incident.system_name = manifest_data.get("system_name", incident.system_name)
+                            incident.system_name = manifest_data.get(
+                                "system_name", incident.system_name
+                            )
                         if not incident.source_repositories:
-                            incident.source_repositories = manifest_data.get("source_repositories", [])
+                            incident.source_repositories = manifest_data.get(
+                                "source_repositories", []
+                            )
                         if not incident.commit_hash:
-                            incident.commit_hash = manifest_data.get("commit_hash", incident.commit_hash)
+                            incident.commit_hash = manifest_data.get(
+                                "commit_hash", incident.commit_hash
+                            )
 
                         # Check for required evidence in manifest
                         existing_paths = {item.file_path for item in incident.evidence_items}
@@ -125,7 +134,7 @@ class IngestionController:
                                         size_bytes=0,
                                         checksum_sha256="",
                                         status=StatusLabel.OBSERVED,
-                                        is_required=True
+                                        is_required=True,
                                     )
                                 )
                 except Exception as e:
@@ -142,7 +151,9 @@ class IngestionController:
 
         # Update incident evidence counts
         incident.update_counts()
-        logger.info(f"Ingestion complete for incident {incident.id} (total={incident.evidence_count}, required={incident.required_evidence_count})")
+        logger.info(
+            f"Ingestion complete for incident {incident.id} (total={incident.evidence_count}, required={incident.required_evidence_count})"
+        )
         return incident
 
     async def _process_evidence_item(self, evidence: EvidenceItem, bundle_path: Optional[Path]):
@@ -166,7 +177,9 @@ class IngestionController:
 
             # Validate file size
             if not validate_file_size(str(file_path), self.settings.max_upload_size):
-                evidence.validation_errors.append(f"File size exceeds limit: {evidence.size_bytes} bytes")
+                evidence.validation_errors.append(
+                    f"File size exceeds limit: {evidence.size_bytes} bytes"
+                )
                 evidence.status = StatusLabel.VALIDATION_FAILED
                 return
 
@@ -180,16 +193,23 @@ class IngestionController:
 
             # Scan for secrets in text-based evidence
             secrets_found = []
-            if detected_type.startswith("text/") or detected_type in ["application/json", "application/x-jsonlines"]:
+            if detected_type.startswith("text/") or detected_type in [
+                "application/json",
+                "application/x-jsonlines",
+            ]:
                 try:
-                    content = file_path.read_text(encoding='utf-8', errors='ignore')
+                    content = file_path.read_text(encoding="utf-8", errors="ignore")
                     secrets_found = scan_for_secrets(content, str(file_path))
                 except Exception:
                     pass
 
             if secrets_found:
-                secret_names = [s[0] if isinstance(s, (list, tuple)) else str(s) for s in secrets_found]
-                evidence.validation_errors.append(f"Potential secrets detected: {', '.join(set(secret_names))}")
+                secret_names = [
+                    s[0] if isinstance(s, (list, tuple)) else str(s) for s in secrets_found
+                ]
+                evidence.validation_errors.append(
+                    f"Potential secrets detected: {', '.join(set(secret_names))}"
+                )
                 evidence.status = StatusLabel.SECRETS_DETECTED
             else:
                 evidence.status = StatusLabel.OBSERVED
@@ -202,32 +222,32 @@ class IngestionController:
     def _detect_file_type(self, file_path: Path) -> str:
         """Detect file MIME type from header or extension."""
         try:
-            with open(file_path, 'rb') as f:
+            with open(file_path, "rb") as f:
                 header = f.read(16)
 
-            if header.startswith(b'\x89PNG\r\n\x1a\n'):
+            if header.startswith(b"\x89PNG\r\n\x1a\n"):
                 return "image/png"
-            elif header.startswith(b'\xff\xd8\xff'):
+            elif header.startswith(b"\xff\xd8\xff"):
                 return "image/jpeg"
-            elif header.startswith(b'%PDF'):
+            elif header.startswith(b"%PDF"):
                 return "application/pdf"
-            elif header.startswith(b'\x89MCAP'):
+            elif header.startswith(b"\x89MCAP"):
                 return "application/octet-stream"
-            elif header.startswith(b'PK\x03\x04'):
+            elif header.startswith(b"PK\x03\x04"):
                 return "application/zip"
-            elif file_path.suffix.lower() in ['.yaml', '.yml']:
+            elif file_path.suffix.lower() in [".yaml", ".yml"]:
                 return "text/yaml"
-            elif file_path.suffix.lower() == '.json':
+            elif file_path.suffix.lower() == ".json":
                 return "application/json"
-            elif file_path.suffix.lower() == '.jsonl':
+            elif file_path.suffix.lower() == ".jsonl":
                 return "application/x-jsonlines"
-            elif file_path.suffix.lower() == '.csv':
+            elif file_path.suffix.lower() == ".csv":
                 return "text/csv"
-            elif file_path.suffix.lower() == '.md':
+            elif file_path.suffix.lower() == ".md":
                 return "text/markdown"
-            elif file_path.suffix.lower() in ['.py', '.cpp', '.h', '.sh', '.log', '.txt']:
+            elif file_path.suffix.lower() in [".py", ".cpp", ".h", ".sh", ".log", ".txt"]:
                 return "text/plain"
-            elif file_path.suffix.lower() == '.mp4':
+            elif file_path.suffix.lower() == ".mp4":
                 return "video/mp4"
         except Exception:
             pass
@@ -235,7 +255,9 @@ class IngestionController:
         mime_type, _ = mimetypes.guess_type(str(file_path))
         return mime_type or "application/octet-stream"
 
-    async def process_zip_bundle(self, zip_path: Path, target_dir: Optional[Path] = None) -> Incident:
+    async def process_zip_bundle(
+        self, zip_path: Path, target_dir: Optional[Path] = None
+    ) -> Incident:
         """
         Extract an incident ZIP bundle, build an Incident object, and validate evidence.
 
@@ -257,7 +279,7 @@ class IngestionController:
         manifest_data = {}
         if manifest_file.exists():
             try:
-                with open(manifest_file, 'r', encoding='utf-8') as f:
+                with open(manifest_file, "r", encoding="utf-8") as f:
                     manifest_data = yaml.safe_load(f) or {}
             except Exception as e:
                 logger.warning(f"Failed to parse manifest: {e}")
@@ -272,7 +294,7 @@ class IngestionController:
             source_repositories=manifest_data.get("source_repositories", []),
             commit_hash=manifest_data.get("commit_hash", ""),
             manifest=manifest_data,
-            status=StatusLabel.OBSERVED
+            status=StatusLabel.OBSERVED,
         )
 
         for file_path in extracted_files:
@@ -284,9 +306,62 @@ class IngestionController:
                 size_bytes=file_path.stat().st_size,
                 checksum_sha256=compute_file_hash(str(file_path)),
                 status=StatusLabel.OBSERVED,
-                is_required=is_req
+                is_required=is_req,
             )
             incident.evidence_items.append(evidence)
+
+        # Run full validation
+        await self.process(incident)
+        return incident
+
+    async def load_incident_from_store(self, incident_id: str, store_path: Path) -> Incident:
+        """
+        Load an incident from an existing evidence store directory.
+
+        Args:
+            incident_id: The incident ID to load
+            store_path: Path to the extracted evidence store directory
+
+        Returns:
+            Validated Incident object
+        """
+        manifest_file = store_path / "manifest.yaml"
+
+        manifest_data = {}
+        if manifest_file.exists():
+            try:
+                with open(manifest_file, "r", encoding="utf-8") as f:
+                    manifest_data = yaml.safe_load(f) or {}
+            except Exception as e:
+                logger.warning(f"Failed to parse manifest: {e}")
+
+        incident = Incident(
+            id=incident_id,
+            title=manifest_data.get("title", f"Incident {incident_id}"),
+            description=manifest_data.get("description", "Loaded from evidence store"),
+            system_name=manifest_data.get("system_name", "physical-ai-system"),
+            approximate_time=manifest_data.get("approximate_time"),
+            source_repositories=manifest_data.get("source_repositories", []),
+            commit_hash=manifest_data.get("commit_hash", ""),
+            manifest=manifest_data,
+            bundle_path=str(store_path),
+            status=StatusLabel.OBSERVED,
+        )
+
+        # Build evidence items from all files in the store
+        for file_path in store_path.rglob("*"):
+            if file_path.is_file() and file_path.name != "manifest.yaml":
+                rel_path = str(file_path.relative_to(store_path)).replace("\\", "/")
+                is_req = rel_path in manifest_data.get("required_evidence", [])
+                evidence = EvidenceItem(
+                    file_path=rel_path,
+                    file_type=self._detect_file_type(file_path),
+                    size_bytes=file_path.stat().st_size,
+                    checksum_sha256=compute_file_hash(str(file_path)),
+                    status=StatusLabel.OBSERVED,
+                    is_required=is_req,
+                )
+                incident.evidence_items.append(evidence)
 
         # Run full validation
         await self.process(incident)

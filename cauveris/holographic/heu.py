@@ -5,6 +5,7 @@ Each piece of boundary evidence becomes a holographic pixel that encodes
 information about the system interior. Like a hologram pixel, each HEU
 contains interference patterns from multiple internal state dimensions.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -25,13 +26,14 @@ class BoundaryLayer(str, Enum):
     Each layer represents a different type of boundary signal that encodes
     bulk state information through different physical/informational channels.
     """
-    APPLICATION_LOG = "application_log"        # Structured logs (JSONL, OTel)
+
+    APPLICATION_LOG = "application_log"  # Structured logs (JSONL, OTel)
     INFRASTRUCTURE_LOG = "infrastructure_log"  # System logs, kernel messages
-    DISTRIBUTED_TRACE = "distributed_trace"    # OTel spans, Zipkin, Jaeger
-    METRICS_EXPORT = "metrics_export"          # Prometheus, OpenMetrics, statsd
-    NETWORK_FLOW = "network_flow"              # NetFlow, sFlow, PCAP headers
-    CONFIG_STATE = "config_state"              # Deployed config, feature flags
-    DEPLOYMENT_EVENT = "deployment_event"      # CI/CD, rollouts, scaling events
+    DISTRIBUTED_TRACE = "distributed_trace"  # OTel spans, Zipkin, Jaeger
+    METRICS_EXPORT = "metrics_export"  # Prometheus, OpenMetrics, statsd
+    NETWORK_FLOW = "network_flow"  # NetFlow, sFlow, PCAP headers
+    CONFIG_STATE = "config_state"  # Deployed config, feature flags
+    DEPLOYMENT_EVENT = "deployment_event"  # CI/CD, rollouts, scaling events
 
 
 @dataclass(slots=True)
@@ -55,6 +57,7 @@ class HolographicEvidenceUnit:
         cross_layer_correlations: Related HEU IDs from other layers at same time
         phase_vector: 8D holographic phase encoding [time, causality, resource, error, config, deploy, network, dependency]
     """
+
     heu_id: str
     timestamp_ns: int
     boundary_layer: BoundaryLayer
@@ -69,8 +72,8 @@ class HolographicEvidenceUnit:
     # e.g., {"memory_pressure": 0.7, "cpu_contention": 0.3, "network_latency": 0.9}
 
     # Reconstruction metadata
-    reconstruction_weight: float = 1.0      # How much this HEU constrains reconstruction
-    ambiguity_score: float = 0.0            # 0=unambiguous, 1=highly ambiguous
+    reconstruction_weight: float = 1.0  # How much this HEU constrains reconstruction
+    ambiguity_score: float = 0.0  # 0=unambiguous, 1=highly ambiguous
     cross_layer_correlations: List[str] = field(default_factory=list)  # Other HEU IDs
 
     # Holographic phase (like interference phase in optical holography)
@@ -82,7 +85,9 @@ class HolographicEvidenceUnit:
         if self.phase_vector.shape != (8,):
             raise ValueError(f"phase_vector must have shape (8,), got {self.phase_vector.shape}")
         if not 0.0 <= self.reconstruction_weight <= 1.0:
-            raise ValueError(f"reconstruction_weight must be in [0,1], got {self.reconstruction_weight}")
+            raise ValueError(
+                f"reconstruction_weight must be in [0,1], got {self.reconstruction_weight}"
+            )
         if not 0.0 <= self.ambiguity_score <= 1.0:
             raise ValueError(f"ambiguity_score must be in [0,1], got {self.ambiguity_score}")
 
@@ -134,7 +139,7 @@ class HolographicEvidenceUnit:
             reconstruction_weight=data.get("reconstruction_weight", 1.0),
             ambiguity_score=data.get("ambiguity_score", 0.0),
             cross_layer_correlations=data.get("cross_layer_correlations", []),
-            phase_vector=np.array(data.get("phase_vector", [0.0]*8), dtype=np.float32),
+            phase_vector=np.array(data.get("phase_vector", [0.0] * 8), dtype=np.float32),
         )
 
     def __hash__(self) -> int:
@@ -160,18 +165,14 @@ def _map_source_type_to_layer(source_type: str) -> BoundaryLayer:
         # Application logs from services
         "jsonl_log": BoundaryLayer.APPLICATION_LOG,
         "text_log": BoundaryLayer.INFRASTRUCTURE_LOG,
-
         # Distributed traces
         "otel_trace": BoundaryLayer.DISTRIBUTED_TRACE,
         "mcap_recording": BoundaryLayer.DISTRIBUTED_TRACE,
-
         # Metrics
         "csv_metrics": BoundaryLayer.METRICS_EXPORT,
-
         # Configuration and deployment
         "deployment_json": BoundaryLayer.DEPLOYMENT_EVENT,
         "operator_note": BoundaryLayer.CONFIG_STATE,
-
         # Network (if present in future)
         "netflow": BoundaryLayer.NETWORK_FLOW,
         "pcap": BoundaryLayer.NETWORK_FLOW,
@@ -245,9 +246,14 @@ def _compute_encoded_dimensions(
 
     # Network latency/loss indicators
     net_score = 0.0
-    if any(kw in message for kw in ["latency", "timeout", "rtt", "network", "packet loss", "retransmit"]):
+    if any(
+        kw in message
+        for kw in ["latency", "timeout", "rtt", "network", "packet loss", "retransmit"]
+    ):
         net_score += 0.5
-    if source_type == "csv_metrics" and any(k in str(attributes).lower() for k in ["latency", "rtt", "loss"]):
+    if source_type == "csv_metrics" and any(
+        k in str(attributes).lower() for k in ["latency", "rtt", "loss"]
+    ):
         net_score += 0.4
     if source_type == "otel_trace":
         # Trace duration carries network latency info
@@ -361,7 +367,11 @@ def _compute_phase_vector(
     # Dimensions 2-7: Derived from encoded dimensions
     encoded = _compute_encoded_dimensions(event, {})
 
-    phase[2] = encoded.get("cpu_pressure", 0.0) + encoded.get("memory_pressure", 0.0) + encoded.get("resource_contention", 0.0)
+    phase[2] = (
+        encoded.get("cpu_pressure", 0.0)
+        + encoded.get("memory_pressure", 0.0)
+        + encoded.get("resource_contention", 0.0)
+    )
     phase[2] = min(1.0, phase[2])
 
     phase[3] = encoded.get("error_rate", 0.0)
@@ -421,6 +431,7 @@ def convert_timeline_to_heus(
 
     # Group by (source_type, source) for sequence numbers
     from collections import defaultdict
+
     seq_counters: Dict[Tuple[str, str], int] = defaultdict(int)
 
     heus = []
@@ -431,7 +442,12 @@ def convert_timeline_to_heus(
 
         # Get component/instance from attributes (including OTel standard attributes)
         attributes = event.get("attributes", {})
-        component = attributes.get("service") or attributes.get("component") or attributes.get("service.name") or source
+        component = (
+            attributes.get("service")
+            or attributes.get("component")
+            or attributes.get("service.name")
+            or source
+        )
         instance = attributes.get("instance") or attributes.get("host") or "unknown"
 
         seq = seq_counters[(source_type, source)]
@@ -537,13 +553,13 @@ def _compute_reconstruction_weight(
     More informative layers and more specific signals get higher weights.
     """
     base_weights = {
-        BoundaryLayer.DISTRIBUTED_TRACE: 1.0,    # Highest: causal structure
-        BoundaryLayer.APPLICATION_LOG: 0.9,       # Structured, rich context
-        BoundaryLayer.METRICS_EXPORT: 0.8,        # Quantitative, continuous
-        BoundaryLayer.INFRASTRUCTURE_LOG: 0.6,    # Noisy, mixed domains
-        BoundaryLayer.DEPLOYMENT_EVENT: 0.9,      # Clear causal anchors
-        BoundaryLayer.CONFIG_STATE: 0.7,          # Important but sparse
-        BoundaryLayer.NETWORK_FLOW: 0.5,          # Lower resolution
+        BoundaryLayer.DISTRIBUTED_TRACE: 1.0,  # Highest: causal structure
+        BoundaryLayer.APPLICATION_LOG: 0.9,  # Structured, rich context
+        BoundaryLayer.METRICS_EXPORT: 0.8,  # Quantitative, continuous
+        BoundaryLayer.INFRASTRUCTURE_LOG: 0.6,  # Noisy, mixed domains
+        BoundaryLayer.DEPLOYMENT_EVENT: 0.9,  # Clear causal anchors
+        BoundaryLayer.CONFIG_STATE: 0.7,  # Important but sparse
+        BoundaryLayer.NETWORK_FLOW: 0.5,  # Lower resolution
     }
     base = base_weights.get(layer, 0.5)
 
@@ -570,13 +586,13 @@ def _compute_ambiguity_score(
 
     # Layer-specific base ambiguity
     layer_ambiguity = {
-        BoundaryLayer.INFRASTRUCTURE_LOG: 0.3,    # Mixed clock domains
-        BoundaryLayer.NETWORK_FLOW: 0.4,          # Header-only, no payload
-        BoundaryLayer.METRICS_EXPORT: 0.2,        # Aggregated, loses detail
-        BoundaryLayer.APPLICATION_LOG: 0.1,       # Structured, detailed
-        BoundaryLayer.DISTRIBUTED_TRACE: 0.05,    # Causal structure preserved
-        BoundaryLayer.DEPLOYMENT_EVENT: 0.1,      # Clear timestamp, intent
-        BoundaryLayer.CONFIG_STATE: 0.15,         # Sparse but clear
+        BoundaryLayer.INFRASTRUCTURE_LOG: 0.3,  # Mixed clock domains
+        BoundaryLayer.NETWORK_FLOW: 0.4,  # Header-only, no payload
+        BoundaryLayer.METRICS_EXPORT: 0.2,  # Aggregated, loses detail
+        BoundaryLayer.APPLICATION_LOG: 0.1,  # Structured, detailed
+        BoundaryLayer.DISTRIBUTED_TRACE: 0.05,  # Causal structure preserved
+        BoundaryLayer.DEPLOYMENT_EVENT: 0.1,  # Clear timestamp, intent
+        BoundaryLayer.CONFIG_STATE: 0.15,  # Sparse but clear
     }
     score += layer_ambiguity.get(layer, 0.2)
 
@@ -606,6 +622,7 @@ def _add_cross_layer_correlations(heus: List[HolographicEvidenceUnit]) -> None:
     """
     # Group by component and millisecond
     from collections import defaultdict
+
     by_comp_ms: Dict[Tuple[str, int], List[HolographicEvidenceUnit]] = defaultdict(list)
 
     for heu in heus:
@@ -618,6 +635,4 @@ def _add_cross_layer_correlations(heus: List[HolographicEvidenceUnit]) -> None:
             ids = [h.heu_id for h in bucket_heus]
             for heu in bucket_heus:
                 # Add other HEUs in same bucket as correlations
-                heu.cross_layer_correlations = [
-                    cid for cid in ids if cid != heu.heu_id
-                ]
+                heu.cross_layer_correlations = [cid for cid in ids if cid != heu.heu_id]

@@ -50,7 +50,7 @@ def make_topology(n=3, component_type="service"):
         topo.causal_edges.append(
             CausalEdge(
                 source=f"svc_{i}",
-                target=f"svc_{i+1}",
+                target=f"svc_{i + 1}",
                 edge_type="dependency",
                 latency_ms=10.0,
                 confidence=0.8,
@@ -96,9 +96,36 @@ class TestAnomalyDataclasses:
     def test_report_filters_by_severity(self):
         report = AnomalyReport()
         report.anomalies = [
-            Anomaly(AnomalyType.CPU_SATURATION, AnomalySeverity.CRITICAL, "a", "cpu_usage", 1.0, (0, 1), 1.0, ""),
-            Anomaly(AnomalyType.ERROR_SPIKE, AnomalySeverity.HIGH, "b", "error_rate", 0.5, (0, 1), 1.0, ""),
-            Anomaly(AnomalyType.MEMORY_EXHAUSTION, AnomalySeverity.LOW, "c", "memory_usage", 0.5, (0, 1), 1.0, ""),
+            Anomaly(
+                AnomalyType.CPU_SATURATION,
+                AnomalySeverity.CRITICAL,
+                "a",
+                "cpu_usage",
+                1.0,
+                (0, 1),
+                1.0,
+                "",
+            ),
+            Anomaly(
+                AnomalyType.ERROR_SPIKE,
+                AnomalySeverity.HIGH,
+                "b",
+                "error_rate",
+                0.5,
+                (0, 1),
+                1.0,
+                "",
+            ),
+            Anomaly(
+                AnomalyType.MEMORY_EXHAUSTION,
+                AnomalySeverity.LOW,
+                "c",
+                "memory_usage",
+                0.5,
+                (0, 1),
+                1.0,
+                "",
+            ),
         ]
         assert len(report.get_critical_anomalies()) == 1
         assert len(report.get_high_anomalies()) == 2
@@ -118,8 +145,10 @@ class TestThresholdDetection:
         detector = create_anomaly_detector(topo)
         report = detector.detect(recon)
         threshold_anomalies = [
-            a for a in report.anomalies
-            if a.anomaly_type in (
+            a
+            for a in report.anomalies
+            if a.anomaly_type
+            in (
                 AnomalyType.CPU_SATURATION,
                 AnomalyType.MEMORY_EXHAUSTION,
                 AnomalyType.ERROR_SPIKE,
@@ -189,8 +218,7 @@ class TestSignatureDetection:
         recon = make_recon(topo, svc_0={"cpu_usage": 0.9, "error_rate": 0.5})
         report = create_anomaly_detector(topo).detect(recon)
         collapses = [
-            a for a in report.anomalies
-            if a.anomaly_type == AnomalyType.THROUGHPUT_COLLAPSE
+            a for a in report.anomalies if a.anomaly_type == AnomalyType.THROUGHPUT_COLLAPSE
         ]
         assert len(collapses) >= 1
         assert collapses[0].severity == AnomalySeverity.CRITICAL
@@ -204,10 +232,7 @@ class TestSignatureDetection:
             svc_2={"error_rate": 0.3},
         )
         report = create_anomaly_detector(topo).detect(recon)
-        cascades = [
-            a for a in report.anomalies
-            if a.anomaly_type == AnomalyType.CASCADING_FAILURE
-        ]
+        cascades = [a for a in report.anomalies if a.anomaly_type == AnomalyType.CASCADING_FAILURE]
         assert len(cascades) >= 1
 
     def test_detects_resource_starvation_on_edge(self):
@@ -216,9 +241,9 @@ class TestSignatureDetection:
         recon = make_recon(topo, svc_0={"cpu_usage": 0.9}, svc_1={"cpu_usage": 0.1})
         report = create_anomaly_detector(topo).detect(recon)
         starv = [
-            a for a in report.anomalies
-            if a.anomaly_type == AnomalyType.RESOURCE_STARVATION
-            and a.dimension == "starvation"
+            a
+            for a in report.anomalies
+            if a.anomaly_type == AnomalyType.RESOURCE_STARVATION and a.dimension == "starvation"
         ]
         assert len(starv) >= 1
 
@@ -229,9 +254,7 @@ class TestSignatureDetection:
             svc_0={"config_changed_recently": True, "error_rate": 0.2},
         )
         report = create_anomaly_detector(topo).detect(recon)
-        mismatches = [
-            a for a in report.anomalies if a.anomaly_type == AnomalyType.CONFIG_MISMATCH
-        ]
+        mismatches = [a for a in report.anomalies if a.anomaly_type == AnomalyType.CONFIG_MISMATCH]
         assert len(mismatches) >= 1
 
     def test_detects_network_congestion(self):
@@ -239,13 +262,12 @@ class TestSignatureDetection:
         recon = make_recon(topo)
         recon.reconstructed_network = ReconstructedNetworkState()
         recon.reconstructed_network.add_edge(
-            "svc_0", "svc_1",
+            "svc_0",
+            "svc_1",
             NetworkEdge(source="svc_0", target="svc_1", latency_ms=800.0, loss_rate=0.15),
         )
         report = create_anomaly_detector(topo).detect(recon)
-        net = [
-            a for a in report.anomalies if a.anomaly_type == AnomalyType.NETWORK_CONGESTION
-        ]
+        net = [a for a in report.anomalies if a.anomaly_type == AnomalyType.NETWORK_CONGESTION]
         assert len(net) >= 1
 
     def test_healthy_network_no_congestion(self):
@@ -253,13 +275,12 @@ class TestSignatureDetection:
         recon = make_recon(topo)
         recon.reconstructed_network = ReconstructedNetworkState()
         recon.reconstructed_network.add_edge(
-            "svc_0", "svc_1",
+            "svc_0",
+            "svc_1",
             NetworkEdge(source="svc_0", target="svc_1", latency_ms=5.0, loss_rate=0.0),
         )
         report = create_anomaly_detector(topo).detect(recon)
-        net = [
-            a for a in report.anomalies if a.anomaly_type == AnomalyType.NETWORK_CONGESTION
-        ]
+        net = [a for a in report.anomalies if a.anomaly_type == AnomalyType.NETWORK_CONGESTION]
         assert net == []
 
 
@@ -280,20 +301,14 @@ class TestStructuralDetection:
             component_name="orphan", instance_id="orphan-1", cpu_usage=0.9
         )
         report = create_anomaly_detector(topo).detect(recon)
-        starv = [
-            a for a in report.anomalies
-            if a.dimension == "isolated_high_load"
-        ]
+        starv = [a for a in report.anomalies if a.dimension == "isolated_high_load"]
         assert len(starv) >= 1
 
     def test_correlated_high_load_on_edge_flags_cascade(self):
         topo = make_topology(2)
         recon = make_recon(topo, svc_0={"cpu_usage": 0.9}, svc_1={"cpu_usage": 0.9})
         report = create_anomaly_detector(topo).detect(recon)
-        cascades = [
-            a for a in report.anomalies
-            if a.anomaly_type == AnomalyType.CASCADING_FAILURE
-        ]
+        cascades = [a for a in report.anomalies if a.anomaly_type == AnomalyType.CASCADING_FAILURE]
         assert len(cascades) >= 1
 
 
@@ -353,11 +368,14 @@ class TestReportAggregation:
 
 
 class TestAgainstSyntheticIncidents:
-    @pytest.mark.parametrize("incident_type", [
-        IncidentType.CPU_SPIKE_CASCADE,
-        IncidentType.NETWORK_PARTITION,
-        IncidentType.MEMORY_LEAK,
-    ])
+    @pytest.mark.parametrize(
+        "incident_type",
+        [
+            IncidentType.CPU_SPIKE_CASCADE,
+            IncidentType.NETWORK_PARTITION,
+            IncidentType.MEMORY_LEAK,
+        ],
+    )
     def test_detects_anomalies_in_injected_incidents(self, incident_type):
         """Synthetic incidents have injected faults, so anomalies must appear."""
         generator = SyntheticIncidentGenerator(seed=42)

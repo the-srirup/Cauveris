@@ -26,6 +26,7 @@ system:
 The analyzer clusters anomalies by affected events to identify systemic
 issues.
 """
+
 from __future__ import annotations
 
 import logging
@@ -42,6 +43,7 @@ class AnomalyType(str, Enum):
     """
     Types of temporal anomalies that can be detected.
     """
+
     CLOCK_SKEW = "clock_skew"
     CLOCK_DESYNC = "clock_desync"
     TIMESTAMP_INVERSION = "timestamp_inversion"
@@ -60,6 +62,7 @@ class TemporalAnomaly:
     """
     A detected temporal irregularity.
     """
+
     anomaly_type: AnomalyType
     severity: float  # 0..1, higher = more severe
     affected_events: List[str]
@@ -110,15 +113,17 @@ class AnomalyPatternRecognizer:
 
         # Add violations as CAUSALITY_REVERSAL anomalies
         for v in violations:
-            self.anomalies.append(TemporalAnomaly(
-                anomaly_type=AnomalyType.CAUSALITY_REVERSAL,
-                severity=min(1.0, v.confidence),
-                affected_events=[v.cause_id, v.effect_id],
-                timestamp_range=(0, 0),  # Will be computed from evidence if needed
-                confidence=v.confidence,
-                explanation=v.description,
-                evidence_ids=[v.cause_id, v.effect_id],
-            ))
+            self.anomalies.append(
+                TemporalAnomaly(
+                    anomaly_type=AnomalyType.CAUSALITY_REVERSAL,
+                    severity=min(1.0, v.confidence),
+                    affected_events=[v.cause_id, v.effect_id],
+                    timestamp_range=(0, 0),  # Will be computed from evidence if needed
+                    confidence=v.confidence,
+                    explanation=v.description,
+                    evidence_ids=[v.cause_id, v.effect_id],
+                )
+            )
 
         # Cluster overlapping anomalies
         self.anomalies = self._cluster_anomalies(self.anomalies)
@@ -141,14 +146,16 @@ class AnomalyPatternRecognizer:
             if msg.get("detection_age_ms") is not None:
                 age = msg["detection_age_ms"]
                 if age > 120.0:
-                    self.anomalies.append(TemporalAnomaly(
-                        anomaly_type=AnomalyType.LATENCY_BUDGET_BREACH,
-                        severity=min(1.0, age / 200.0),  # caps at 1.0 for 200+ ms
-                        affected_events=[msg.get("topic", "unknown")],
-                        timestamp_range=(msg["log_time_ns"] / 1e9, msg["log_time_ns"] / 1e9),
-                        confidence=1.0,
-                        explanation=f"Detection age {age:.1f}ms exceeded 120ms freshness budget",
-                    ))
+                    self.anomalies.append(
+                        TemporalAnomaly(
+                            anomaly_type=AnomalyType.LATENCY_BUDGET_BREACH,
+                            severity=min(1.0, age / 200.0),  # caps at 1.0 for 200+ ms
+                            affected_events=[msg.get("topic", "unknown")],
+                            timestamp_range=(msg["log_time_ns"] / 1e9, msg["log_time_ns"] / 1e9),
+                            confidence=1.0,
+                            explanation=f"Detection age {age:.1f}ms exceeded 120ms freshness budget",
+                        )
+                    )
 
     # ------------------------------------------------------------------ #
     def _detect_timestamp_inversions(self, evidence: List[Any]) -> None:
@@ -171,14 +178,16 @@ class AnomalyPatternRecognizer:
                 for ev in jsonl_events:
                     ts = ev.timestamp_ns
                     if prev_ts is not None and ts < prev_ts:
-                        self.anomalies.append(TemporalAnomaly(
-                            anomaly_type=AnomalyType.TIMESTAMP_INVERSION,
-                            severity=0.7,
-                            affected_events=[ev.evidence_id],
-                            timestamp_range=(ts / 1e9, prev_ts / 1e9),
-                            confidence=0.8,
-                            explanation=f"Log inversion: {ev.source}:{ev.extra.get('attributes', {}).get('line_number', '?')} timestamped before prior line",
-                        ))
+                        self.anomalies.append(
+                            TemporalAnomaly(
+                                anomaly_type=AnomalyType.TIMESTAMP_INVERSION,
+                                severity=0.7,
+                                affected_events=[ev.evidence_id],
+                                timestamp_range=(ts / 1e9, prev_ts / 1e9),
+                                confidence=0.8,
+                                explanation=f"Log inversion: {ev.source}:{ev.extra.get('attributes', {}).get('line_number', '?')} timestamped before prior line",
+                            )
+                        )
                     prev_ts = ts
 
     # ------------------------------------------------------------------ #
@@ -203,27 +212,31 @@ class AnomalyPatternRecognizer:
                     if e.evidence_id in event_ids:
                         domains.add(e.clock_domain)
                 if len(domains) > 1:
-                    self.anomalies.append(TemporalAnomaly(
-                        anomaly_type=AnomalyType.CO_TEMPORAL_AMBIGUITY,
-                        severity=0.6,
-                        affected_events=event_ids[:10],  # cap for report size
-                        timestamp_range=(ts_ns / 1e9, ts_ns / 1e9),
-                        confidence=1.0,
-                        explanation=f"Events at {ts_ns}ns span domains {list(domains)} - causal order undecidable from timestamps",
-                    ))
+                    self.anomalies.append(
+                        TemporalAnomaly(
+                            anomaly_type=AnomalyType.CO_TEMPORAL_AMBIGUITY,
+                            severity=0.6,
+                            affected_events=event_ids[:10],  # cap for report size
+                            timestamp_range=(ts_ns / 1e9, ts_ns / 1e9),
+                            confidence=1.0,
+                            explanation=f"Events at {ts_ns}ns span domains {list(domains)} - causal order undecidable from timestamps",
+                        )
+                    )
 
         # EStop + Safety at same time (special case from MCAP)
         for estop in mcap.get("estop_safety_co_temporal", []):
             t = estop["time_ns"]
             topics = estop["topics"]
-            self.anomalies.append(TemporalAnomaly(
-                anomaly_type=AnomalyType.CO_TEMPORAL_AMBIGUITY,
-                severity=0.8,
-                affected_events=topics,
-                timestamp_range=(t / 1e9, t / 1e9),
-                confidence=1.0,
-                explanation=f"E-stop command and safety status logged at same instant - order undecidable (topics: {topics})",
-            ))
+            self.anomalies.append(
+                TemporalAnomaly(
+                    anomaly_type=AnomalyType.CO_TEMPORAL_AMBIGUITY,
+                    severity=0.8,
+                    affected_events=topics,
+                    timestamp_range=(t / 1e9, t / 1e9),
+                    confidence=1.0,
+                    explanation=f"E-stop command and safety status logged at same instant - order undecidable (topics: {topics})",
+                )
+            )
 
     # ------------------------------------------------------------------ #
     def _detect_domain_mixing(self, evidence: List[Any], raw_signals: Dict[str, Any]) -> None:
@@ -240,26 +253,30 @@ class AnomalyPatternRecognizer:
 
         if brackets and mixed > 0:
             # System log mixes wall-clock and kernel monotonic timestamps
-            self.anomalies.append(TemporalAnomaly(
-                anomaly_type=AnomalyType.CLOCK_DOMAIN_MIXING,
-                severity=0.5,
-                affected_events=[],
-                timestamp_range=(0, 0),
-                confidence=0.9,
-                explanation=f"system.log mixes wall-clock and kernel monotonic timestamps ({mixed} mixed entries, {len(brackets)} brackets found)",
-            ))
+            self.anomalies.append(
+                TemporalAnomaly(
+                    anomaly_type=AnomalyType.CLOCK_DOMAIN_MIXING,
+                    severity=0.5,
+                    affected_events=[],
+                    timestamp_range=(0, 0),
+                    confidence=0.9,
+                    explanation=f"system.log mixes wall-clock and kernel monotonic timestamps ({mixed} mixed entries, {len(brackets)} brackets found)",
+                )
+            )
 
         # Second precision check
         precision_loss = sys_log.get("second_precision_samples", 0)
         if precision_loss > 0:
-            self.anomalies.append(TemporalAnomaly(
-                anomaly_type=AnomalyType.TIMESTAMP_PRECISION_LOSS,
-                severity=precision_loss / 100.0,  # scale by count
-                affected_events=[],
-                timestamp_range=(0, 0),
-                confidence=0.8,
-                explanation=f"system.log timestamps have second precision only ({precision_loss} samples) - sub-ms ordering uncertain",
-            ))
+            self.anomalies.append(
+                TemporalAnomaly(
+                    anomaly_type=AnomalyType.TIMESTAMP_PRECISION_LOSS,
+                    severity=precision_loss / 100.0,  # scale by count
+                    affected_events=[],
+                    timestamp_range=(0, 0),
+                    confidence=0.8,
+                    explanation=f"system.log timestamps have second precision only ({precision_loss} samples) - sub-ms ordering uncertain",
+                )
+            )
 
     # ------------------------------------------------------------------ #
     def _detect_timestamp_precision_loss(
@@ -274,14 +291,16 @@ class AnomalyPatternRecognizer:
         csv_signals = raw_signals.get("csv_metrics", {})
         for fname, data in csv_signals.get("column_precision", {}).items():
             if data.get("second_only_samples", 0) > 0 and data.get("microsecond_samples", 0) == 0:
-                self.anomalies.append(TemporalAnomaly(
-                    anomaly_type=AnomalyType.TIMESTAMP_PRECISION_LOSS,
-                    severity=0.3,
-                    affected_events=[],
-                    timestamp_range=(0, 0),
-                    confidence=0.7,
-                    explanation=f"{fname} has second-precision timestamps only",
-                ))
+                self.anomalies.append(
+                    TemporalAnomaly(
+                        anomaly_type=AnomalyType.TIMESTAMP_PRECISION_LOSS,
+                        severity=0.3,
+                        affected_events=[],
+                        timestamp_range=(0, 0),
+                        confidence=0.7,
+                        explanation=f"{fname} has second-precision timestamps only",
+                    )
+                )
 
     # ------------------------------------------------------------------ #
     def _cluster_anomalies(self, anomalies: List[TemporalAnomaly]) -> List[TemporalAnomaly]:

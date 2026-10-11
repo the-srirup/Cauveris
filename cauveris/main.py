@@ -1,10 +1,10 @@
 """
 Main entry point for Cauveris backend.
 """
+
 import argparse
 import logging
 import sys
-from cauveris.config import get_settings
 import uvicorn
 from cauveris.logging_config import setup_structured_logging, get_logger
 
@@ -24,53 +24,35 @@ def main():
 
     # Serve command (default)
     serve_parser = subparsers.add_parser("serve", help="Start the Cauveris API server")
-    serve_parser.add_argument(
-        "--host",
-        default=get_settings().host,
-        help="Host to bind the server to"
-    )
-    serve_parser.add_argument(
-        "--port",
-        type=int,
-        default=get_settings().port,
-        help="Port to bind the server to"
-    )
-    serve_parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug mode"
-    )
-
-    # Golden command
-    golden_parser = subparsers.add_parser("golden", help="Load golden incident on startup")
-    golden_parser.add_argument(
-        "--host",
-        default=get_settings().host,
-        help="Host to bind the server to"
-    )
-    golden_parser.add_argument(
-        "--port",
-        type=int,
-        default=get_settings().port,
-        help="Port to bind the server to"
-    )
-    golden_parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug mode"
-    )
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Host to bind the server to")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Port to bind the server to")
+    serve_parser.add_argument("--debug", action="store_true", help="Enable debug mode")
 
     # Export patch command
-    export_parser = subparsers.add_parser("export-patch", help="Export verified patch for direct import into infected space")
-    export_parser.add_argument("--incident-id", default="CAU-0001", help="Incident ID")
-    export_parser.add_argument("--output-dir", default="./exported_patch", help="Output directory to save patch files")
+    export_parser = subparsers.add_parser(
+        "export-patch", help="Export verified patch for direct import into infected space"
+    )
+    export_parser.add_argument(
+        "--incident-id", required=True, help="Incident ID (must exist in evidence store)"
+    )
+    export_parser.add_argument(
+        "--output-dir", default="./exported_patch", help="Output directory to save patch files"
+    )
 
     # Apply patch command
-    apply_parser = subparsers.add_parser("apply-patch", help="Apply patch directly to infected space")
+    apply_parser = subparsers.add_parser(
+        "apply-patch", help="Apply patch directly to infected space"
+    )
     apply_parser.add_argument("patch_path", help="Path to apply_patch.py or fix.patch")
-    apply_parser.add_argument("--target", default=".", help="Target directory of the infected space")
-    apply_parser.add_argument("--check", action="store_true", help="Verify patch applies cleanly without writing")
-    apply_parser.add_argument("--rollback", action="store_true", help="Rollback applied patch using backup")
+    apply_parser.add_argument(
+        "--target", default=".", help="Target directory of the infected space"
+    )
+    apply_parser.add_argument(
+        "--check", action="store_true", help="Verify patch applies cleanly without writing"
+    )
+    apply_parser.add_argument(
+        "--rollback", action="store_true", help="Rollback applied patch using backup"
+    )
 
     # Handle no command (default to serve)
     args = parser.parse_args()
@@ -78,34 +60,58 @@ def main():
     # If no command provided, default to serve
     if args.command is None:
         args.command = "serve"
+
         # Create a namespace with serve defaults
         class ServeArgs:
             def __init__(self):
                 self.command = "serve"
-                self.host = get_settings().host
-                self.port = get_settings().port
+                self.host = "0.0.0.0"
+                self.port = 8000
                 self.debug = False
-                self.golden = False
+
         args = ServeArgs()
     elif args.command == "serve":
         pass  # Already have the right args
-    elif args.command == "golden":
-        # For golden command, we'll load the incident and then serve
-        pass
     elif args.command == "export-patch":
         from pathlib import Path
         import asyncio
-        from cauveris.datasets.golden_incident import GoldenIncidentGenerator
         from cauveris.patch.generator import PatchGenerator
         from cauveris.simulation.runner import SimulationRunner
         from cauveris.sandbox.controller import SandboxController
         from cauveris.hypothesis.generator import HypothesisGenerator
         from cauveris.timeline.builder import TimelineBuilder
         from cauveris.ingestion.controller import IngestionController
+        from cauveris.config import get_settings
 
         async def run_export():
-            generator = GoldenIncidentGenerator()
-            incident = generator.generate()
+            # Load real incident from evidence store
+            settings = get_settings()
+            evidence_path = Path(settings.evidence_store_path) / args.incident_id
+            if not evidence_path.exists():
+                # Also check common incident folder patterns
+                for pattern in [
+                    f"./incident-{args.incident_id}",
+                    f"./incident-{args.incident_id.lower()}",
+                ]:
+                    p = Path(pattern)
+                    if p.exists():
+                        evidence_path = p
+                        break
+
+            if not evidence_path.exists():
+                print(
+                    f"Error: Incident {args.incident_id} not found in evidence store",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+            ingestion = IngestionController()
+            try:
+                incident = await ingestion.load_incident_from_store(args.incident_id, evidence_path)
+            except Exception as e:
+                print(f"Error: Failed to load incident from evidence store: {e}", file=sys.stderr)
+                sys.exit(1)
+
             incident = await IngestionController().process(incident)
             incident = await TimelineBuilder().build(incident)
             hypotheses = await HypothesisGenerator().generate(incident)
@@ -125,6 +131,7 @@ def main():
         return
     elif args.command == "apply-patch":
         from pathlib import Path
+
         patch_file = Path(args.patch_path).resolve()
         if not patch_file.exists():
             print(f"Error: Patch file '{patch_file}' not found.", file=sys.stderr)
@@ -156,23 +163,15 @@ def main():
     if args.debug:
         logger.setLevel(logging.DEBUG)
 
-    # If golden flag is set or command is golden, load the golden incident
-    if getattr(args, 'golden', False) or args.command == "golden":
-        logger.info("Loading golden incident on startup...")
-        # Import here to avoid circular imports
-        from cauveris.datasets.golden_incident import GoldenIncidentGenerator
-        from cauveris.api.main import incidents
-        generator = GoldenIncidentGenerator()
-        incident = generator.generate()
-        incidents[incident.id] = incident
-        logger.info(f"Loaded golden incident {incident.id}")
+    # No golden incident auto-loading in production
+    # Incidents are loaded from evidence store on demand via API
 
     uvicorn.run(
         "cauveris.api.main:app",
         host=args.host,
         port=args.port,
-        reload=getattr(args, 'debug', False),
-        log_level="info"
+        reload=getattr(args, "debug", False),
+        log_level="info",
     )
 
 

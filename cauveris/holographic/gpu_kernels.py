@@ -4,6 +4,7 @@ GPU-Accelerated Holographic Kernels - Python wrapper for C++ CUDA implementation
 This module provides a drop-in replacement for the NumPy-based kernel computations
 in heu_kernel.py, with automatic GPU acceleration when available.
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,6 +33,7 @@ try:
         build_local_kernels,
         build_cross_kernels,
     )
+
     GPU_AVAILABLE = True
     logger.info("GPU-accelerated kernels loaded successfully")
 except ImportError as e:
@@ -54,7 +56,8 @@ class NormalizationType(Enum):
 @dataclass
 class GPUConfig:
     """Configuration for GPU-accelerated kernels."""
-    time_step_ns: int = 1_000_000          # 1ms resolution
+
+    time_step_ns: int = 1_000_000  # 1ms resolution
     max_kernel_time_ns: int = 10_000_000_000  # 10 second max propagation
     self_latency_factor: float = 0.1
     queue_service_time_ms: float = 0.5
@@ -130,9 +133,19 @@ class GPUAcceleratedKernelBuilder:
             Dict with 'local' and 'cross' kernel mappings (same format as CPU version)
         """
         if self._use_gpu:
-            return self._build_all_kernels_gpu()
+            result = self._build_all_kernels_gpu()
         else:
-            return self._build_all_kernels_cpu()
+            result = self._build_all_kernels_cpu()
+
+        # Keep the built kernels on self as well: consumers (e.g. the
+        # counterfactual forward projection) read `kernel_builder._local_kernels`
+        # after calling build_all_kernels(). Previously only the return dict
+        # was populated, so every lookup hit an empty dict and every
+        # prediction came back "no_kernel" — on both the GPU path and the
+        # CPU fallback.
+        self._local_kernels = result.get("local", {})
+        self._cross_kernels = result.get("cross", {})
+        return result
 
     def _build_all_kernels_cpu(self) -> Dict:
         """Build kernels using original CPU implementation."""
@@ -153,18 +166,26 @@ class GPUAcceleratedKernelBuilder:
         """Build kernels using GPU acceleration."""
         # Extract component data
         component_names = list(self.topology.components.keys())
-        component_types = [_component_type_to_cpp(c.component_type) for c in self.topology.components.values()]
-        component_layers = [[_boundary_layer_to_cpp(layer) for layer in c.boundary_layers] for c in self.topology.components.values()]
+        component_types = [
+            _component_type_to_cpp(c.component_type) for c in self.topology.components.values()
+        ]
+        component_layers = [
+            [_boundary_layer_to_cpp(layer) for layer in c.boundary_layers]
+            for c in self.topology.components.values()
+        ]
 
         # Build local kernels
         local_kernels_dict = build_local_kernels(
             component_names,
             [int(t) for t in component_types],
             [[int(layer_val) for layer_val in layers] for layers in component_layers],
-            self.config.to_cpp_config()
+            self.config.to_cpp_config(),
         )
 
-        # Convert to Python format
+        # Convert to Python format. Keys use the layer NAME (str), matching
+        # the CPU builder's format (heu_kernel keys are (name, layer_name)
+        # tuples) — the docstring contract is "same format as CPU version",
+        # and consumers look up e.g. (component, "application_log").
         local_kernels = {}
         for key, kernel in local_kernels_dict.items():
             # Parse key: "component_name|layer_int"
@@ -172,7 +193,7 @@ class GPUAcceleratedKernelBuilder:
             if len(parts) == 2:
                 comp_name = parts[0]
                 layer = BoundaryLayer(int(parts[1]))
-                local_kernels[(comp_name, layer)] = self._cpp_to_python_local_kernel(kernel)
+                local_kernels[(comp_name, layer.value)] = self._cpp_to_python_local_kernel(kernel)
 
         # Build cross kernels
         edges = []
@@ -191,10 +212,10 @@ class GPUAcceleratedKernelBuilder:
             [int(t) for t in component_types],
             [[int(layer_val) for layer_val in layers] for layers in component_layers],
             edges,
-            local_builder
+            local_builder,
         )
 
-        # Convert cross kernels
+        # Convert cross kernels (str layer names — see local kernel note)
         cross_kernels = {}
         for key, kernel in cross_kernels_dict.items():
             # Parse key: "source|target|src_layer|dst_layer"
@@ -204,11 +225,13 @@ class GPUAcceleratedKernelBuilder:
                 dst = parts[1]
                 src_layer = BoundaryLayer(int(parts[2]))
                 dst_layer = BoundaryLayer(int(parts[3]))
-                cross_kernels[(src, dst, src_layer, dst_layer)] = self._cpp_to_python_cross_kernel(kernel)
+                cross_kernels[(src, dst, src_layer.value, dst_layer.value)] = (
+                    self._cpp_to_python_cross_kernel(kernel)
+                )
 
         return {
-            'local': local_kernels,
-            'cross': cross_kernels,
+            "local": local_kernels,
+            "cross": cross_kernels,
         }
 
     def _cpp_to_python_local_kernel(self, cpp_kernel: Any) -> LocalPropagationKernel:
@@ -240,7 +263,10 @@ class GPUAcceleratedKernelBuilder:
 
     def get_local_kernel(self, component: str, layer: BoundaryLayer) -> Optional[Any]:
         """Get local propagation kernel for component+layer."""
-        return self._local_kernels.get((component, layer))
+        # Accept either the enum or its str value — kernel dicts are stored
+        # with the CPU builder's str-keyed format.
+        layer_key = getattr(layer, "value", layer)
+        return self._local_kernels.get((component, layer_key))
 
     def get_cross_kernel(
         self,
@@ -250,7 +276,9 @@ class GPUAcceleratedKernelBuilder:
         dst_layer: BoundaryLayer = BoundaryLayer.APPLICATION_LOG,
     ) -> Optional[Any]:
         """Get cross-component propagation kernel."""
-        return self._cross_kernels.get((source, target, src_layer, dst_layer))
+        src_key = getattr(src_layer, "value", src_layer)
+        dst_key = getattr(dst_layer, "value", dst_layer)
+        return self._cross_kernels.get((source, target, src_key, dst_key))
 
     def build_kernel_matrix(
         self,
@@ -348,6 +376,7 @@ def get_gpu_info() -> Dict[str, Any]:
 
     try:
         import pycuda.driver as cuda
+
         cuda.init()
         device = cuda.Device(0)
         return {

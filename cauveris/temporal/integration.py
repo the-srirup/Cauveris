@@ -5,6 +5,7 @@ This module provides the main ``TemporalAnalyzer`` class that consumers (the
 pipeline orchestrator, the API, the report generator) will use to analyze an
 incident for temporal anomalies.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,6 +35,7 @@ class TemporalAnalysisResult:
     """
     Complete temporal analysis report for an incident.
     """
+
     incident_id: str
     total_events: int
     causality_violations: List[Dict[str, Any]] = field(default_factory=list)
@@ -129,9 +131,17 @@ class TemporalAnalyzer:
         # Resolve bundle path
         if bundle_path is None:
             settings = get_settings()
-            if hasattr(incident, "bundle_path") and incident.bundle_path and Path(incident.bundle_path).exists():
+            if (
+                hasattr(incident, "bundle_path")
+                and incident.bundle_path
+                and Path(incident.bundle_path).exists()
+            ):
                 bundle_path = Path(incident.bundle_path)
-            elif incident.manifest and incident.manifest.get("bundle_path") and Path(incident.manifest["bundle_path"]).exists():
+            elif (
+                incident.manifest
+                and incident.manifest.get("bundle_path")
+                and Path(incident.manifest["bundle_path"]).exists()
+            ):
                 bundle_path = Path(incident.manifest["bundle_path"])
             else:
                 bundle_path = Path(settings.evidence_store_path) / incident.id
@@ -147,9 +157,7 @@ class TemporalAnalyzer:
         raw_signals = raw_extractor.extract_all()
 
         # Build temporal evidence
-        evidence = extract_from_timeline(
-            timeline_events, bundle_path
-        )
+        evidence = extract_from_timeline(timeline_events, bundle_path)
 
         # Add raw signals to evidence
         for ev in evidence:
@@ -176,22 +184,26 @@ class TemporalAnalyzer:
                     for child_ev in evidence:
                         if child_ev.evidence_id == child_id:
                             delta = child_ev.timestamp_ns - ev.timestamp_ns
-                            tolerance_ns = self._tolerance_for_provenance(prov, ev, child_ev, raw_signals)
+                            tolerance_ns = self._tolerance_for_provenance(
+                                prov, ev, child_ev, raw_signals
+                            )
                             if delta < -tolerance_ns:
                                 confidence = min(1.0, abs(delta) / max(tolerance_ns, 1))
-                                violations.append(CausalityViolation(
-                                    cause_id=ev.evidence_id,
-                                    effect_id=child_ev.evidence_id,
-                                    provenance=prov,
-                                    timestamp_delta_ns=delta,
-                                    tolerance_ns=tolerance_ns,
-                                    confidence=confidence,
-                                    description=(
-                                        f"Effect {child_ev.evidence_id[:40]}... appeared "
-                                        f"{abs(delta) / 1e6:.1f}ms before cause "
-                                        f"{ev.evidence_id[:40]}... (tolerance: {tolerance_ns / 1e6:.1f}ms)"
-                                    ),
-                                ))
+                                violations.append(
+                                    CausalityViolation(
+                                        cause_id=ev.evidence_id,
+                                        effect_id=child_ev.evidence_id,
+                                        provenance=prov,
+                                        timestamp_delta_ns=delta,
+                                        tolerance_ns=tolerance_ns,
+                                        confidence=confidence,
+                                        description=(
+                                            f"Effect {child_ev.evidence_id[:40]}... appeared "
+                                            f"{abs(delta) / 1e6:.1f}ms before cause "
+                                            f"{ev.evidence_id[:40]}... (tolerance: {tolerance_ns / 1e6:.1f}ms)"
+                                        ),
+                                    )
+                                )
                             break
 
         # Ground-truth report of violations from design doc
@@ -234,9 +246,7 @@ class TemporalAnalyzer:
         ]
 
         # Temporal confidence score
-        confidence = self._calculate_temporal_confidence(
-            violations, anomalies, clock_result
-        )
+        confidence = self._calculate_temporal_confidence(violations, anomalies, clock_result)
 
         # Unsupervised windows (events that can't be trusted due to co-temporal)
         untrusted = self._compute_untrusted_windows(evidence, violations, clock_result)
@@ -277,7 +287,9 @@ class TemporalAnalyzer:
             "deployment_chain": 24 * 3600 * 1_000_000_000,
             "temporal_proximity": 50_000_000,
         }
-        base = base_map.get(provenance.value if hasattr(provenance, "value") else str(provenance), 50_000_000)
+        base = base_map.get(
+            provenance.value if hasattr(provenance, "value") else str(provenance), 50_000_000
+        )
 
         # Add jitter term
         jitter = 0
@@ -338,28 +350,42 @@ class TemporalAnalyzer:
 
         # Extract co-temporal buckets as untrusted
         for ts_ns, eids in clock_result.co_temporal_buckets.items():
-            windows.append({
-                "type": "co_temporal_ambiguity",
-                "start_s": ts_ns / 1e9,
-                "end_s": ts_ns / 1e9,
-                "evidence_count": len(eids),
-                "description": "Events at this instant span multiple clock domains",
-            })
+            windows.append(
+                {
+                    "type": "co_temporal_ambiguity",
+                    "start_s": ts_ns / 1e9,
+                    "end_s": ts_ns / 1e9,
+                    "evidence_count": len(eids),
+                    "description": "Events at this instant span multiple clock domains",
+                }
+            )
 
         # Brotli windows around detected violations
         for v in violations[:10]:  # cap to avoid report bloat
-            windows.append({
-                "type": "causality_violation",
-                "start_s": min(
-                    (e.timestamp_ns for e in evidence if e.evidence_id in (v.cause_id, v.effect_id)),
-                    default=0,
-                ) / 1e9,
-                "end_s": max(
-                    (e.timestamp_ns for e in evidence if e.evidence_id in (v.cause_id, v.effect_id)),
-                    default=0,
-                ) / 1e9,
-                "violation": v.description,
-            })
+            windows.append(
+                {
+                    "type": "causality_violation",
+                    "start_s": min(
+                        (
+                            e.timestamp_ns
+                            for e in evidence
+                            if e.evidence_id in (v.cause_id, v.effect_id)
+                        ),
+                        default=0,
+                    )
+                    / 1e9,
+                    "end_s": max(
+                        (
+                            e.timestamp_ns
+                            for e in evidence
+                            if e.evidence_id in (v.cause_id, v.effect_id)
+                        ),
+                        default=0,
+                    )
+                    / 1e9,
+                    "violation": v.description,
+                }
+            )
 
         return windows
 

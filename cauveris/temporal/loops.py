@@ -12,6 +12,7 @@ limits on large graphs. It returns strongly connected components that form
 cycles, and for each cycle it computes the minimum time delta that would
 break the loop, giving a confidence score.
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,6 +40,7 @@ class TimeLoop:
     description : str
         Human-readable summary.
     """
+
     loop_id: str
     events: List[str]
     cycle_length_ms: float
@@ -156,7 +158,9 @@ class TimeLoopDetector:
                                 scc.add(w)
                                 if w == node:
                                     break
-                            if len(scc) > 1 or (len(scc) == 1 and scc.pop() in graph.get(node, set())):
+                            if len(scc) > 1 or (
+                                len(scc) == 1 and scc.pop() in graph.get(node, set())
+                            ):
                                 sccs.append(scc)
 
         return sccs

@@ -3,7 +3,7 @@
  * Section 5.1 of Holographic Reconstruction Plan
  */
 
-import React, { useRef, useMemo } from "react";
+import React, { useRef, useMemo, useEffect } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
@@ -13,6 +13,49 @@ export interface GhostTrajectoriesProps {
   nodes: CausalNode[];
   counterfactual: CounterfactualResult | null;
   visible?: boolean;
+}
+
+/**
+ * A single factual→counterfactual trajectory line. Memoized on endpoint
+ * *values* so a re-render during force layout does not rebuild (and leak)
+ * geometry/material/Line per tick. Disposes its GPU resources on change and
+ * unmount (R3F never auto-disposes <primitive> object swaps).
+ */
+function GhostLine({
+  from,
+  to,
+  color,
+}: {
+  from: [number, number, number];
+  to: [number, number, number];
+  color: string;
+}) {
+  const lineObj = useMemo(() => {
+    const start = new THREE.Vector3(from[0], from[1], from[2]);
+    const end = new THREE.Vector3(to[0], to[1], to[2]);
+    const geom = new THREE.BufferGeometry().setFromPoints([start, end]);
+    const mat = new THREE.LineDashedMaterial({
+      color,
+      dashSize: 3,
+      gapSize: 2,
+      transparent: true,
+      opacity: 0.6,
+    });
+    const line = new THREE.Line(geom, mat);
+    // Without computeLineDistances() LineDashedMaterial renders as a solid line.
+    line.computeLineDistances();
+    return line;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from[0], from[1], from[2], to[0], to[1], to[2], color]);
+
+  useEffect(() => {
+    return () => {
+      lineObj.geometry.dispose();
+      (lineObj.material as THREE.Material).dispose();
+    };
+  }, [lineObj]);
+
+  return <primitive object={lineObj} />;
 }
 
 export function GhostTrajectories({
@@ -48,10 +91,6 @@ export function GhostTrajectories({
           ? "#10b981"
           : "#ef4444";
 
-        const startVec = new THREE.Vector3(node.position.x, node.position.y, node.position.z);
-        const endVec = new THREE.Vector3(ghostPos.x, ghostPos.y, ghostPos.z);
-        const lineGeom = new THREE.BufferGeometry().setFromPoints([startVec, endVec]);
-
         return (
           <group key={`ghost-${node.id}`}>
             {/* Ghost sphere */}
@@ -70,19 +109,10 @@ export function GhostTrajectories({
             </mesh>
 
             {/* Trajectory line from factual to counterfactual */}
-            <primitive
-              object={
-                new THREE.Line(
-                  lineGeom,
-                  new THREE.LineDashedMaterial({
-                    color: ghostColor,
-                    dashSize: 3,
-                    gapSize: 2,
-                    transparent: true,
-                    opacity: 0.6,
-                  })
-                )
-              }
+            <GhostLine
+              from={[node.position.x, node.position.y, node.position.z]}
+              to={[ghostPos.x, ghostPos.y, ghostPos.z]}
+              color={ghostColor}
             />
 
             {/* Ghost delta label */}

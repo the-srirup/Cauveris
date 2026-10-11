@@ -15,6 +15,7 @@ from enum import Enum
 if __package__ is None or __package__ == "":
     import sys
     from pathlib import Path
+
     _repo_root = Path(__file__).resolve().parent.parent.parent
     if str(_repo_root) not in sys.path:
         sys.path.insert(0, str(_repo_root))
@@ -29,6 +30,7 @@ else:
 
 class AnomalyType(Enum):
     """Types of anomalies detectable in holographic reconstruction."""
+
     # Resource anomalies
     CPU_SATURATION = "cpu_saturation"
     MEMORY_EXHAUSTION = "memory_exhaustion"
@@ -68,16 +70,18 @@ class AnomalyType(Enum):
 
 class AnomalySeverity(Enum):
     """Severity levels for anomalies."""
-    INFO = 0      # Informational, no immediate action
-    LOW = 1       # Minor deviation, monitor
-    MEDIUM = 2    # Notable anomaly, investigate
-    HIGH = 3      # Significant issue, action needed
+
+    INFO = 0  # Informational, no immediate action
+    LOW = 1  # Minor deviation, monitor
+    MEDIUM = 2  # Notable anomaly, investigate
+    HIGH = 3  # Significant issue, action needed
     CRITICAL = 4  # Critical failure, immediate response
 
 
 @dataclass(slots=True)
 class Anomaly:
     """A detected anomaly in the holographic reconstruction."""
+
     anomaly_type: AnomalyType
     severity: AnomalySeverity
     component: str
@@ -109,6 +113,7 @@ class Anomaly:
 @dataclass
 class AnomalyReport:
     """Complete anomaly detection report."""
+
     anomalies: List[Anomaly] = field(default_factory=list)
     component_scores: Dict[str, float] = field(default_factory=dict)
     severity_counts: Dict[AnomalySeverity, int] = field(default_factory=dict)
@@ -120,7 +125,11 @@ class AnomalyReport:
         return [a for a in self.anomalies if a.severity == AnomalySeverity.CRITICAL]
 
     def get_high_anomalies(self) -> List[Anomaly]:
-        return [a for a in self.anomalies if a.severity in (AnomalySeverity.HIGH, AnomalySeverity.CRITICAL)]
+        return [
+            a
+            for a in self.anomalies
+            if a.severity in (AnomalySeverity.HIGH, AnomalySeverity.CRITICAL)
+        ]
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -318,7 +327,9 @@ class HolographicAnomalyDetector:
                         if ratio > threshold_ratio:  # Scaled by sensitivity
                             anomaly = Anomaly(
                                 anomaly_type=AnomalyType.SUDDEN_SHIFT,
-                                severity=AnomalySeverity.HIGH if ratio > 3 else AnomalySeverity.MEDIUM,
+                                severity=AnomalySeverity.HIGH
+                                if ratio > 3
+                                else AnomalySeverity.MEDIUM,
                                 component=comp_name,
                                 dimension=dim,
                                 value=value,
@@ -356,7 +367,11 @@ class HolographicAnomalyDetector:
             in_edges = sum(1 for e in self.topology.causal_edges if e.target == comp_name)
             out_edges = sum(1 for e in self.topology.causal_edges if e.source == comp_name)
 
-            if in_edges == 0 and out_edges == 0 and (state.cpu_usage > 0.5 or state.error_rate > 0.05):
+            if (
+                in_edges == 0
+                and out_edges == 0
+                and (state.cpu_usage > 0.5 or state.error_rate > 0.05)
+            ):
                 anomaly = Anomaly(
                     anomaly_type=AnomalyType.RESOURCE_STARVATION,
                     severity=AnomalySeverity.MEDIUM,
@@ -398,8 +413,12 @@ class HolographicAnomalyDetector:
                     tgt_comp = self.topology.components.get(edge.target)
                     src_type = src_comp.component_type if src_comp else "service"
                     tgt_type = tgt_comp.component_type if tgt_comp else "service"
-                    src_range = self.normal_ranges.get(src_type, self.normal_ranges["service"]).get(dim, (0.0, 1.0))
-                    tgt_range = self.normal_ranges.get(tgt_type, self.normal_ranges["service"]).get(dim, (0.0, 1.0))
+                    src_range = self.normal_ranges.get(src_type, self.normal_ranges["service"]).get(
+                        dim, (0.0, 1.0)
+                    )
+                    tgt_range = self.normal_ranges.get(tgt_type, self.normal_ranges["service"]).get(
+                        dim, (0.0, 1.0)
+                    )
                     src_thresh = src_range[1]
                     tgt_thresh = tgt_range[1]
                     # Flag if both are high on a causal edge (indicates potential cascade)
@@ -413,7 +432,9 @@ class HolographicAnomalyDetector:
                             expected_range=(0.0, max(src_thresh, tgt_thresh)),
                             confidence=0.8,
                             description=f"Correlated high {dim} on edge {edge.source}->{edge.target}",
-                            evidence=[f"Source: {values[src_idx]:.2f}, Target: {values[tgt_idx]:.2f}"],
+                            evidence=[
+                                f"Source: {values[src_idx]:.2f}, Target: {values[tgt_idx]:.2f}"
+                            ],
                             timestamp_ns=reconstruction.reconstruction_timestamp_ns,
                         )
                         report.anomalies.append(anomaly)
@@ -474,149 +495,193 @@ class HolographicAnomalyDetector:
                 report.anomalies.append(anomaly)
 
     # Signature detectors
-    def _detect_cpu_saturation(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_cpu_saturation(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect CPU saturation patterns."""
         anomalies = []
         for comp_name, state in recon.reconstructed_services.items():
             if state.cpu_usage > 0.9:
-                anomalies.append(Anomaly(
-                    anomaly_type=AnomalyType.CPU_SATURATION,
-                    severity=AnomalySeverity.CRITICAL if state.cpu_usage > 0.95 else AnomalySeverity.HIGH,
-                    component=comp_name,
-                    dimension="cpu_usage",
-                    value=state.cpu_usage,
-                    expected_range=(0.0, 0.7),
-                    confidence=min(1.0, max(0.0, state.cpu_usage)),
-                    description=f"CPU saturation: {state.cpu_usage:.1%} usage",
-                    evidence=[f"cpu_usage={state.cpu_usage:.3f}"],
-                    timestamp_ns=recon.reconstruction_timestamp_ns,
-                ))
+                anomalies.append(
+                    Anomaly(
+                        anomaly_type=AnomalyType.CPU_SATURATION,
+                        severity=AnomalySeverity.CRITICAL
+                        if state.cpu_usage > 0.95
+                        else AnomalySeverity.HIGH,
+                        component=comp_name,
+                        dimension="cpu_usage",
+                        value=state.cpu_usage,
+                        expected_range=(0.0, 0.7),
+                        confidence=min(1.0, max(0.0, state.cpu_usage)),
+                        description=f"CPU saturation: {state.cpu_usage:.1%} usage",
+                        evidence=[f"cpu_usage={state.cpu_usage:.3f}"],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
+                    )
+                )
         return anomalies
 
-    def _detect_memory_exhaustion(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_memory_exhaustion(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect memory exhaustion patterns."""
         anomalies = []
         for comp_name, state in recon.reconstructed_services.items():
             if state.memory_usage > 0.9:
-                severity = AnomalySeverity.CRITICAL if state.memory_usage > 0.95 else AnomalySeverity.HIGH
-                anomalies.append(Anomaly(
-                    anomaly_type=AnomalyType.MEMORY_EXHAUSTION,
-                    severity=severity,
-                    component=comp_name,
-                    dimension="memory_usage",
-                    value=state.memory_usage,
-                    expected_range=(0.0, 0.75),
-                    confidence=min(1.0, max(0.0, state.memory_usage)),
-                    description=f"Memory exhaustion: {state.memory_usage:.1%} usage",
-                    evidence=[f"memory_usage={state.memory_usage:.3f}"],
-                    timestamp_ns=recon.reconstruction_timestamp_ns,
-                ))
+                severity = (
+                    AnomalySeverity.CRITICAL if state.memory_usage > 0.95 else AnomalySeverity.HIGH
+                )
+                anomalies.append(
+                    Anomaly(
+                        anomaly_type=AnomalyType.MEMORY_EXHAUSTION,
+                        severity=severity,
+                        component=comp_name,
+                        dimension="memory_usage",
+                        value=state.memory_usage,
+                        expected_range=(0.0, 0.75),
+                        confidence=min(1.0, max(0.0, state.memory_usage)),
+                        description=f"Memory exhaustion: {state.memory_usage:.1%} usage",
+                        evidence=[f"memory_usage={state.memory_usage:.3f}"],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
+                    )
+                )
         return anomalies
 
-    def _detect_network_congestion(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_network_congestion(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect network congestion."""
         anomalies = []
         if recon.reconstructed_network:
             for (src, dst), edge in recon.reconstructed_network.edges.items():
                 if edge.loss_rate > 0.05 or edge.latency_ms > 500:
-                    anomalies.append(Anomaly(
-                        anomaly_type=AnomalyType.NETWORK_CONGESTION,
-                        severity=AnomalySeverity.HIGH if edge.loss_rate > 0.1 else AnomalySeverity.MEDIUM,
-                        component=f"{src}->{dst}",
-                        dimension="network",
-                        value=edge.loss_rate,
-                        expected_range=(0.0, 0.01),
-                        confidence=min(1.0, max(0.0, edge.loss_rate * 10)),
-                        description=f"Network congestion: {edge.loss_rate:.1%} loss, {edge.latency_ms:.0f}ms latency",
-                        evidence=[f"loss_rate={edge.loss_rate:.4f}", f"latency={edge.latency_ms:.0f}ms"],
-                        timestamp_ns=recon.reconstruction_timestamp_ns,
-                    ))
+                    anomalies.append(
+                        Anomaly(
+                            anomaly_type=AnomalyType.NETWORK_CONGESTION,
+                            severity=AnomalySeverity.HIGH
+                            if edge.loss_rate > 0.1
+                            else AnomalySeverity.MEDIUM,
+                            component=f"{src}->{dst}",
+                            dimension="network",
+                            value=edge.loss_rate,
+                            expected_range=(0.0, 0.01),
+                            confidence=min(1.0, max(0.0, edge.loss_rate * 10)),
+                            description=f"Network congestion: {edge.loss_rate:.1%} loss, {edge.latency_ms:.0f}ms latency",
+                            evidence=[
+                                f"loss_rate={edge.loss_rate:.4f}",
+                                f"latency={edge.latency_ms:.0f}ms",
+                            ],
+                            timestamp_ns=recon.reconstruction_timestamp_ns,
+                        )
+                    )
         return anomalies
 
-    def _detect_error_spike(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_error_spike(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect error rate spikes."""
         anomalies = []
         for comp_name, state in recon.reconstructed_services.items():
             if state.error_rate > 0.1:
-                anomalies.append(Anomaly(
-                    anomaly_type=AnomalyType.ERROR_SPIKE,
-                    severity=AnomalySeverity.CRITICAL if state.error_rate > 0.5 else AnomalySeverity.HIGH,
-                    component=comp_name,
-                    dimension="error_rate",
-                    value=state.error_rate,
-                    expected_range=(0.0, 0.01),
-                    confidence=min(1.0, max(0.0, state.error_rate * 2)),
-                    description=f"Error spike: {state.error_rate:.1%} error rate",
-                    evidence=[f"error_rate={state.error_rate:.4f}"],
-                    timestamp_ns=recon.reconstruction_timestamp_ns,
-                ))
+                anomalies.append(
+                    Anomaly(
+                        anomaly_type=AnomalyType.ERROR_SPIKE,
+                        severity=AnomalySeverity.CRITICAL
+                        if state.error_rate > 0.5
+                        else AnomalySeverity.HIGH,
+                        component=comp_name,
+                        dimension="error_rate",
+                        value=state.error_rate,
+                        expected_range=(0.0, 0.01),
+                        confidence=min(1.0, max(0.0, state.error_rate * 2)),
+                        description=f"Error spike: {state.error_rate:.1%} error rate",
+                        evidence=[f"error_rate={state.error_rate:.4f}"],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
+                    )
+                )
         return anomalies
 
-    def _detect_latency_degradation(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_latency_degradation(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect latency degradation."""
         anomalies = []
         for comp_name, state in recon.reconstructed_services.items():
             if state.latency_p99_ms > 2000:
-                anomalies.append(Anomaly(
-                    anomaly_type=AnomalyType.LATENCY_DEGRADATION,
-                    severity=AnomalySeverity.HIGH,
-                    component=comp_name,
-                    dimension="latency_p99_ms",
-                    value=state.latency_p99_ms,
-                    expected_range=(0.0, 500.0),
-                    confidence=min(1.0, max(0.0, state.latency_p99_ms / 5000.0)),
-                    description=f"Latency degradation: P99={state.latency_p99_ms:.0f}ms",
-                    evidence=[f"latency_p99_ms={state.latency_p99_ms:.0f}"],
-                    timestamp_ns=recon.reconstruction_timestamp_ns,
-                ))
+                anomalies.append(
+                    Anomaly(
+                        anomaly_type=AnomalyType.LATENCY_DEGRADATION,
+                        severity=AnomalySeverity.HIGH,
+                        component=comp_name,
+                        dimension="latency_p99_ms",
+                        value=state.latency_p99_ms,
+                        expected_range=(0.0, 500.0),
+                        confidence=min(1.0, max(0.0, state.latency_p99_ms / 5000.0)),
+                        description=f"Latency degradation: P99={state.latency_p99_ms:.0f}ms",
+                        evidence=[f"latency_p99_ms={state.latency_p99_ms:.0f}"],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
+                    )
+                )
         return anomalies
 
-    def _detect_throughput_collapse(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_throughput_collapse(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect throughput collapse (high CPU + low throughput = stuck)."""
         anomalies = []
         for comp_name, state in recon.reconstructed_services.items():
             if state.cpu_usage > 0.8 and state.error_rate > 0.2:
-                anomalies.append(Anomaly(
-                    anomaly_type=AnomalyType.THROUGHPUT_COLLAPSE,
-                    severity=AnomalySeverity.CRITICAL,
-                    component=comp_name,
-                    dimension="throughput",
-                    value=state.error_rate,
-                    expected_range=(0.0, 0.05),
-                    confidence=0.9,
-                    description=f"Throughput collapse: high CPU ({state.cpu_usage:.0%}) + high errors ({state.error_rate:.0%})",
-                    evidence=[f"cpu={state.cpu_usage:.2f}", f"errors={state.error_rate:.2f}"],
-                    timestamp_ns=recon.reconstruction_timestamp_ns,
-                ))
+                anomalies.append(
+                    Anomaly(
+                        anomaly_type=AnomalyType.THROUGHPUT_COLLAPSE,
+                        severity=AnomalySeverity.CRITICAL,
+                        component=comp_name,
+                        dimension="throughput",
+                        value=state.error_rate,
+                        expected_range=(0.0, 0.05),
+                        confidence=0.9,
+                        description=f"Throughput collapse: high CPU ({state.cpu_usage:.0%}) + high errors ({state.error_rate:.0%})",
+                        evidence=[f"cpu={state.cpu_usage:.2f}", f"errors={state.error_rate:.2f}"],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
+                    )
+                )
         return anomalies
 
-    def _detect_cascading_failure(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_cascading_failure(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect cascading failure pattern."""
         anomalies = []
         # Look for chain of high-error components along causal edges
         visited = set()
         for edge in self.topology.causal_edges:
-            if edge.source in recon.reconstructed_services and edge.target in recon.reconstructed_services:
+            if (
+                edge.source in recon.reconstructed_services
+                and edge.target in recon.reconstructed_services
+            ):
                 src_state = recon.reconstructed_services[edge.source]
                 tgt_state = recon.reconstructed_services[edge.target]
                 if src_state.error_rate > 0.1 and tgt_state.error_rate > 0.1:
                     chain = self._find_cascade_chain(edge.source, recon, visited)
                     if len(chain) >= 3:
-                        anomalies.append(Anomaly(
-                            anomaly_type=AnomalyType.CASCADING_FAILURE,
-                            severity=AnomalySeverity.CRITICAL,
-                            component="->".join(chain),
-                            dimension="cascade",
-                            value=float(len(chain)),
-                            expected_range=(0.0, 2.0),
-                            confidence=0.85,
-                            description=f"Cascading failure chain: {' -> '.join(chain)}",
-                            evidence=[f"Chain length: {len(chain)}"],
-                            timestamp_ns=recon.reconstruction_timestamp_ns,
-                        ))
+                        anomalies.append(
+                            Anomaly(
+                                anomaly_type=AnomalyType.CASCADING_FAILURE,
+                                severity=AnomalySeverity.CRITICAL,
+                                component="->".join(chain),
+                                dimension="cascade",
+                                value=float(len(chain)),
+                                expected_range=(0.0, 2.0),
+                                confidence=0.85,
+                                description=f"Cascading failure chain: {' -> '.join(chain)}",
+                                evidence=[f"Chain length: {len(chain)}"],
+                                timestamp_ns=recon.reconstruction_timestamp_ns,
+                            )
+                        )
         return anomalies
 
-    def _find_cascade_chain(self, start: str, recon: HolographicReconstruction, visited: Set[str]) -> List[str]:
+    def _find_cascade_chain(
+        self, start: str, recon: HolographicReconstruction, visited: Set[str]
+    ) -> List[str]:
         """Find cascade chain starting from a component."""
         if start in visited:
             return []
@@ -625,7 +690,11 @@ class HolographicAnomalyDetector:
         chain = [start]
         longest_subchain = []
         for edge in self.topology.causal_edges:
-            if edge.source == start and edge.target in recon.reconstructed_services and edge.target not in visited:
+            if (
+                edge.source == start
+                and edge.target in recon.reconstructed_services
+                and edge.target not in visited
+            ):
                 tgt_state = recon.reconstructed_services[edge.target]
                 if tgt_state.error_rate > 0.1:
                     subchain = self._find_cascade_chain(edge.target, recon, visited)
@@ -634,7 +703,9 @@ class HolographicAnomalyDetector:
         chain.extend(longest_subchain)
         return chain
 
-    def _detect_feedback_loop(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_feedback_loop(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect feedback loops in causal graph."""
         anomalies = []
         seen_pairs: Set[Tuple[str, str]] = set()
@@ -646,65 +717,87 @@ class HolographicAnomalyDetector:
                 if pair in seen_pairs:
                     continue
                 # Check for reverse edge
-                rev_edge = next((e for e in self.topology.causal_edges
-                                if e.source == edge.target and e.target == edge.source), None)
+                rev_edge = next(
+                    (
+                        e
+                        for e in self.topology.causal_edges
+                        if e.source == edge.target and e.target == edge.source
+                    ),
+                    None,
+                )
                 if rev_edge:
                     seen_pairs.add(pair)
-                    anomalies.append(Anomaly(
-                        anomaly_type=AnomalyType.FEEDBACK_LOOP,
-                        severity=AnomalySeverity.HIGH,
-                        component=f"{edge.source}<->{edge.target}",
-                        dimension="feedback",
-                        value=1.0,
-                        expected_range=(0.0, 0.0),
-                        confidence=0.7,
-                        description=f"Potential feedback loop: {edge.source} <-> {edge.target} both under high load",
-                        evidence=[f"Edge {edge.source}->{edge.target}", "Reverse edge exists"],
-                        timestamp_ns=recon.reconstruction_timestamp_ns,
-                    ))
+                    anomalies.append(
+                        Anomaly(
+                            anomaly_type=AnomalyType.FEEDBACK_LOOP,
+                            severity=AnomalySeverity.HIGH,
+                            component=f"{edge.source}<->{edge.target}",
+                            dimension="feedback",
+                            value=1.0,
+                            expected_range=(0.0, 0.0),
+                            confidence=0.7,
+                            description=f"Potential feedback loop: {edge.source} <-> {edge.target} both under high load",
+                            evidence=[f"Edge {edge.source}->{edge.target}", "Reverse edge exists"],
+                            timestamp_ns=recon.reconstruction_timestamp_ns,
+                        )
+                    )
         return anomalies
 
-    def _detect_resource_starvation(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_resource_starvation(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect resource starvation (dependency using all resources)."""
         anomalies = []
         for edge in self.topology.causal_edges:
-            if edge.source in recon.reconstructed_services and edge.target in recon.reconstructed_services:
+            if (
+                edge.source in recon.reconstructed_services
+                and edge.target in recon.reconstructed_services
+            ):
                 src = recon.reconstructed_services[edge.source]
                 tgt = recon.reconstructed_services[edge.target]
                 # Source starved, target using resources
                 if src.cpu_usage > 0.8 and tgt.cpu_usage < 0.3:
-                    anomalies.append(Anomaly(
-                        anomaly_type=AnomalyType.RESOURCE_STARVATION,
-                        severity=AnomalySeverity.HIGH,
-                        component=f"{edge.source}->{edge.target}",
-                        dimension="starvation",
-                        value=src.cpu_usage,
-                        expected_range=(0.0, 0.6),
-                        confidence=0.75,
-                        description=f"Resource starvation: {edge.source} starved ({src.cpu_usage:.0%}) while {edge.target} idle ({tgt.cpu_usage:.0%})",
-                        evidence=[f"Source CPU: {src.cpu_usage:.2f}", f"Target CPU: {tgt.cpu_usage:.2f}"],
-                        timestamp_ns=recon.reconstruction_timestamp_ns,
-                    ))
+                    anomalies.append(
+                        Anomaly(
+                            anomaly_type=AnomalyType.RESOURCE_STARVATION,
+                            severity=AnomalySeverity.HIGH,
+                            component=f"{edge.source}->{edge.target}",
+                            dimension="starvation",
+                            value=src.cpu_usage,
+                            expected_range=(0.0, 0.6),
+                            confidence=0.75,
+                            description=f"Resource starvation: {edge.source} starved ({src.cpu_usage:.0%}) while {edge.target} idle ({tgt.cpu_usage:.0%})",
+                            evidence=[
+                                f"Source CPU: {src.cpu_usage:.2f}",
+                                f"Target CPU: {tgt.cpu_usage:.2f}",
+                            ],
+                            timestamp_ns=recon.reconstruction_timestamp_ns,
+                        )
+                    )
         return anomalies
 
-    def _detect_dependency_cycle(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_dependency_cycle(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect dependency cycles."""
         anomalies = []
         # Simplified: check for cycles in topology
         for comp in self.topology.components:
             if comp in self._find_cycles(comp, set(), set()):
-                anomalies.append(Anomaly(
-                    anomaly_type=AnomalyType.DEPENDENCY_CYCLE,
-                    severity=AnomalySeverity.MEDIUM,
-                    component=comp,
-                    dimension="cycle",
-                    value=1.0,
-                    expected_range=(0.0, 0.0),
-                    confidence=0.6,
-                    description=f"Dependency cycle involving {comp}",
-                    evidence=["Cycle detected in causal graph"],
-                    timestamp_ns=recon.reconstruction_timestamp_ns,
-                ))
+                anomalies.append(
+                    Anomaly(
+                        anomaly_type=AnomalyType.DEPENDENCY_CYCLE,
+                        severity=AnomalySeverity.MEDIUM,
+                        component=comp,
+                        dimension="cycle",
+                        value=1.0,
+                        expected_range=(0.0, 0.0),
+                        confidence=0.6,
+                        description=f"Dependency cycle involving {comp}",
+                        evidence=["Cycle detected in causal graph"],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
+                    )
+                )
         return anomalies
 
     def _find_cycles(self, node: str, visited: Set[str], rec_stack: Set[str]) -> List[str]:
@@ -722,47 +815,59 @@ class HolographicAnomalyDetector:
         rec_stack.remove(node)
         return cycles
 
-    def _detect_config_mismatch(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_config_mismatch(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect configuration mismatches."""
         anomalies = []
         for comp_name, state in recon.reconstructed_services.items():
             if state.config_changed_recently and state.error_rate > 0.05:
-                anomalies.append(Anomaly(
-                    anomaly_type=AnomalyType.CONFIG_MISMATCH,
-                    severity=AnomalySeverity.HIGH,
-                    component=comp_name,
-                    dimension="config",
-                    value=state.error_rate,
-                    expected_range=(0.0, 0.02),
-                    confidence=0.8,
-                    description=f"Config mismatch: recent config change + elevated errors ({state.error_rate:.1%})",
-                    evidence=["config_changed=true", f"error_rate={state.error_rate:.3f}"],
-                    timestamp_ns=recon.reconstruction_timestamp_ns,
-                ))
+                anomalies.append(
+                    Anomaly(
+                        anomaly_type=AnomalyType.CONFIG_MISMATCH,
+                        severity=AnomalySeverity.HIGH,
+                        component=comp_name,
+                        dimension="config",
+                        value=state.error_rate,
+                        expected_range=(0.0, 0.02),
+                        confidence=0.8,
+                        description=f"Config mismatch: recent config change + elevated errors ({state.error_rate:.1%})",
+                        evidence=["config_changed=true", f"error_rate={state.error_rate:.3f}"],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
+                    )
+                )
         return anomalies
 
-    def _detect_deployment_anomaly(self, recon: HolographicReconstruction, temporal: Optional[Dict]) -> List[Anomaly]:
+    def _detect_deployment_anomaly(
+        self, recon: HolographicReconstruction, temporal: Optional[Dict]
+    ) -> List[Anomaly]:
         """Detect deployment-related anomalies."""
         anomalies = []
         deployed = [
-            c for c, s in recon.reconstructed_services.items()
+            c
+            for c, s in recon.reconstructed_services.items()
             if s.deployment_version or s.deployment_time_ns > 0 or s.config_version
         ]
         for comp_name in deployed:
             state = recon.reconstructed_services[comp_name]
             if state.error_rate > 0.1 and (state.cpu_usage > 0.7 or state.latency_p99_ms > 500):
-                anomalies.append(Anomaly(
-                    anomaly_type=AnomalyType.DEPLOYMENT_ANOMALY,
-                    severity=AnomalySeverity.HIGH,
-                    component=comp_name,
-                    dimension="deployment",
-                    value=state.error_rate,
-                    expected_range=(0.0, 0.05),
-                    confidence=0.85,
-                    description=f"Deployment anomaly: {comp_name} shows high errors post-deployment",
-                    evidence=[f"error_rate={state.error_rate:.3f}", f"cpu_usage={state.cpu_usage:.2f}"],
-                    timestamp_ns=recon.reconstruction_timestamp_ns,
-                ))
+                anomalies.append(
+                    Anomaly(
+                        anomaly_type=AnomalyType.DEPLOYMENT_ANOMALY,
+                        severity=AnomalySeverity.HIGH,
+                        component=comp_name,
+                        dimension="deployment",
+                        value=state.error_rate,
+                        expected_range=(0.0, 0.05),
+                        confidence=0.85,
+                        description=f"Deployment anomaly: {comp_name} shows high errors post-deployment",
+                        evidence=[
+                            f"error_rate={state.error_rate:.3f}",
+                            f"cpu_usage={state.cpu_usage:.2f}",
+                        ],
+                        timestamp_ns=recon.reconstruction_timestamp_ns,
+                    )
+                )
         return anomalies
 
     def _map_dimension_to_anomaly(self, dimension: str) -> AnomalyType:
@@ -795,7 +900,9 @@ class HolographicAnomalyDetector:
     ) -> Dict[str, float]:
         """Compute anomaly score per component."""
         scores = {}
-        all_comps = set(self.topology.components.keys()) | set(reconstruction.reconstructed_services.keys())
+        all_comps = set(self.topology.components.keys()) | set(
+            reconstruction.reconstructed_services.keys()
+        )
         for comp_name in all_comps:
             comp_anomalies = []
             for a in report.anomalies:
@@ -814,7 +921,9 @@ class HolographicAnomalyDetector:
                 scores[comp_name] = 0.0
                 continue
 
-            score = sum(weight * a.confidence * (a.severity.value + 1) for a, weight in comp_anomalies)
+            score = sum(
+                weight * a.confidence * (a.severity.value + 1) for a, weight in comp_anomalies
+            )
             # Normalize
             max_possible = sum(weight * 1.0 * 5.0 for _, weight in comp_anomalies)
             scores[comp_name] = min(1.0, score / max_possible) if max_possible > 0 else 0.0
@@ -857,6 +966,7 @@ if __name__ == "__main__":
     # Quick test
     import sys
     from pathlib import Path
+
     _repo_root = Path(__file__).resolve().parent.parent.parent
     if str(_repo_root) not in sys.path:
         sys.path.insert(0, str(_repo_root))
@@ -882,11 +992,15 @@ if __name__ == "__main__":
 
     # Create detector and run
     detector = create_anomaly_detector(incident.topology)
-    report = detector.detect(result.reconstruction, temporal_data={"root_cause": "svc_0/cpu_pressure"})
+    report = detector.detect(
+        result.reconstruction, temporal_data={"root_cause": "svc_0/cpu_pressure"}
+    )
 
     print("\nAnomaly Report:")
     print(f"  Summary: {report.summary}")
     print(f"  Total anomalies: {len(report.anomalies)}")
     for anomaly in report.get_high_anomalies():
-        print(f"  [{anomaly.severity.name}] {anomaly.component} / {anomaly.dimension}: {anomaly.description}")
+        print(
+            f"  [{anomaly.severity.name}] {anomaly.component} / {anomaly.dimension}: {anomaly.description}"
+        )
     print(f"  Component scores: {report.component_scores}")

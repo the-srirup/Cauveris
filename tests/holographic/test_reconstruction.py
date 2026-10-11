@@ -8,6 +8,7 @@ Tests cover:
 - AmbiguityRegion
 - HolographicReconstruction
 """
+
 import pytest
 
 from cauveris.holographic.reconstruction import (
@@ -60,24 +61,44 @@ class TestReconstructedServiceState:
 
     def test_is_healthy(self):
         healthy = ReconstructedServiceState(
-            component_name="good", instance_id="g1",
-            cpu_usage=0.5, memory_usage=0.4, error_rate=0.05, confidence=0.8
+            component_name="good",
+            instance_id="g1",
+            cpu_usage=0.5,
+            memory_usage=0.4,
+            error_rate=0.05,
+            confidence=0.8,
         )
         unhealthy_cpu = ReconstructedServiceState(
-            component_name="bad_cpu", instance_id="b1",
-            cpu_usage=0.9, memory_usage=0.4, error_rate=0.05, confidence=0.8
+            component_name="bad_cpu",
+            instance_id="b1",
+            cpu_usage=0.9,
+            memory_usage=0.4,
+            error_rate=0.05,
+            confidence=0.8,
         )
         unhealthy_mem = ReconstructedServiceState(
-            component_name="bad_mem", instance_id="b2",
-            cpu_usage=0.5, memory_usage=0.9, error_rate=0.05, confidence=0.8
+            component_name="bad_mem",
+            instance_id="b2",
+            cpu_usage=0.5,
+            memory_usage=0.9,
+            error_rate=0.05,
+            confidence=0.8,
         )
         unhealthy_err = ReconstructedServiceState(
-            component_name="bad_err", instance_id="b3",
-            cpu_usage=0.5, memory_usage=0.4, error_rate=0.5, confidence=0.8
+            component_name="bad_err",
+            instance_id="b3",
+            cpu_usage=0.5,
+            memory_usage=0.4,
+            error_rate=0.5,
+            confidence=0.8,
         )
         unhealthy_conf = ReconstructedServiceState(
-            component_name="bad_conf", instance_id="b4",
-            cpu_usage=0.5, memory_usage=0.4, error_rate=0.05, confidence=0.3
+            component_name="bad_conf",
+            instance_id="b4",
+            cpu_usage=0.5,
+            memory_usage=0.4,
+            error_rate=0.05,
+            confidence=0.3,
         )
 
         assert healthy.is_healthy
@@ -89,29 +110,45 @@ class TestReconstructedServiceState:
     def test_primary_bottleneck(self):
         # CPU is highest
         state = ReconstructedServiceState(
-            component_name="test", instance_id="i1",
-            cpu_usage=0.9, memory_usage=0.7, network_usage=0.5, error_rate=0.1
+            component_name="test",
+            instance_id="i1",
+            cpu_usage=0.9,
+            memory_usage=0.7,
+            network_usage=0.5,
+            error_rate=0.1,
         )
         assert state.primary_bottleneck == "cpu"
 
         # Memory is highest
         state2 = ReconstructedServiceState(
-            component_name="test", instance_id="i1",
-            cpu_usage=0.7, memory_usage=0.9, network_usage=0.5, error_rate=0.1
+            component_name="test",
+            instance_id="i1",
+            cpu_usage=0.7,
+            memory_usage=0.9,
+            network_usage=0.5,
+            error_rate=0.1,
         )
         assert state2.primary_bottleneck == "memory"
 
         # Error rate is highest
         state3 = ReconstructedServiceState(
-            component_name="test", instance_id="i1",
-            cpu_usage=0.5, memory_usage=0.5, network_usage=0.5, error_rate=0.8
+            component_name="test",
+            instance_id="i1",
+            cpu_usage=0.5,
+            memory_usage=0.5,
+            network_usage=0.5,
+            error_rate=0.8,
         )
         assert state3.primary_bottleneck == "errors"
 
         # No bottleneck
         state4 = ReconstructedServiceState(
-            component_name="test", instance_id="i1",
-            cpu_usage=0.3, memory_usage=0.3, network_usage=0.3, error_rate=0.05
+            component_name="test",
+            instance_id="i1",
+            cpu_usage=0.3,
+            memory_usage=0.3,
+            network_usage=0.3,
+            error_rate=0.05,
         )
         assert state4.primary_bottleneck is None
 
@@ -305,16 +342,28 @@ class TestHolographicReconstruction:
             time_window_ns=(0, 100),
         )
         recon.reconstructed_services["healthy"] = ReconstructedServiceState(
-            component_name="healthy", instance_id="h1",
-            cpu_usage=0.5, memory_usage=0.5, error_rate=0.0, confidence=0.8
+            component_name="healthy",
+            instance_id="h1",
+            cpu_usage=0.5,
+            memory_usage=0.5,
+            error_rate=0.0,
+            confidence=0.8,
         )
         recon.reconstructed_services["unhealthy1"] = ReconstructedServiceState(
-            component_name="unhealthy1", instance_id="u1",
-            cpu_usage=0.9, memory_usage=0.5, error_rate=0.0, confidence=0.8
+            component_name="unhealthy1",
+            instance_id="u1",
+            cpu_usage=0.9,
+            memory_usage=0.5,
+            error_rate=0.0,
+            confidence=0.8,
         )
         recon.reconstructed_services["unhealthy2"] = ReconstructedServiceState(
-            component_name="unhealthy2", instance_id="u2",
-            cpu_usage=0.5, memory_usage=0.5, error_rate=0.5, confidence=0.8
+            component_name="unhealthy2",
+            instance_id="u2",
+            cpu_usage=0.5,
+            memory_usage=0.5,
+            error_rate=0.5,
+            confidence=0.8,
         )
 
         unhealthy = recon.unhealthy_services
@@ -330,24 +379,28 @@ class TestHolographicReconstruction:
         )
         assert not recon.has_high_ambiguity
 
-        recon.ambiguity_regions.append(AmbiguityRegion(
-            component="test",
-            time_range_ns=(0, 100),
-            affected_dimensions=["cpu"],
-            ambiguity_score=0.7,
-            missing_layers=[],
-            description="",
-        ))
+        recon.ambiguity_regions.append(
+            AmbiguityRegion(
+                component="test",
+                time_range_ns=(0, 100),
+                affected_dimensions=["cpu"],
+                ambiguity_score=0.7,
+                missing_layers=[],
+                description="",
+            )
+        )
         assert not recon.has_high_ambiguity  # 0.7 is not > 0.7
 
-        recon.ambiguity_regions.append(AmbiguityRegion(
-            component="test",
-            time_range_ns=(0, 100),
-            affected_dimensions=["cpu"],
-            ambiguity_score=0.8,
-            missing_layers=[],
-            description="",
-        ))
+        recon.ambiguity_regions.append(
+            AmbiguityRegion(
+                component="test",
+                time_range_ns=(0, 100),
+                affected_dimensions=["cpu"],
+                ambiguity_score=0.8,
+                missing_layers=[],
+                description="",
+            )
+        )
         assert recon.has_high_ambiguity
 
     def test_to_dict(self):

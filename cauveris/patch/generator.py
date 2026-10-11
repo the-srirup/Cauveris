@@ -1,6 +1,7 @@
 """
 Patch generator for creating targeted candidate fixes and regression tests.
 """
+
 import logging
 from pathlib import Path
 from typing import List, Dict, Union, Any
@@ -29,8 +30,7 @@ class PatchGenerator:
         """
         logger.info(f"Generating patches from {len(experiments)} experiments")
         completed_experiments = [
-            exp for exp in experiments
-            if exp.status in ["COMPLETED", "SIMULATED", "REPRODUCED"]
+            exp for exp in experiments if exp.status in ["COMPLETED", "SIMULATED", "REPRODUCED"]
         ]
         logger.info(f"Found {len(completed_experiments)} completed experiments to analyze")
 
@@ -104,7 +104,9 @@ class PatchGenerator:
         patch.score = self._calculate_patch_score(patch, experiment)
         return patch
 
-    def _generate_batching_patch(self, patch: PatchCandidate, experiment: Experiment) -> PatchCandidate:
+    def _generate_batching_patch(
+        self, patch: PatchCandidate, experiment: Experiment
+    ) -> PatchCandidate:
         """Generate patch for dynamic batching window (winning root cause fix)."""
         patch.affected_files = ["config/inference.yaml"]
         patch.lines_changed = 1
@@ -160,7 +162,9 @@ class PatchGenerator:
 """
         return patch
 
-    def _generate_clock_patch(self, patch: PatchCandidate, experiment: Experiment) -> PatchCandidate:
+    def _generate_clock_patch(
+        self, patch: PatchCandidate, experiment: Experiment
+    ) -> PatchCandidate:
         """Generate patch for clock skew tolerance."""
         patch.affected_files = ["config/robot_params.yaml"]
         patch.lines_changed = 2
@@ -185,7 +189,9 @@ class PatchGenerator:
 """
         return patch
 
-    def _generate_generic_patch(self, patch: PatchCandidate, experiment: Experiment) -> PatchCandidate:
+    def _generate_generic_patch(
+        self, patch: PatchCandidate, experiment: Experiment
+    ) -> PatchCandidate:
         """Generate generic fallback patch for real-world incidents."""
         hyp_id = experiment.hypothesis_id.lower()
         if "memory" in hyp_id:
@@ -518,7 +524,7 @@ if __name__ == "__main__":
         self,
         patch: PatchCandidate,
         destination_dir: Union[Path, str],
-        export_installer: bool = True
+        export_installer: bool = True,
     ) -> Dict[str, Path]:
         """
         Export standalone patch files and executable installer to a directory.
@@ -553,10 +559,7 @@ if __name__ == "__main__":
         return results
 
     def apply_to_workspace(
-        self,
-        patch: PatchCandidate,
-        workspace_dir: Union[Path, str],
-        dry_run: bool = False
+        self, patch: PatchCandidate, workspace_dir: Union[Path, str], dry_run: bool = False
     ) -> bool:
         """
         Apply patch directly to a specified workspace.
@@ -576,4 +579,3 @@ if __name__ == "__main__":
         if callable(apply_fn):
             return bool(apply_fn(target_dir=str(workspace_dir), dry_run=dry_run))
         return False
-

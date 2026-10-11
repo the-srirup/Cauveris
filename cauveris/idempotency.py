@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 class IdempotencyState(Enum):
     """State of an idempotency record."""
+
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -34,6 +35,7 @@ class IdempotencyState(Enum):
 @dataclass
 class IdempotencyRecord:
     """Record of an idempotent request."""
+
     key: str
     caller_id: str
     operation: str
@@ -62,7 +64,14 @@ class IdempotencyStore(ABC):
         pass
 
     @abstractmethod
-    async def update(self, key: str, response_body: str, status: int, headers: Dict[str, str], state: IdempotencyState = IdempotencyState.COMPLETED) -> bool:
+    async def update(
+        self,
+        key: str,
+        response_body: str,
+        status: int,
+        headers: Dict[str, str],
+        state: IdempotencyState = IdempotencyState.COMPLETED,
+    ) -> bool:
         """Update record with response. Returns True if updated."""
         pass
 
@@ -140,7 +149,14 @@ class InMemoryIdempotencyStore(IdempotencyStore):
             self._data[record.key] = record
             return True
 
-    async def update(self, key: str, response_body: str, status: int, headers: Dict[str, str], state: IdempotencyState = IdempotencyState.COMPLETED) -> bool:
+    async def update(
+        self,
+        key: str,
+        response_body: str,
+        status: int,
+        headers: Dict[str, str],
+        state: IdempotencyState = IdempotencyState.COMPLETED,
+    ) -> bool:
         with self._lock:
             record = self._data.get(key)
             if not record:
@@ -203,6 +219,7 @@ class RedisIdempotencyStore(IdempotencyStore):
         if self._redis is None:
             try:
                 import redis.asyncio as redis
+
                 self._redis = redis.from_url(self._redis_url, decode_responses=True)
                 self._healthy = True
             except ImportError:
@@ -256,20 +273,22 @@ class RedisIdempotencyStore(IdempotencyStore):
         try:
             key = self._make_key(record.key)
             # Use SET NX for atomic check-and-set
-            data = json.dumps({
-                "key": record.key,
-                "caller_id": record.caller_id,
-                "operation": record.operation,
-                "request_hash": record.request_hash,
-                "request_body": record.request_body,
-                "response_body": record.response_body,
-                "response_status": record.response_status,
-                "response_headers": record.response_headers,
-                "state": record.state.value,
-                "created_at": record.created_at,
-                "completed_at": record.completed_at,
-                "expires_at": record.expires_at,
-            })
+            data = json.dumps(
+                {
+                    "key": record.key,
+                    "caller_id": record.caller_id,
+                    "operation": record.operation,
+                    "request_hash": record.request_hash,
+                    "request_body": record.request_body,
+                    "response_body": record.response_body,
+                    "response_status": record.response_status,
+                    "response_headers": record.response_headers,
+                    "state": record.state.value,
+                    "created_at": record.created_at,
+                    "completed_at": record.completed_at,
+                    "expires_at": record.expires_at,
+                }
+            )
             # SET with NX (only if not exists) and EX (expiry)
             ttl = int(record.expires_at - time.time())
             if ttl <= 0:
@@ -280,7 +299,14 @@ class RedisIdempotencyStore(IdempotencyStore):
             logger.error(f"Redis idempotency set error: {e}")
             return False
 
-    async def update(self, key: str, response_body: str, status: int, headers: Dict[str, str], state: IdempotencyState = IdempotencyState.COMPLETED) -> bool:
+    async def update(
+        self,
+        key: str,
+        response_body: str,
+        status: int,
+        headers: Dict[str, str],
+        state: IdempotencyState = IdempotencyState.COMPLETED,
+    ) -> bool:
         await self._ensure_connection()
         if not self._healthy or self._redis is None:
             return False
@@ -373,6 +399,7 @@ def get_idempotency_store() -> Optional[IdempotencyStore]:
     global _global_idempotency_store
     if _global_idempotency_store is None:
         from cauveris.config import get_settings
+
         settings = get_settings()
         if settings.idempotency_enabled:
             init_idempotency_store(
@@ -408,7 +435,9 @@ async def check_idempotency(
         return True, None, None  # No store configured, allow
 
     # Get caller identity
-    caller_id = getattr(request.state, "user_id", None) or getattr(request.state, "client_ip", "unknown")
+    caller_id = getattr(request.state, "user_id", None) or getattr(
+        request.state, "client_ip", "unknown"
+    )
 
     record = await store.get(idempotency_key)
     if record is None:
@@ -420,7 +449,7 @@ async def check_idempotency(
             caller_id=caller_id,
             operation=operation,
             request_hash=request_hash,
-            request_body=body.decode('utf-8', errors='ignore'),
+            request_body=body.decode("utf-8", errors="ignore"),
             state=IdempotencyState.PROCESSING,
         )
         created = await store.set(new_record)
@@ -438,44 +467,63 @@ async def check_idempotency(
     if record.request_hash != request_hash:
         # Different request with same key - conflict!
         from fastapi import Response
-        error_body = json.dumps({
-            "error": "Idempotency key conflict",
-            "message": f"Key '{idempotency_key}' was used with a different request",
-            "existing_operation": record.operation,
-        })
-        return False, None, Response(
-            content=error_body,
-            status_code=409,
-            media_type="application/json",
-            headers={"X-Idempotency-Conflict": "true"},
+
+        error_body = json.dumps(
+            {
+                "error": "Idempotency key conflict",
+                "message": f"Key '{idempotency_key}' was used with a different request",
+                "existing_operation": record.operation,
+            }
+        )
+        return (
+            False,
+            None,
+            Response(
+                content=error_body,
+                status_code=409,
+                media_type="application/json",
+                headers={"X-Idempotency-Conflict": "true"},
+            ),
         )
 
     # Same request - check state
     if record.state == IdempotencyState.PROCESSING:
         # Still processing - caller should wait or retry
         from fastapi import Response
-        error_body = json.dumps({
-            "error": "Request still processing",
-            "message": f"Request with key '{idempotency_key}' is still being processed",
-            "retry_after": 5,
-        })
-        return False, None, Response(
-            content=error_body,
-            status_code=409,
-            media_type="application/json",
-            headers={"Retry-After": "5", "X-Idempotency-Processing": "true"},
+
+        error_body = json.dumps(
+            {
+                "error": "Request still processing",
+                "message": f"Request with key '{idempotency_key}' is still being processed",
+                "retry_after": 5,
+            }
+        )
+        return (
+            False,
+            None,
+            Response(
+                content=error_body,
+                status_code=409,
+                media_type="application/json",
+                headers={"Retry-After": "5", "X-Idempotency-Processing": "true"},
+            ),
         )
 
     elif record.state == IdempotencyState.COMPLETED:
         # Return cached response
         from fastapi import Response
+
         headers = record.response_headers or {}
         headers["X-Idempotency-Replay"] = "true"
-        return False, {
-            "body": record.response_body,
-            "status": record.response_status,
-            "headers": headers,
-        }, None
+        return (
+            False,
+            {
+                "body": record.response_body,
+                "status": record.response_status,
+                "headers": headers,
+            },
+            None,
+        )
 
     elif record.state == IdempotencyState.FAILED:
         # Previous attempt failed - allow retry with same key?
@@ -521,8 +569,10 @@ async def idempotency_middleware(request: Request, call_next):
 
     # Validate key format (alphanumeric, hyphen, underscore, max 256 chars)
     import re
-    if not re.match(r'^[a-zA-Z0-9_-]{1,256}$', idempotency_key):
+
+    if not re.match(r"^[a-zA-Z0-9_-]{1,256}$", idempotency_key):
         from fastapi import Response
+
         return Response(
             content=json.dumps({"error": "Invalid Idempotency-Key format"}),
             status_code=400,
@@ -559,7 +609,7 @@ async def idempotency_middleware(request: Request, call_next):
         # Save for future replays
         await save_idempotent_response(
             idempotency_key,
-            response_body.decode('utf-8', errors='ignore'),
+            response_body.decode("utf-8", errors="ignore"),
             response.status_code,
             dict(response.headers),
             IdempotencyState.COMPLETED if response.status_code < 400 else IdempotencyState.FAILED,
@@ -586,6 +636,7 @@ def idempotent(operation_name: Optional[str] = None):
         async def my_endpoint(request: Request, ...):
             ...
     """
+
     def decorator(func):
         async def wrapper(request: Request, *args, **kwargs):
             idempotency_key = request.headers.get("Idempotency-Key")
@@ -593,11 +644,14 @@ def idempotent(operation_name: Optional[str] = None):
                 return await func(request, *args, **kwargs)
 
             operation = operation_name or f"{request.method}:{request.url.path}"
-            should_process, cached, error = await check_idempotency(request, idempotency_key, operation)
+            should_process, cached, error = await check_idempotency(
+                request, idempotency_key, operation
+            )
             if error:
                 return error
             if cached:
                 from fastapi import Response
+
                 return Response(
                     content=cached["body"],
                     status_code=cached["status"],
@@ -608,9 +662,9 @@ def idempotent(operation_name: Optional[str] = None):
             response = await func(request, *args, **kwargs)
 
             # Save response
-            if hasattr(response, 'body'):
+            if hasattr(response, "body"):
                 body = response.body
-            elif hasattr(response, 'body_iterator'):
+            elif hasattr(response, "body_iterator"):
                 body = b""
                 async for chunk in response.body_iterator:
                     body += chunk
@@ -620,12 +674,16 @@ def idempotent(operation_name: Optional[str] = None):
             if response.status_code < 500:
                 await save_idempotent_response(
                     idempotency_key,
-                    body.decode('utf-8', errors='ignore'),
+                    body.decode("utf-8", errors="ignore"),
                     response.status_code,
                     dict(response.headers),
-                    IdempotencyState.COMPLETED if response.status_code < 400 else IdempotencyState.FAILED,
+                    IdempotencyState.COMPLETED
+                    if response.status_code < 400
+                    else IdempotencyState.FAILED,
                 )
 
             return response
+
         return wrapper
+
     return decorator

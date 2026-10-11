@@ -1,6 +1,7 @@
 """
 Verification engine for checking patch candidates against the 9-point PATCH_VERIFIED checklist.
 """
+
 import logging
 import subprocess
 import shutil
@@ -53,13 +54,21 @@ class VerificationEngine:
 
                 # 3. Update patch candidate properties
                 patch.applied_cleanly = verification_results["applies_cleanly"]
-                patch.regression_test_fails_before = verification_results["regression_test_fails_before"]
-                patch.regression_test_passes_after = verification_results["regression_test_passes_after"]
-                patch.original_failure_not_reproduced = verification_results["original_failure_not_reproduced"]
+                patch.regression_test_fails_before = verification_results[
+                    "regression_test_fails_before"
+                ]
+                patch.regression_test_passes_after = verification_results[
+                    "regression_test_passes_after"
+                ]
+                patch.original_failure_not_reproduced = verification_results[
+                    "original_failure_not_reproduced"
+                ]
                 patch.existing_tests_pass = verification_results["existing_tests_pass"]
                 patch.safety_invariants_pass = verification_results["safety_invariants_pass"]
                 patch.performance_within_budget = verification_results["performance_within_budget"]
-                patch.forbidden_change_scan_passes = verification_results["forbidden_change_scan_passes"]
+                patch.forbidden_change_scan_passes = verification_results[
+                    "forbidden_change_scan_passes"
+                ]
                 patch.rollback_test_passes = verification_results["rollback_test_passes"]
 
                 patch.verified = verification_results["verified"]
@@ -74,9 +83,13 @@ class VerificationEngine:
                 else:
                     patch.build_state = "success" if patch.applied_cleanly else "failed"
                     patch.existing_test_state = "pass" if patch.existing_tests_pass else "failed"
-                    patch.replay_state = "success" if patch.original_failure_not_reproduced else "reproduced"
+                    patch.replay_state = (
+                        "success" if patch.original_failure_not_reproduced else "reproduced"
+                    )
                     patch.safety_result = "pass" if patch.safety_invariants_pass else "failed"
-                    patch.latency_result = "within_budget" if patch.performance_within_budget else "exceeded"
+                    patch.latency_result = (
+                        "within_budget" if patch.performance_within_budget else "exceeded"
+                    )
 
                 # 4. Create verification report
                 report = VerificationReport(
@@ -91,10 +104,12 @@ class VerificationEngine:
                     forbidden_change_scan_passes=patch.forbidden_change_scan_passes,
                     rollback_test_passes=patch.rollback_test_passes,
                     verified=patch.verified,
-                    details=verification_results.get("details", {})
+                    details=verification_results.get("details", {}),
                 )
                 reports.append(report)
-                logger.info(f"Verification complete for {patch.candidate_id}: VERIFIED={patch.verified}")
+                logger.info(
+                    f"Verification complete for {patch.candidate_id}: VERIFIED={patch.verified}"
+                )
 
             except Exception as e:
                 logger.error(f"Verification battery failed for {patch.candidate_id}: {e}")
@@ -110,7 +125,7 @@ class VerificationEngine:
                     forbidden_change_scan_passes=False,
                     rollback_test_passes=False,
                     verified=False,
-                    details={"error": str(e)}
+                    details={"error": str(e)},
                 )
                 patch.verified = False
                 patch.rejection_reason = f"Verification error: {str(e)}"
@@ -133,10 +148,10 @@ class VerificationEngine:
                 "enabled": True,
                 "max_batch_size": 8,
                 "batching_window_ms": 200,
-                "timeout_ms": 500
-            }
+                "timeout_ms": 500,
+            },
         }
-        with open(config_dir / "inference.yaml", 'w', encoding='utf-8') as f:
+        with open(config_dir / "inference.yaml", "w", encoding="utf-8") as f:
             yaml.dump(inference_cfg, f, default_flow_style=False)
 
         # Robot params
@@ -147,14 +162,14 @@ class VerificationEngine:
                 "control_loop_deadline_ms": 100,
                 "transform_timeout_ms": 100,
                 "emergency_stop_on_stale_data": True,
-                "emergency_stop_on_transform_fail": True
+                "emergency_stop_on_transform_fail": True,
             },
             "perception": {
                 "detection_topics": ["object_detections"],
-                "required_detection_frequency_hz": 10
-            }
+                "required_detection_frequency_hz": 10,
+            },
         }
-        with open(config_dir / "robot_params.yaml", 'w', encoding='utf-8') as f:
+        with open(config_dir / "robot_params.yaml", "w", encoding="utf-8") as f:
             yaml.dump(robot_params, f, default_flow_style=False)
 
         # Detection client
@@ -164,7 +179,7 @@ class DetectionClient:
         self.qos_depth = qos_depth
         self.keep_last = keep_last
 """
-        (src_dir / "detection_client.py").write_text(detection_client_code, encoding='utf-8')
+        (src_dir / "detection_client.py").write_text(detection_client_code, encoding="utf-8")
 
         # Regression test script: asserts batching_window <= 100 and latency < 120ms
         regression_test_code = """
@@ -188,9 +203,11 @@ class TestRegressionFreshness(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 """
-        (workspace / "test_regression.py").write_text(regression_test_code, encoding='utf-8')
+        (workspace / "test_regression.py").write_text(regression_test_code, encoding="utf-8")
 
-    async def _run_verification_checks(self, workspace: Path, patch: PatchCandidate) -> Dict[str, Any]:
+    async def _run_verification_checks(
+        self, workspace: Path, patch: PatchCandidate
+    ) -> Dict[str, Any]:
         """Execute the 9 verification checks in proper pre/post patch order."""
         results = {
             "applies_cleanly": False,
@@ -204,14 +221,16 @@ if __name__ == "__main__":
             "rollback_test_passes": False,
             "verified": False,
             "details": {},
-            "rejection_reason": None
+            "rejection_reason": None,
         }
         failures = []
 
         # ----------------------------------------------------
         # Check 1: Regression Test Fails Before Patch
         # ----------------------------------------------------
-        results["regression_test_fails_before"] = self._run_regression_test(workspace, expect_pass=False)
+        results["regression_test_fails_before"] = self._run_regression_test(
+            workspace, expect_pass=False
+        )
         if not results["regression_test_fails_before"]:
             failures.append("Regression test does not fail on unpatched code")
 
@@ -225,14 +244,18 @@ if __name__ == "__main__":
         # ----------------------------------------------------
         # Check 3: Regression Test Passes After Patch
         # ----------------------------------------------------
-        results["regression_test_passes_after"] = self._run_regression_test(workspace, expect_pass=True)
+        results["regression_test_passes_after"] = self._run_regression_test(
+            workspace, expect_pass=True
+        )
         if not results["regression_test_passes_after"]:
             failures.append("Regression test does not pass on patched code")
 
         # ----------------------------------------------------
         # Check 4: Original Failure Not Reproduced (Digital Twin)
         # ----------------------------------------------------
-        results["original_failure_not_reproduced"] = self._check_digital_twin_reproduction(workspace)
+        results["original_failure_not_reproduced"] = self._check_digital_twin_reproduction(
+            workspace
+        )
         if not results["original_failure_not_reproduced"]:
             failures.append("Original failure still reproduced in digital twin simulation")
 
@@ -272,20 +295,30 @@ if __name__ == "__main__":
             failures.append("Rollback test failed")
 
         # Verification outcome
-        results["verified"] = (len(failures) == 0)
+        results["verified"] = len(failures) == 0
         if failures:
             results["rejection_reason"] = "; ".join(failures)
 
-        passed_count = sum(1 for k in [
-            "applies_cleanly", "regression_test_fails_before", "regression_test_passes_after",
-            "original_failure_not_reproduced", "existing_tests_pass", "safety_invariants_pass",
-            "performance_within_budget", "forbidden_change_scan_passes", "rollback_test_passes"
-        ] if results[k])
+        passed_count = sum(
+            1
+            for k in [
+                "applies_cleanly",
+                "regression_test_fails_before",
+                "regression_test_passes_after",
+                "original_failure_not_reproduced",
+                "existing_tests_pass",
+                "safety_invariants_pass",
+                "performance_within_budget",
+                "forbidden_change_scan_passes",
+                "rollback_test_passes",
+            ]
+            if results[k]
+        )
 
         results["details"] = {
             "checks_passed": passed_count,
             "total_checks": 9,
-            "failures": failures
+            "failures": failures,
         }
 
         return results
@@ -298,9 +331,9 @@ if __name__ == "__main__":
                 cwd=workspace,
                 capture_output=True,
                 text=True,
-                timeout=15
+                timeout=15,
             )
-            passed = (res.returncode == 0)
+            passed = res.returncode == 0
             return passed if expect_pass else (not passed)
         except Exception as e:
             logger.debug(f"Regression test execution error: {e}")
@@ -314,46 +347,46 @@ if __name__ == "__main__":
                 return False
 
             if "batching_window_ms" in diff:
-                match = re.search(r'\+\s*batching_window_ms:\s*(\d+)', diff)
+                match = re.search(r"\+\s*batching_window_ms:\s*(\d+)", diff)
                 if match:
                     new_val = int(match.group(1))
                     cfg_file = workspace / "config" / "inference.yaml"
                     if cfg_file.exists():
-                        with open(cfg_file, 'r', encoding='utf-8') as f:
+                        with open(cfg_file, "r", encoding="utf-8") as f:
                             cfg = yaml.safe_load(f)
                         cfg["dynamic_batching"]["batching_window_ms"] = new_val
-                        with open(cfg_file, 'w', encoding='utf-8') as f:
+                        with open(cfg_file, "w", encoding="utf-8") as f:
                             yaml.dump(cfg, f, default_flow_style=False)
                         return True
 
             if "qos_depth" in diff:
-                match = re.search(r'\+\s*self\.qos_depth\s*=\s*(\d+)', diff)
+                match = re.search(r"\+\s*self\.qos_depth\s*=\s*(\d+)", diff)
                 if match:
                     new_val = int(match.group(1))
                     client_file = workspace / "src" / "detection_client.py"
                     if client_file.exists():
-                        content = client_file.read_text(encoding='utf-8')
-                        content = re.sub(r'qos_depth\s*=\s*\d+', f'qos_depth = {new_val}', content)
-                        client_file.write_text(content, encoding='utf-8')
+                        content = client_file.read_text(encoding="utf-8")
+                        content = re.sub(r"qos_depth\s*=\s*\d+", f"qos_depth = {new_val}", content)
+                        client_file.write_text(content, encoding="utf-8")
                         return True
 
             if "max_clock_skew_tolerance_ms" in diff:
                 params_file = workspace / "config" / "robot_params.yaml"
                 if params_file.exists():
-                    with open(params_file, 'r', encoding='utf-8') as f:
+                    with open(params_file, "r", encoding="utf-8") as f:
                         cfg = yaml.safe_load(f)
                     cfg["safety"]["max_clock_skew_tolerance_ms"] = 25
-                    with open(params_file, 'w', encoding='utf-8') as f:
+                    with open(params_file, "w", encoding="utf-8") as f:
                         yaml.dump(cfg, f, default_flow_style=False)
                     return True
 
             if "max_batch_size" in diff:
                 cfg_file = workspace / "config" / "inference.yaml"
                 if cfg_file.exists():
-                    with open(cfg_file, 'r', encoding='utf-8') as f:
+                    with open(cfg_file, "r", encoding="utf-8") as f:
                         cfg = yaml.safe_load(f)
                     cfg["dynamic_batching"]["max_batch_size"] = 4
-                    with open(cfg_file, 'w', encoding='utf-8') as f:
+                    with open(cfg_file, "w", encoding="utf-8") as f:
                         yaml.dump(cfg, f, default_flow_style=False)
                     return True
 
@@ -369,7 +402,7 @@ if __name__ == "__main__":
             if not cfg_file.exists():
                 return False
 
-            with open(cfg_file, 'r', encoding='utf-8') as f:
+            with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f)
             batching_window = float(cfg.get("dynamic_batching", {}).get("batching_window_ms", 200))
 
@@ -387,11 +420,15 @@ if __name__ == "__main__":
         """Verify code syntax and config file integrity."""
         try:
             for py_file in workspace.glob("**/*.py"):
-                res = subprocess.run([sys.executable, "-m", "py_compile", str(py_file)], capture_output=True, text=True)
+                res = subprocess.run(
+                    [sys.executable, "-m", "py_compile", str(py_file)],
+                    capture_output=True,
+                    text=True,
+                )
                 if res.returncode != 0:
                     return False
             for yaml_file in workspace.glob("**/*.yaml"):
-                with open(yaml_file, 'r', encoding='utf-8') as f:
+                with open(yaml_file, "r", encoding="utf-8") as f:
                     yaml.safe_load(f)
             return True
         except Exception:
@@ -403,7 +440,7 @@ if __name__ == "__main__":
             params_file = workspace / "config" / "robot_params.yaml"
             if not params_file.exists():
                 return False
-            with open(params_file, 'r', encoding='utf-8') as f:
+            with open(params_file, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f)
             safety = cfg.get("safety", {})
             if not safety.get("emergency_stop_on_stale_data", True):
@@ -420,7 +457,7 @@ if __name__ == "__main__":
             cfg_file = workspace / "config" / "inference.yaml"
             if not cfg_file.exists():
                 return False
-            with open(cfg_file, 'r', encoding='utf-8') as f:
+            with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f)
             window = float(cfg.get("dynamic_batching", {}).get("batching_window_ms", 200))
             # Latency SLA is <= 120ms
@@ -439,7 +476,7 @@ if __name__ == "__main__":
         # No blanket except passes
         for py_file in workspace.glob("**/*.py"):
             try:
-                content = py_file.read_text(encoding='utf-8')
+                content = py_file.read_text(encoding="utf-8")
                 if "except:" in content and "pass" in content:
                     return False
             except Exception:
@@ -454,10 +491,10 @@ if __name__ == "__main__":
                 return False
 
             # Simulate rollback by setting back to original value (200ms)
-            with open(cfg_file, 'r', encoding='utf-8') as f:
+            with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f)
             cfg["dynamic_batching"]["batching_window_ms"] = 200
-            with open(cfg_file, 'w', encoding='utf-8') as f:
+            with open(cfg_file, "w", encoding="utf-8") as f:
                 yaml.dump(cfg, f, default_flow_style=False)
 
             # Check that regression test now fails again (confirming rollback restored original failure state)
@@ -465,7 +502,7 @@ if __name__ == "__main__":
 
             # Re-apply the patch so the workspace remains in verified state
             cfg["dynamic_batching"]["batching_window_ms"] = 100
-            with open(cfg_file, 'w', encoding='utf-8') as f:
+            with open(cfg_file, "w", encoding="utf-8") as f:
                 yaml.dump(cfg, f, default_flow_style=False)
 
             return rolled_back_correctly

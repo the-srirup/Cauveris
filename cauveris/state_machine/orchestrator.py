@@ -1,6 +1,7 @@
 """
 State machine orchestrator for Cauveris incident processing pipeline.
 """
+
 import asyncio
 import logging
 import time
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class StageStatus(str, Enum):
     """Execution status for an individual pipeline stage."""
+
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     SUCCESS = "SUCCESS"
@@ -39,6 +41,7 @@ class StageStatus(str, Enum):
 @dataclass
 class PipelineStage:
     """Represents a discrete stage in the investigation pipeline."""
+
     id: str
     name: str
     description: str
@@ -58,7 +61,9 @@ class PipelineStage:
             "description": self.description,
             "required": self.required,
             "depends_on": self.depends_on,
-            "status": self.status.value if isinstance(self.status, StageStatus) else str(self.status),
+            "status": self.status.value
+            if isinstance(self.status, StageStatus)
+            else str(self.status),
             "error": self.error,
             "details": self.details,
             "duration_ms": self.duration_ms,
@@ -138,25 +143,27 @@ def create_default_stages() -> List[PipelineStage]:
 
 class PipelineState(Enum):
     """Legacy state enum preserved for backward compatibility."""
-    RECEIVED = auto()          # Incident bundle received
-    VALIDATING = auto()        # Validating evidence
-    NORMALIZING = auto()       # Normalizing timestamps and evidence
-    MAPPING = auto()           # Mapping evidence to source and runtime
-    TEMPORAL_ANALYSIS = auto() # Analyzing temporal causality
-    HYPOTHESIZING = auto()     # Generating root-cause hypotheses
-    PLANNING = auto()          # Planning experiments
+
+    RECEIVED = auto()  # Incident bundle received
+    VALIDATING = auto()  # Validating evidence
+    NORMALIZING = auto()  # Normalizing timestamps and evidence
+    MAPPING = auto()  # Mapping evidence to source and runtime
+    TEMPORAL_ANALYSIS = auto()  # Analyzing temporal causality
+    HYPOTHESIZING = auto()  # Generating root-cause hypotheses
+    PLANNING = auto()  # Planning experiments
     RUNNING_BRANCHES = auto()  # Running experiment branches in sandboxes
-    SCORING = auto()           # Scoring experiments and ranking hypotheses
-    PATCH_FORGE = auto()       # Generating and verifying patch candidates
-    VERIFYING = auto()         # Running verification checks on patches
-    AWAITING_REVIEW = auto()   # Ready for human review
-    COMPLETED = auto()         # Processing complete
-    FAILED = auto()            # Processing failed
+    SCORING = auto()  # Scoring experiments and ranking hypotheses
+    PATCH_FORGE = auto()  # Generating and verifying patch candidates
+    VERIFYING = auto()  # Running verification checks on patches
+    AWAITING_REVIEW = auto()  # Ready for human review
+    COMPLETED = auto()  # Processing complete
+    FAILED = auto()  # Processing failed
 
 
 @dataclass
 class PipelineContext:
     """Context passed between pipeline stages."""
+
     incident: Optional[Incident] = None
     settings: Any = field(default_factory=get_settings)
     model_gateway: Optional[ModelGateway] = None
@@ -286,10 +293,7 @@ class PipelineOrchestrator:
                     logger.debug(f"Progress callback notification failed: {e}")
 
     async def _execute_stage(
-        self,
-        stage: PipelineStage,
-        action_coro: Callable,
-        legacy_state: PipelineState
+        self, stage: PipelineStage, action_coro: Callable, legacy_state: PipelineState
     ) -> bool:
         """
         Execute a single stage with dependency checking and status updates.
@@ -303,9 +307,15 @@ class PipelineOrchestrator:
         # Verify all prerequisite stages are met
         for dep_id in stage.depends_on:
             dep_stage = self.get_stage(dep_id)
-            if dep_stage and dep_stage.status in [StageStatus.FAILED, StageStatus.SKIPPED, StageStatus.CANCELLED]:
+            if dep_stage and dep_stage.status in [
+                StageStatus.FAILED,
+                StageStatus.SKIPPED,
+                StageStatus.CANCELLED,
+            ]:
                 stage.status = StageStatus.SKIPPED
-                stage.error = f"Blocked by prerequisite stage '{dep_stage.name}' ({dep_stage.status.value})"
+                stage.error = (
+                    f"Blocked by prerequisite stage '{dep_stage.name}' ({dep_stage.status.value})"
+                )
                 logger.warning(f"Stage '{stage.id}' skipped: {stage.error}")
                 self._block_dependent_stages(stage.id)
                 self._notify_progress(legacy_state)
@@ -391,7 +401,9 @@ class PipelineOrchestrator:
             # 1. Ingestion & Validation
             async def do_ingestion():
                 context.incident = await self.ingestion.process(context.incident)
-                stage_map["ingestion_validation"].details["evidence_count"] = context.incident.evidence_count
+                stage_map["ingestion_validation"].details["evidence_count"] = (
+                    context.incident.evidence_count
+                )
 
             ok = await self._execute_stage(
                 stage_map["ingestion_validation"], do_ingestion, PipelineState.VALIDATING
@@ -407,7 +419,9 @@ class PipelineOrchestrator:
             async def do_timeline():
                 context.validated_incident = await self.timeline_builder.build(context.incident)
                 context.timeline_events = getattr(context.validated_incident, "timeline_events", [])
-                stage_map["timeline_construction"].details["event_count"] = len(context.timeline_events)
+                stage_map["timeline_construction"].details["event_count"] = len(
+                    context.timeline_events
+                )
 
             ok = await self._execute_stage(
                 stage_map["timeline_construction"], do_timeline, PipelineState.NORMALIZING
@@ -421,9 +435,13 @@ class PipelineOrchestrator:
 
             # 3. Temporal Causality Analysis
             async def do_temporal():
-                context.temporal_analysis = self.temporal_analyzer.analyze_incident(context.validated_incident)
+                context.temporal_analysis = self.temporal_analyzer.analyze_incident(
+                    context.validated_incident
+                )
                 context.validated_incident.temporal_analysis = context.temporal_analysis
-                stage_map["temporal_analysis"].details["violations"] = len(context.temporal_analysis.get("causality_violations", []))
+                stage_map["temporal_analysis"].details["violations"] = len(
+                    context.temporal_analysis.get("causality_violations", [])
+                )
 
             ok = await self._execute_stage(
                 stage_map["temporal_analysis"], do_temporal, PipelineState.TEMPORAL_ANALYSIS
@@ -437,7 +455,9 @@ class PipelineOrchestrator:
 
             # 4. Hypothesis Generation
             async def do_hypotheses():
-                context.hypotheses = await self.hypothesis_generator.generate(context.validated_incident)
+                context.hypotheses = await self.hypothesis_generator.generate(
+                    context.validated_incident
+                )
                 stage_map["hypothesis_generation"].details["count"] = len(context.hypotheses or [])
 
             ok = await self._execute_stage(
@@ -452,9 +472,13 @@ class PipelineOrchestrator:
 
             # 5. Sandbox Experiment Planning
             async def do_sandbox():
-                context.experiments = await self.sandbox_controller.plan_experiments(context.hypotheses)
+                context.experiments = await self.sandbox_controller.plan_experiments(
+                    context.hypotheses
+                )
                 await self.sandbox_controller.run_experiments(context.experiments)
-                stage_map["sandbox_planning"].details["experiments"] = len(context.experiments or [])
+                stage_map["sandbox_planning"].details["experiments"] = len(
+                    context.experiments or []
+                )
 
             ok = await self._execute_stage(
                 stage_map["sandbox_planning"], do_sandbox, PipelineState.PLANNING
@@ -468,8 +492,12 @@ class PipelineOrchestrator:
 
             # 6. Digital Twin Simulation & Scoring
             async def do_simulation():
-                context.experiments = await self.simulation_runner.run_simulations(context.experiments)
-                stage_map["simulation_execution"].details["simulated_experiments"] = len(context.experiments or [])
+                context.experiments = await self.simulation_runner.run_simulations(
+                    context.experiments
+                )
+                stage_map["simulation_execution"].details["simulated_experiments"] = len(
+                    context.experiments or []
+                )
 
             ok = await self._execute_stage(
                 stage_map["simulation_execution"], do_simulation, PipelineState.SCORING
@@ -498,7 +526,9 @@ class PipelineOrchestrator:
 
             # 8. 9-Point Invariant Verification
             async def do_verification():
-                context.verification_reports = await self.verification_engine.verify(context.patch_candidates)
+                context.verification_reports = await self.verification_engine.verify(
+                    context.patch_candidates
+                )
                 stage_map["invariant_verification"].details["verified_count"] = sum(
                     1 for r in (context.verification_reports or []) if getattr(r, "verified", False)
                 )
@@ -520,7 +550,7 @@ class PipelineOrchestrator:
                     context.hypotheses,
                     context.experiments,
                     context.patch_candidates,
-                    context.verification_reports
+                    context.verification_reports,
                 )
 
             await self._execute_stage(

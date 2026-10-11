@@ -13,6 +13,7 @@ This module bridges two worlds:
   signals. The analyzer uses both sources: the timeline for scale and the raw
   signals for the precise anomaly criteria.
 """
+
 from __future__ import annotations
 
 import csv
@@ -35,10 +36,11 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 class ClockDomain(str, Enum):
     """Logical clock domains present in the evidence."""
-    CLOUD = "cloud"           # OTel traces, cloud-service.jsonl, cloud metrics
-    HOST = "host"             # deployment events, system.log (mixed)
-    ROBOT = "robot"           # ros-nodes.jsonl, MCAP topics
-    SIMULATION = "simulation" # MCAP simulation clock (if present)
+
+    CLOUD = "cloud"  # OTel traces, cloud-service.jsonl, cloud metrics
+    HOST = "host"  # deployment events, system.log (mixed)
+    ROBOT = "robot"  # ros-nodes.jsonl, MCAP topics
+    SIMULATION = "simulation"  # MCAP simulation clock (if present)
     UNKNOWN = "unknown"
 
 
@@ -49,11 +51,12 @@ class TimestampKind(str, Enum):
     The kind controls how much *precision loss* the analyzer tolerates before
     treating an out-of-order pair as a potential inversion.
     """
-    NANOSECOND_WALL = "nanosecond_wall"        # OTel spans, MCAP log_time
+
+    NANOSECOND_WALL = "nanosecond_wall"  # OTel spans, MCAP log_time
     NANOSECOND_MONOTONIC = "nanosecond_monotonic"  # kernel uptime bracket
-    MICROSECOND_WALL = "microsecond_wall"      # JSONL ISO8601 with µs
-    SECOND_WALL = "second_wall"                # system.log ISO8601 to-the-second
-    RELATIVE = "relative"                      # relative_s / relative_ns from builder
+    MICROSECOND_WALL = "microsecond_wall"  # JSONL ISO8601 with µs
+    SECOND_WALL = "second_wall"  # system.log ISO8601 to-the-second
+    RELATIVE = "relative"  # relative_s / relative_ns from builder
     UNKNOWN = "unknown"
 
 
@@ -63,6 +66,7 @@ class CausalityProvenance(str, Enum):
 
     Used by ``TolerancePolicy`` to set per-edge tolerance.
     """
+
     OTEL_TRACE_ORDER = "otel_trace_order"
     ROS_TOPIC_ORDER = "ros_topic_order"
     LOG_NODE_ORDER = "log_node_order"
@@ -79,19 +83,20 @@ class TemporalEvidence:
     """
     A single event with its fully qualified temporal fingerprint.
     """
+
     # Synthesized deterministic ID
     evidence_id: str
 
     # Original fields
-    timestamp_ns: int                # absolute wall-clock nanoseconds (best effort)
-    timestamp_kind: TimestampKind    # precision class
-    lane: str                        # logical lane (builder's lane)
-    source: str                      # file path relative to bundle
-    message: str                     # human readable summary
+    timestamp_ns: int  # absolute wall-clock nanoseconds (best effort)
+    timestamp_kind: TimestampKind  # precision class
+    lane: str  # logical lane (builder's lane)
+    source: str  # file path relative to bundle
+    message: str  # human readable summary
 
     # Domain & breadcrumb
     clock_domain: ClockDomain
-    source_type: str                 # builder's source_type
+    source_type: str  # builder's source_type
 
     # Causal hints (may be empty)
     parent_candidates: List[str] = field(default_factory=list)
@@ -306,7 +311,11 @@ def _add_timeline_causal_hints(
         a_node = a.extra.get("attributes", {}).get("node", "")
         b_node = b.extra.get("attributes", {})
         b_node_name = b_node.get("node", "")
-        if a_node in node_index and b_node_name in node_index and node_index[a_node] < node_index[b_node_name]:
+        if (
+            a_node in node_index
+            and b_node_name in node_index
+            and node_index[a_node] < node_index[b_node_name]
+        ):
             a.child_candidates.append(b.evidence_id)
             a.child_provenance[b.evidence_id] = CausalityProvenance.LOG_NODE_ORDER
             b.parent_candidates.append(a.evidence_id)
@@ -354,7 +363,10 @@ def _add_timeline_causal_hints(
         # Link each from_event to the first to_event after it within window
         for a in from_evs:
             for b in to_evs:
-                if b.timestamp_ns > a.timestamp_ns and (b.timestamp_ns - a.timestamp_ns) <= 500_000_000:
+                if (
+                    b.timestamp_ns > a.timestamp_ns
+                    and (b.timestamp_ns - a.timestamp_ns) <= 500_000_000
+                ):
                     a.child_candidates.append(b.evidence_id)
                     a.child_provenance[b.evidence_id] = CausalityProvenance.CROSS_DOMAIN_HANDOFF
                     b.parent_candidates.append(a.evidence_id)
@@ -422,22 +434,22 @@ class RawSignalExtractor:
                 if header_stamp is not None:
                     age_ms = (message.log_time - header_stamp) / 1_000_000.0
 
-                messages.append({
-                    "topic": channel.topic,
-                    "log_time_ns": message.log_time,
-                    "publish_time_ns": message.publish_time,
-                    "header_stamp_ns": header_stamp,
-                    "detection_age_ms": age_ms,
-                    "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
-                })
+                messages.append(
+                    {
+                        "topic": channel.topic,
+                        "log_time_ns": message.log_time,
+                        "publish_time_ns": message.publish_time,
+                        "header_stamp_ns": header_stamp,
+                        "detection_age_ms": age_ms,
+                        "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
+                    }
+                )
 
         # Co-temporal ambiguities: messages on different topics sharing log_time
         by_log_time: Dict[int, List[Dict]] = defaultdict(list)
         for m in messages:
             by_log_time[m["log_time_ns"]].append(m)
-        ambiguities = {
-            t: msgs for t, msgs in by_log_time.items() if len(msgs) > 1
-        }
+        ambiguities = {t: msgs for t, msgs in by_log_time.items() if len(msgs) > 1}
 
         # Back-to-back detection: /cmd_vel (estop) and /safety_status at identical time
         estop_and_safety = []
@@ -500,10 +512,7 @@ class RawSignalExtractor:
             return {}
 
         duplicate_columns: List[Dict[str, Any]] = []
-        signals: Dict[str, Any] = {
-            "duplicate_columns": duplicate_columns,
-            "column_precision": {}
-        }
+        signals: Dict[str, Any] = {"duplicate_columns": duplicate_columns, "column_precision": {}}
 
         for csv_path in metrics_dir.glob("*.csv"):
             try:
@@ -517,10 +526,12 @@ class RawSignalExtractor:
                         seen.setdefault(col.lower(), []).append(idx)
                     dupes = [col for col, idxs in seen.items() if len(idxs) > 1]
                     if dupes:
-                        signals["duplicate_columns"].append({
-                            "file": str(csv_path.relative_to(self.bundle_path)),
-                            "duplicates": dupes,
-                        })
+                        signals["duplicate_columns"].append(
+                            {
+                                "file": str(csv_path.relative_to(self.bundle_path)),
+                                "duplicates": dupes,
+                            }
+                        )
 
                     # Precision check: fractional seconds in timestamp column
                     ts_col = next((c for c in header if "time" in c.lower()), header[0])
@@ -579,12 +590,14 @@ class RawSignalExtractor:
                             ts_ns = int(dt.timestamp() * 1_000_000_000)
                             if prev_ts is not None and ts_ns < prev_ts:
                                 file_signals["inversions"] += 1
-                                file_signals["detail"].append({
-                                    "line": line_num,
-                                    "prev_ns": prev_ts,
-                                    "curr_ns": ts_ns,
-                                    "delta_ns": ts_ns - prev_ts,
-                                })
+                                file_signals["detail"].append(
+                                    {
+                                        "line": line_num,
+                                        "prev_ns": prev_ts,
+                                        "curr_ns": ts_ns,
+                                        "delta_ns": ts_ns - prev_ts,
+                                    }
+                                )
                             prev_ts = ts_ns
                     except Exception:
                         pass

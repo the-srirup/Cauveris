@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, Stars } from "@react-three/drei";
@@ -91,9 +91,14 @@ export default function HolographicReconstructionPage() {
   const [temporalFrames, setTemporalFrames] = useState<TemporalFrame[]>([]);
   const [currentTime, setCurrentTime] = useState(0);
 
-  // Fetch holographic data from API
+  // Fetch holographic data from API. A sequence number (latest-call-wins)
+  // guards rapid incident switching: a superseded request must not
+  // overwrite the new incident's data, and an abort/error from a
+  // superseded call must not drop the page into mock data.
+  const fetchSeqRef = useRef(0);
   const fetchHolographicData = useCallback(async () => {
     if (!incidentId) return;
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -107,13 +112,17 @@ export default function HolographicReconstructionPage() {
         gpu_time_step_ns: 1000000,
         gpu_max_kernel_time_ns: 10000000000,
       });
-      setApiData(response.data);
-      setRawNodes(response.data.bulk_nodes.map((n: any) => ({
+      if (seq !== fetchSeqRef.current) return;
+      setApiData(response);
+      setRawNodes(response.bulk_nodes.map((n: any) => ({
         id: n.id,
         label: n.name,
         name: n.name,
         type: n.type,
-        position: n.position,
+        // The wire format for position is a JSON array [x, y, z], while
+        // CausalNode.position is a Vec3 object consumed via .x/.y/.z — the
+        // raw array made every consumer read undefined (all-NaN transforms).
+        position: { x: n.position[0], y: n.position[1], z: n.position[2] },
         radius: n.size,
         color: n.color,
         health: n.health,
@@ -121,7 +130,7 @@ export default function HolographicReconstructionPage() {
         confidence: n.confidence,
         config_changed: n.config_changed,
       })));
-      setRawLinks(response.data.bulk_edges.map((e: any) => ({
+      setRawLinks(response.bulk_edges.map((e: any) => ({
         source: e.source,
         target: e.target,
         strength: e.thickness / 4,
@@ -129,12 +138,17 @@ export default function HolographicReconstructionPage() {
         latency_ms: e.latency_ms,
       })));
     } catch (err: any) {
+      if (seq !== fetchSeqRef.current) return;
       setError(err.message || "Failed to fetch holographic data");
       // Fallback to mock data
       loadMockData();
     } finally {
-      setLoading(false);
+      if (seq === fetchSeqRef.current) setLoading(false);
     }
+    // `loadMockData` is intentionally not a dependency: it's defined below
+    // this callback (referencing it in the deps array would hit the TDZ),
+    // and both callbacks key on incidentId, so the closure always sees the
+    // current one.
   }, [incidentId, gpuEnabled, gpuDecayType, gpuNormalization, showGhosts]);
 
   const loadMockData = useCallback(() => {

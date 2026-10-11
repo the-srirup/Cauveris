@@ -2,6 +2,7 @@
 Nebius model gateway provider.
 Calls real Nebius Token Factory APIs when credentials are available.
 """
+
 from typing import Any, Dict, Optional, Type
 import httpx
 from pydantic import BaseModel
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class CredentialNotConfigured(Exception):
     """Raised when Nebius credentials are not configured."""
+
     pass
 
 

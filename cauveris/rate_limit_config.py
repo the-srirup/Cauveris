@@ -20,11 +20,13 @@ def parse_rate_limit_string(rate_limit_str: str) -> List[RateLimitConfig]:
             continue
         try:
             limit_str, window_str = part.split("/")
-            configs.append(RateLimitConfig(
-                limit=int(limit_str),
-                window_seconds=int(window_str),
-                algorithm=RateLimitAlgorithm.SLIDING_WINDOW_LOG
-            ))
+            configs.append(
+                RateLimitConfig(
+                    limit=int(limit_str),
+                    window_seconds=int(window_str),
+                    algorithm=RateLimitAlgorithm.SLIDING_WINDOW_LOG,
+                )
+            )
         except ValueError:
             continue
     return configs
@@ -104,7 +106,14 @@ def get_cost_class_for_endpoint(method: str, path: str) -> str:
     path = path.rstrip("/")
 
     # Health and status - public read
-    if path in ["/", "/health", "/api/v1/health", "/api/v1/model-health", "/status-center", "/api/v1/status-center"]:
+    if path in [
+        "/",
+        "/health",
+        "/api/v1/health",
+        "/api/v1/model-health",
+        "/status-center",
+        "/api/v1/status-center",
+    ]:
         return "PUBLIC_READ"
 
     # List incidents - normal read
@@ -120,7 +129,10 @@ def get_cost_class_for_endpoint(method: str, path: str) -> str:
         return "UPLOAD"
 
     # Validate, temporal analysis, visualization - compute
-    if any(x in path for x in ["/validate", "/temporal-analysis", "/temporal-visualization", "/simulate-custom"]):
+    if any(
+        x in path
+        for x in ["/validate", "/temporal-analysis", "/temporal-visualization", "/simulate-custom"]
+    ):
         if method == "POST":
             return "COMPUTE"
         return "NORMAL_READ"
@@ -150,7 +162,10 @@ def get_cost_class_for_endpoint(method: str, path: str) -> str:
         return "DOWNLOAD"
 
     # Events, timeline, hypotheses, experiments list - normal read
-    if any(x in path for x in ["/events", "/timeline", "/hypotheses", "/experiments"]) and method == "GET":
+    if (
+        any(x in path for x in ["/events", "/timeline", "/hypotheses", "/experiments"])
+        and method == "GET"
+    ):
         return "NORMAL_READ"
 
     # SSE stream - stream

@@ -1,6 +1,7 @@
 """
 Golden incident dataset generator for CAU-0001.
 """
+
 import json
 import yaml
 import hashlib
@@ -47,7 +48,9 @@ class GoldenIncidentGenerator:
         self._write_media()
 
         incident = self._build_incident_object(manifest_data)
-        logger.info(f"Generated incident {incident.id} with {len(incident.evidence_items)} evidence items")
+        logger.info(
+            f"Generated incident {incident.id} with {len(incident.evidence_items)} evidence items"
+        )
         return incident
 
     def _create_bundle_structure(self):
@@ -80,7 +83,7 @@ class GoldenIncidentGenerator:
             "approximate_time": "2026-09-20T10:30:00Z",
             "source_repositories": [
                 "https://github.com/example/inference-service",
-                "https://github.com/example/robot-navigation"
+                "https://github.com/example/robot-navigation",
             ],
             "commit_hash": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0",
             "required_evidence": [
@@ -97,11 +100,11 @@ class GoldenIncidentGenerator:
                 "config/robot_params.yaml",
                 "deployments/events.json",
                 "observations/operator_note.md",
-                "media/incident.mp4"
-            ]
+                "media/incident.mp4",
+            ],
         }
         manifest_path = self.bundle_path / "manifest.yaml"
-        with open(manifest_path, 'w', encoding='utf-8') as f:
+        with open(manifest_path, "w", encoding="utf-8") as f:
             yaml.dump(manifest, f, default_flow_style=False)
         logger.debug(f"Wrote manifest to {manifest_path}")
         return manifest
@@ -118,7 +121,7 @@ Warehouse Autonomous Mobile Robot (AMR-01) performed an uncommanded emergency st
 - Target deployment: v42 (applied 2026-09-20T08:00:00Z)
 - Suspected components: cloud GPU inference service & robot navigation stack
 """
-        (self.bundle_path / "README.md").write_text(readme_content, encoding='utf-8')
+        (self.bundle_path / "README.md").write_text(readme_content, encoding="utf-8")
 
     def _write_source_files(self):
         """Write source files for cloud-service and robot-stack."""
@@ -130,7 +133,9 @@ WORKDIR /app
 RUN pip install -r requirements.txt
 CMD ["python3", "inference_server.py"]
 """
-        (self.bundle_path / "source/cloud-service/Dockerfile").write_text(dockerfile_content, encoding='utf-8')
+        (self.bundle_path / "source/cloud-service/Dockerfile").write_text(
+            dockerfile_content, encoding="utf-8"
+        )
 
         # Cloud service inference_server.py
         inference_server_py = '''"""
@@ -158,7 +163,9 @@ if __name__ == "__main__":
     server = InferenceServer()
     print(f"Inference server running. Dynamic batching window: {server.batching_window_ms}ms")
 '''
-        (self.bundle_path / "source/cloud-service/inference_server.py").write_text(inference_server_py, encoding='utf-8')
+        (self.bundle_path / "source/cloud-service/inference_server.py").write_text(
+            inference_server_py, encoding="utf-8"
+        )
 
         # Robot stack main.cpp
         main_cpp = """#include <rclcpp/rclcpp.hpp>
@@ -175,7 +182,9 @@ int main(int argc, char ** argv) {
   return 0;
 }
 """
-        (self.bundle_path / "source/robot-stack/src/main.cpp").write_text(main_cpp, encoding='utf-8')
+        (self.bundle_path / "source/robot-stack/src/main.cpp").write_text(
+            main_cpp, encoding="utf-8"
+        )
 
         # Robot stack detection_client.py
         detection_client_py = '''"""
@@ -193,7 +202,9 @@ class DetectionClient:
             return False, f"Detection stale by {age_ms - self.freshness_budget_ms}ms"
         return True, "Fresh"
 '''
-        (self.bundle_path / "source/robot-stack/src/detection_client.py").write_text(detection_client_py, encoding='utf-8')
+        (self.bundle_path / "source/robot-stack/src/detection_client.py").write_text(
+            detection_client_py, encoding="utf-8"
+        )
 
     def _write_traces(self):
         """Write OpenTelemetry trace file."""
@@ -214,8 +225,8 @@ class DetectionClient:
                         "http.url": "/v1/models/objdet:predict",
                         "http.status_code": 200,
                         "batch.window_ms": 200,
-                        "queue.wait_ms": 115
-                    }
+                        "queue.wait_ms": 115,
+                    },
                 },
                 {
                     "traceID": "0af7651916cd43dd8448eb211c80819c",
@@ -227,17 +238,14 @@ class DetectionClient:
                     "duration": 50000000,
                     "status": {
                         "code": 2,
-                        "message": "Control deadline missed: detection latency exceeded freshness budget"
+                        "message": "Control deadline missed: detection latency exceeded freshness budget",
                     },
-                    "attributes": {
-                        "freshness_budget_ms": 120,
-                        "observed_latency_ms": 155
-                    }
-                }
-            ]
+                    "attributes": {"freshness_budget_ms": 120, "observed_latency_ms": 155},
+                },
+            ],
         }
         otel_path = self.bundle_path / "traces/otel.json"
-        with open(otel_path, 'w', encoding='utf-8') as f:
+        with open(otel_path, "w", encoding="utf-8") as f:
             json.dump(otel_content, f, indent=2)
         logger.debug(f"Wrote OTel traces to {otel_path}")
 
@@ -245,23 +253,50 @@ class DetectionClient:
         """Write log files."""
         # Cloud service logs
         cloud_logs = [
-            {"timestamp": "2026-09-20T10:29:50.000Z", "level": "INFO", "message": "Inference worker batch window set to 200ms by deployment v42"},
-            {"timestamp": "2026-09-20T10:29:50.150Z", "level": "INFO", "message": "Batch filled with 4 frames, inference completed in 155ms"},
-            {"timestamp": "2026-09-20T10:29:50.200Z", "level": "WARN", "message": "Queue depth increasing: 15 frames pending"},
+            {
+                "timestamp": "2026-09-20T10:29:50.000Z",
+                "level": "INFO",
+                "message": "Inference worker batch window set to 200ms by deployment v42",
+            },
+            {
+                "timestamp": "2026-09-20T10:29:50.150Z",
+                "level": "INFO",
+                "message": "Batch filled with 4 frames, inference completed in 155ms",
+            },
+            {
+                "timestamp": "2026-09-20T10:29:50.200Z",
+                "level": "WARN",
+                "message": "Queue depth increasing: 15 frames pending",
+            },
         ]
         cloud_logs_path = self.bundle_path / "logs/cloud-service.jsonl"
-        with open(cloud_logs_path, 'w', encoding='utf-8') as f:
+        with open(cloud_logs_path, "w", encoding="utf-8") as f:
             for entry in cloud_logs:
                 f.write(json.dumps(entry) + "\n")
 
         # ROS nodes logs
         ros_logs = [
-            {"timestamp": "2026-09-20T10:29:50.210Z", "node": "detection_listener", "level": "INFO", "message": "Received detection message from cloud inference"},
-            {"timestamp": "2026-09-20T10:29:50.260Z", "node": "navigation_controller", "level": "ERROR", "message": "Transform lookup failed: stale detection age 155ms exceeds freshness budget 120ms"},
-            {"timestamp": "2026-09-20T10:29:50.270Z", "node": "safety_monitor", "level": "CRITICAL", "message": "Emergency stop triggered: control deadline missed due to stale perception data"},
+            {
+                "timestamp": "2026-09-20T10:29:50.210Z",
+                "node": "detection_listener",
+                "level": "INFO",
+                "message": "Received detection message from cloud inference",
+            },
+            {
+                "timestamp": "2026-09-20T10:29:50.260Z",
+                "node": "navigation_controller",
+                "level": "ERROR",
+                "message": "Transform lookup failed: stale detection age 155ms exceeds freshness budget 120ms",
+            },
+            {
+                "timestamp": "2026-09-20T10:29:50.270Z",
+                "node": "safety_monitor",
+                "level": "CRITICAL",
+                "message": "Emergency stop triggered: control deadline missed due to stale perception data",
+            },
         ]
         ros_logs_path = self.bundle_path / "logs/ros-nodes.jsonl"
-        with open(ros_logs_path, 'w', encoding='utf-8') as f:
+        with open(ros_logs_path, "w", encoding="utf-8") as f:
             for entry in ros_logs:
                 f.write(json.dumps(entry) + "\n")
 
@@ -270,7 +305,7 @@ class DetectionClient:
 2026-09-20T10:28:00Z nvidia-smi[812]: GPU 0: NVIDIA A10G, Util 82%, Temp 68C, Power 142W / 150W
 2026-09-20T10:29:50Z kernel: [10421.11] warehouse-amr-01 safety relay tripped
 """
-        (self.bundle_path / "logs/system.log").write_text(system_log_content, encoding='utf-8')
+        (self.bundle_path / "logs/system.log").write_text(system_log_content, encoding="utf-8")
         logger.debug("Wrote log files")
 
     def _write_metrics(self):
@@ -282,7 +317,7 @@ class DetectionClient:
 2026-09-20T10:29:50.200Z,80,80,70,15,155
 2026-09-20T10:29:50.300Z,90,90,75,25,190
 """
-        (self.bundle_path / "metrics/gpu.csv").write_text(gpu_csv, encoding='utf-8')
+        (self.bundle_path / "metrics/gpu.csv").write_text(gpu_csv, encoding="utf-8")
 
         # Network metrics
         network_csv = """timestamp,latency_ms,packet_loss,jitter
@@ -291,7 +326,7 @@ class DetectionClient:
 2026-09-20T10:29:50.200Z,15,0.0,3
 2026-09-20T10:29:50.300Z,18,0.0,4
 """
-        (self.bundle_path / "metrics/network.csv").write_text(network_csv, encoding='utf-8')
+        (self.bundle_path / "metrics/network.csv").write_text(network_csv, encoding="utf-8")
         logger.debug("Wrote metric files")
 
     def _write_recordings(self):
@@ -299,37 +334,65 @@ class DetectionClient:
         from mcap.writer import Writer
 
         mcap_path = self.bundle_path / "recordings/robot_run.mcap"
-        with open(mcap_path, 'wb') as f:
+        with open(mcap_path, "wb") as f:
             writer = Writer(f)
             writer.start()
 
             tf_schema = writer.register_schema(
                 name="geometry_msgs/msg/TransformStamped",
                 encoding="jsonschema",
-                data=json.dumps({"type": "object", "properties": {"frame_id": {"type": "string"}, "child_frame_id": {"type": "string"}}}).encode('utf-8')
+                data=json.dumps(
+                    {
+                        "type": "object",
+                        "properties": {
+                            "frame_id": {"type": "string"},
+                            "child_frame_id": {"type": "string"},
+                        },
+                    }
+                ).encode("utf-8"),
             )
-            tf_chan = writer.register_channel(topic="/tf", message_encoding="json", schema_id=tf_schema)
+            tf_chan = writer.register_channel(
+                topic="/tf", message_encoding="json", schema_id=tf_schema
+            )
 
             cmd_schema = writer.register_schema(
                 name="geometry_msgs/msg/Twist",
                 encoding="jsonschema",
-                data=json.dumps({"type": "object", "properties": {"linear": {"type": "object"}, "angular": {"type": "object"}}}).encode('utf-8')
+                data=json.dumps(
+                    {
+                        "type": "object",
+                        "properties": {"linear": {"type": "object"}, "angular": {"type": "object"}},
+                    }
+                ).encode("utf-8"),
             )
-            cmd_chan = writer.register_channel(topic="/cmd_vel", message_encoding="json", schema_id=cmd_schema)
+            cmd_chan = writer.register_channel(
+                topic="/cmd_vel", message_encoding="json", schema_id=cmd_schema
+            )
 
             det_schema = writer.register_schema(
                 name="vision_msgs/msg/Detection2DArray",
                 encoding="jsonschema",
-                data=json.dumps({"type": "object", "properties": {"detections": {"type": "array"}}}).encode('utf-8')
+                data=json.dumps(
+                    {"type": "object", "properties": {"detections": {"type": "array"}}}
+                ).encode("utf-8"),
             )
-            det_chan = writer.register_channel(topic="/detections", message_encoding="json", schema_id=det_schema)
+            det_chan = writer.register_channel(
+                topic="/detections", message_encoding="json", schema_id=det_schema
+            )
 
             safety_schema = writer.register_schema(
                 name="diagnostic_msgs/msg/DiagnosticStatus",
                 encoding="jsonschema",
-                data=json.dumps({"type": "object", "properties": {"level": {"type": "integer"}, "message": {"type": "string"}}}).encode('utf-8')
+                data=json.dumps(
+                    {
+                        "type": "object",
+                        "properties": {"level": {"type": "integer"}, "message": {"type": "string"}},
+                    }
+                ).encode("utf-8"),
             )
-            safety_chan = writer.register_channel(topic="/safety_status", message_encoding="json", schema_id=safety_schema)
+            safety_chan = writer.register_channel(
+                topic="/safety_status", message_encoding="json", schema_id=safety_schema
+            )
 
             base_ns = 1789900190000000000
 
@@ -338,13 +401,24 @@ class DetectionClient:
                 channel_id=tf_chan,
                 log_time=base_ns,
                 publish_time=base_ns,
-                data=json.dumps({"frame_id": "odom", "child_frame_id": "base_link", "translation": {"x": 10.2, "y": 4.5, "z": 0.0}}).encode('utf-8')
+                data=json.dumps(
+                    {
+                        "frame_id": "odom",
+                        "child_frame_id": "base_link",
+                        "translation": {"x": 10.2, "y": 4.5, "z": 0.0},
+                    }
+                ).encode("utf-8"),
             )
             writer.add_message(
                 channel_id=cmd_chan,
                 log_time=base_ns + 50000000,
                 publish_time=base_ns + 50000000,
-                data=json.dumps({"linear": {"x": 0.8, "y": 0.0, "z": 0.0}, "angular": {"x": 0.0, "y": 0.0, "z": 0.0}}).encode('utf-8')
+                data=json.dumps(
+                    {
+                        "linear": {"x": 0.8, "y": 0.0, "z": 0.0},
+                        "angular": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    }
+                ).encode("utf-8"),
             )
 
             # 2. Delayed detection arriving with age 155ms (exceeding 120ms budget)
@@ -353,14 +427,18 @@ class DetectionClient:
                 channel_id=det_chan,
                 log_time=det_time,
                 publish_time=det_time,
-                data=json.dumps({
-                    "header": {"stamp_ns": base_ns + 55000000},
-                    "detections": [{"id": "pallet_obstacle_1", "bbox": [120, 80, 45, 60], "score": 0.96}],
-                    "inference_latency_ms": 155.0,
-                    "age_ms": 155.0,
-                    "freshness_budget_ms": 120.0,
-                    "status": "STALE_DETECTION"
-                }).encode('utf-8')
+                data=json.dumps(
+                    {
+                        "header": {"stamp_ns": base_ns + 55000000},
+                        "detections": [
+                            {"id": "pallet_obstacle_1", "bbox": [120, 80, 45, 60], "score": 0.96}
+                        ],
+                        "inference_latency_ms": 155.0,
+                        "age_ms": 155.0,
+                        "freshness_budget_ms": 120.0,
+                        "status": "STALE_DETECTION",
+                    }
+                ).encode("utf-8"),
             )
 
             # 3. Transform lookup fails due to stale perception
@@ -369,11 +447,13 @@ class DetectionClient:
                 channel_id=tf_chan,
                 log_time=tf_fail_time,
                 publish_time=tf_fail_time,
-                data=json.dumps({
-                    "error": "ExtrapolationException: Transform lookup from base_link to odom failed: detection age 155ms exceeds buffer threshold",
-                    "frame_id": "odom",
-                    "child_frame_id": "base_link"
-                }).encode('utf-8')
+                data=json.dumps(
+                    {
+                        "error": "ExtrapolationException: Transform lookup from base_link to odom failed: detection age 155ms exceeds buffer threshold",
+                        "frame_id": "odom",
+                        "child_frame_id": "base_link",
+                    }
+                ).encode("utf-8"),
             )
 
             # 4. Emergency stop trigger & zero velocity command
@@ -382,18 +462,26 @@ class DetectionClient:
                 channel_id=cmd_chan,
                 log_time=estop_time,
                 publish_time=estop_time,
-                data=json.dumps({"linear": {"x": 0.0, "y": 0.0, "z": 0.0}, "angular": {"x": 0.0, "y": 0.0, "z": 0.0}, "brake": True}).encode('utf-8')
+                data=json.dumps(
+                    {
+                        "linear": {"x": 0.0, "y": 0.0, "z": 0.0},
+                        "angular": {"x": 0.0, "y": 0.0, "z": 0.0},
+                        "brake": True,
+                    }
+                ).encode("utf-8"),
             )
             writer.add_message(
                 channel_id=safety_chan,
                 log_time=estop_time,
                 publish_time=estop_time,
-                data=json.dumps({
-                    "level": 2,
-                    "name": "safety_monitor",
-                    "message": "EMERGENCY_STOP_TRIGGERED: control deadline missed due to stale perception data (>120ms)",
-                    "hardware_relay_tripped": True
-                }).encode('utf-8')
+                data=json.dumps(
+                    {
+                        "level": 2,
+                        "name": "safety_monitor",
+                        "message": "EMERGENCY_STOP_TRIGGERED: control deadline missed due to stale perception data (>120ms)",
+                        "hardware_relay_tripped": True,
+                    }
+                ).encode("utf-8"),
             )
 
             writer.finish()
@@ -411,7 +499,7 @@ dynamic_batching:
   batching_window_ms: 200  # Increased from 100 in v42
   timeout_ms: 500
 """
-        (self.bundle_path / "config/inference.yaml").write_text(inference_yaml, encoding='utf-8')
+        (self.bundle_path / "config/inference.yaml").write_text(inference_yaml, encoding="utf-8")
 
         # Robot params
         robot_params_yaml = """robot_name: warehouse-amr-01
@@ -426,7 +514,9 @@ perception:
     - object_detections
   required_detection_frequency_hz: 10
 """
-        (self.bundle_path / "config/robot_params.yaml").write_text(robot_params_yaml, encoding='utf-8')
+        (self.bundle_path / "config/robot_params.yaml").write_text(
+            robot_params_yaml, encoding="utf-8"
+        )
         logger.debug("Wrote config files")
 
     def _write_deployments(self):
@@ -441,16 +531,14 @@ perception:
                     "file": "config/inference.yaml",
                     "change": "batching_window_ms increased from 100 to 200",
                     "old_value": 100,
-                    "new_value": 200
+                    "new_value": 200,
                 }
             ],
-            "config": {
-                "dynamic_batching.window_ms": {"from": 100, "to": 200}
-            },
-            "author": "ml-team@example.com"
+            "config": {"dynamic_batching.window_ms": {"from": 100, "to": 200}},
+            "author": "ml-team@example.com",
         }
         events_path = self.bundle_path / "deployments/events.json"
-        with open(events_path, 'w', encoding='utf-8') as f:
+        with open(events_path, "w", encoding="utf-8") as f:
             json.dump(events_content, f, indent=2)
         logger.debug(f"Wrote deployment events to {events_path}")
 
@@ -472,16 +560,16 @@ perception:
 **Action Taken**: Manual override to clear emergency stop, robot resumed operation. Recommended rollback of inference service to v41.
 """
         note_path = self.bundle_path / "observations/operator_note.md"
-        with open(note_path, 'w', encoding='utf-8') as f:
+        with open(note_path, "w", encoding="utf-8") as f:
             f.write(note_content)
         logger.debug(f"Wrote operator note to {note_path}")
 
     def _write_media(self):
         """Write placeholder media file."""
         media_path = self.bundle_path / "media/incident.mp4"
-        with open(media_path, 'wb') as f:
-            f.write(b'\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom')
-            f.write(b'\x00' * 512)
+        with open(media_path, "wb") as f:
+            f.write(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom")
+            f.write(b"\x00" * 512)
         logger.debug(f"Wrote placeholder media to {media_path}")
 
     def _build_incident_object(self, manifest: dict) -> Incident:
@@ -489,14 +577,16 @@ perception:
         incident = Incident(
             id="CAU-0001",
             title=manifest.get("title", "Warehouse robot emergency stop after deployment v42"),
-            description=manifest.get("description", "Autonomous mobile robot consumes stale object detections."),
+            description=manifest.get(
+                "description", "Autonomous mobile robot consumes stale object detections."
+            ),
             system_name=manifest.get("system_name", "warehouse-amr-01"),
             approximate_time=manifest.get("approximate_time", "2026-09-20T10:30:00Z"),
             source_repositories=manifest.get("source_repositories", []),
             commit_hash=manifest.get("commit_hash", ""),
             manifest=manifest,
             status=StatusLabel.OBSERVED,
-            is_demonstration=True
+            is_demonstration=True,
         )
 
         evidence_paths = [
@@ -529,21 +619,21 @@ perception:
 
                 # Determine MIME type
                 ext = abs_path.suffix.lower()
-                if ext in ['.yaml', '.yml']:
+                if ext in [".yaml", ".yml"]:
                     mime_type = "text/yaml"
-                elif ext == '.json':
+                elif ext == ".json":
                     mime_type = "application/json"
-                elif ext == '.jsonl':
+                elif ext == ".jsonl":
                     mime_type = "application/x-jsonlines"
-                elif ext == '.csv':
+                elif ext == ".csv":
                     mime_type = "text/csv"
-                elif ext == '.md':
+                elif ext == ".md":
                     mime_type = "text/markdown"
-                elif ext in ['.cpp', '.h', '.py', '.txt']:
+                elif ext in [".cpp", ".h", ".py", ".txt"]:
                     mime_type = "text/plain"
-                elif ext == '.mcap':
+                elif ext == ".mcap":
                     mime_type = "application/octet-stream"
-                elif ext == '.mp4':
+                elif ext == ".mp4":
                     mime_type = "video/mp4"
                 else:
                     mime_type = "application/octet-stream"

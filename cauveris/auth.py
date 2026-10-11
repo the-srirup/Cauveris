@@ -2,6 +2,7 @@
 Authentication and Authorization Module for Cauveris.
 Provides user authentication, JWT token management, session handling, and RBAC.
 """
+
 import asyncio
 import hashlib
 import secrets
@@ -22,11 +23,13 @@ logger = logging.getLogger(__name__)
 # Password hashing context
 # Use a simple hash for testing (replace with proper bcrypt in production)
 
+
 def hash_password(password: str) -> str:
     """Hash password using SHA-256 with salt."""
     salt = secrets.token_hex(16)
     hash_val = hashlib.sha256((password + salt).encode()).hexdigest()
     return f"sha256${salt}${hash_val}"
+
 
 def verify_password(password: str, password_hash: str) -> bool:
     """Verify password against hash."""
@@ -34,6 +37,7 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
     _, salt, hash_val = password_hash.split("$", 2)
     return hashlib.sha256((password + salt).encode()).hexdigest() == hash_val
+
 
 # Create a mock context for compatibility
 class MockPwdContext:
@@ -43,16 +47,18 @@ class MockPwdContext:
     def verify(self, password: str, password_hash: str) -> bool:
         return verify_password(password, password_hash)
 
+
 pwd_context = MockPwdContext()
 
 
 class UserRole(str, Enum):
     """System roles with hierarchical permissions."""
-    VIEWER = "viewer"           # Read-only access to assigned incidents
-    ANALYST = "analyst"         # Can run investigations, validate evidence
-    ENGINEER = "engineer"       # Can run simulations, engineer mode, apply patches
-    ADMIN = "admin"             # Full system access, user/org management
-    SUPER_ADMIN = "super_admin" # Platform-level admin, cross-org access
+
+    VIEWER = "viewer"  # Read-only access to assigned incidents
+    ANALYST = "analyst"  # Can run investigations, validate evidence
+    ENGINEER = "engineer"  # Can run simulations, engineer mode, apply patches
+    ADMIN = "admin"  # Full system access, user/org management
+    SUPER_ADMIN = "super_admin"  # Platform-level admin, cross-org access
 
 
 class TokenType(str, Enum):
@@ -172,22 +178,58 @@ def expand_permissions(perms: Set[str]) -> Set[str]:
     for perm in perms:
         if perm == "*":
             # Add all known permissions
-            expanded.update([
-                "incident:read", "incident:list", "incident:create", "incident:update_own",
-                "incident:update_any", "incident:delete_any",
-                "incident:reconstruct", "incident:cancel", "incident:reset", "incident:validate",
-                "timeline:read", "hypothesis:read", "hypothesis:create", "hypothesis:test",
-                "experiment:read", "experiment:create", "experiment:run",
-                "patch:read", "patch:create", "patch:apply", "patch:download", "patch:export",
-                "report:read", "evidence:read", "evidence:upload", "evidence:validate",
-                "pipeline:start", "pipeline:cancel_own", "pipeline:cancel_any",
-                "simulation:run", "engineer_mode:access",
-                "user:read", "user:create", "user:update", "user:delete",
-                "org:read", "org:create", "org:update", "org:delete",
-                "quota:override", "audit:read", "system:config", "api_key:manage",
-                "job_queue:read", "job_queue:submit", "job_queue:cancel",
-                "concurrency:read", "concurrency:manage",
-            ])
+            expanded.update(
+                [
+                    "incident:read",
+                    "incident:list",
+                    "incident:create",
+                    "incident:update_own",
+                    "incident:update_any",
+                    "incident:delete_any",
+                    "incident:reconstruct",
+                    "incident:cancel",
+                    "incident:reset",
+                    "incident:validate",
+                    "timeline:read",
+                    "hypothesis:read",
+                    "hypothesis:create",
+                    "hypothesis:test",
+                    "experiment:read",
+                    "experiment:create",
+                    "experiment:run",
+                    "patch:read",
+                    "patch:create",
+                    "patch:apply",
+                    "patch:download",
+                    "patch:export",
+                    "report:read",
+                    "evidence:read",
+                    "evidence:upload",
+                    "evidence:validate",
+                    "pipeline:start",
+                    "pipeline:cancel_own",
+                    "pipeline:cancel_any",
+                    "simulation:run",
+                    "engineer_mode:access",
+                    "user:read",
+                    "user:create",
+                    "user:update",
+                    "user:delete",
+                    "org:read",
+                    "org:create",
+                    "org:update",
+                    "org:delete",
+                    "quota:override",
+                    "audit:read",
+                    "system:config",
+                    "api_key:manage",
+                    "job_queue:read",
+                    "job_queue:submit",
+                    "job_queue:cancel",
+                    "concurrency:read",
+                    "concurrency:manage",
+                ]
+            )
         elif perm.endswith(":*"):
             prefix = perm[:-2]
             # Add all permissions starting with prefix
@@ -201,6 +243,7 @@ def expand_permissions(perms: Set[str]) -> Set[str]:
 @dataclass
 class User:
     """User account model."""
+
     id: str = field(default_factory=lambda: f"usr_{uuid.uuid4().hex[:16]}")
     email: str = ""
     email_verified: bool = False
@@ -240,6 +283,7 @@ class User:
 @dataclass
 class Organization:
     """Organization/tenant model."""
+
     id: str = field(default_factory=lambda: f"org_{uuid.uuid4().hex[:16]}")
     name: str = ""
     slug: str = ""
@@ -258,13 +302,18 @@ class Organization:
 @dataclass
 class Session:
     """User session model."""
+
     id: str = field(default_factory=lambda: f"sess_{uuid.uuid4().hex[:16]}")
     user_id: str = ""
     org_id: str = ""
     access_token: str = ""
     refresh_token: str = ""
-    access_token_expires: datetime = field(default_factory=lambda: datetime.now(timezone.utc) + timedelta(hours=1))
-    refresh_token_expires: datetime = field(default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30))
+    access_token_expires: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(hours=1)
+    )
+    refresh_token_expires: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=30)
+    )
     ip_address: str = ""
     user_agent: str = ""
     device_fingerprint: Optional[str] = None
@@ -285,6 +334,7 @@ class Session:
 @dataclass
 class APIKey:
     """API key for service-to-service authentication."""
+
     id: str = field(default_factory=lambda: f"key_{uuid.uuid4().hex[:16]}")
     name: str = ""
     org_id: str = ""
@@ -310,6 +360,7 @@ class APIKey:
 @dataclass
 class AuditLogEntry:
     """Security audit log entry."""
+
     id: str = field(default_factory=lambda: f"aud_{uuid.uuid4().hex[:16]}")
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     user_id: Optional[str] = None
@@ -353,7 +404,9 @@ class AuthStore(ABC):
         pass
 
     @abstractmethod
-    async def list_users(self, org_id: Optional[str] = None, limit: int = 100, offset: int = 0) -> List[User]:
+    async def list_users(
+        self, org_id: Optional[str] = None, limit: int = 100, offset: int = 0
+    ) -> List[User]:
         pass
 
     @abstractmethod
@@ -401,7 +454,9 @@ class AuthStore(ABC):
         pass
 
     @abstractmethod
-    async def revoke_user_sessions(self, user_id: str, exclude_session_id: Optional[str] = None) -> int:
+    async def revoke_user_sessions(
+        self, user_id: str, exclude_session_id: Optional[str] = None
+    ) -> int:
         pass
 
     @abstractmethod
@@ -504,11 +559,13 @@ class InMemoryAuthStore(AuthStore):
                 return True
         return False
 
-    async def list_users(self, org_id: Optional[str] = None, limit: int = 100, offset: int = 0) -> List[User]:
+    async def list_users(
+        self, org_id: Optional[str] = None, limit: int = 100, offset: int = 0
+    ) -> List[User]:
         users = list(self._users.values())
         if org_id:
             users = [u for u in users if u.org_id == org_id]
-        return users[offset:offset + limit]
+        return users[offset : offset + limit]
 
     async def create_org(self, org: Organization) -> Organization:
         async with self._lock:
@@ -577,7 +634,9 @@ class InMemoryAuthStore(AuthStore):
                 return True
         return False
 
-    async def revoke_user_sessions(self, user_id: str, exclude_session_id: Optional[str] = None) -> int:
+    async def revoke_user_sessions(
+        self, user_id: str, exclude_session_id: Optional[str] = None
+    ) -> int:
         async with self._lock:
             count = 0
             for session in list(self._sessions.values()):
@@ -646,7 +705,7 @@ class InMemoryAuthStore(AuthStore):
         if end_time:
             logs = [entry for entry in logs if entry.timestamp <= end_time]
         logs.sort(key=lambda x: x.timestamp, reverse=True)
-        return logs[offset:offset + limit]
+        return logs[offset : offset + limit]
 
 
 # Global store instance
@@ -822,11 +881,14 @@ class AuthorizationError(Exception):
 
 def require_permission(permission: str):
     """Decorator to require a specific permission."""
+
     def decorator(func):
         async def wrapper(*args, **kwargs):
             # Will be implemented with FastAPI dependency injection
             return await func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -848,19 +910,21 @@ async def authorize(
     allowed = user.has_permission(permission)
 
     # Log audit entry
-    await store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action=permission.replace(":", "."),
-        resource_type=resource_type,
-        resource_id=resource_id,
-        resource_owner_id=resource_owner_id,
-        decision="allow" if allowed else "deny",
-        reason=None if allowed else f"Missing permission: {permission}",
-        ip_address=ip,
-        user_agent=user_agent,
-        request_id=request_id,
-    ))
+    await store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action=permission.replace(":", "."),
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_owner_id=resource_owner_id,
+            decision="allow" if allowed else "deny",
+            reason=None if allowed else f"Missing permission: {permission}",
+            ip_address=ip,
+            user_agent=user_agent,
+            request_id=request_id,
+        )
+    )
 
     if not allowed:
         raise AuthorizationError(
@@ -875,7 +939,7 @@ async def authorize_resource_owner(
     user: User,
     resource_owner_id: str,
     permission: str = "incident:update_own",
-    **kwargs
+    **kwargs,
 ) -> bool:
     """Authorize if user owns the resource or has admin permission."""
     if user.org_id and user.org_id == resource_owner_id:

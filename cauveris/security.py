@@ -2,6 +2,7 @@
 Security utilities for Cauveris.
 Handles secret scanning, path traversal prevention, and safe operations.
 """
+
 import re
 import hashlib
 import os
@@ -15,18 +16,21 @@ logger = logging.getLogger(__name__)
 # Common secret patterns
 SECRET_PATTERNS = [
     # API keys
-    (r'(?i)api[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', 'API Key'),
-    (r'(?i)access[_-]?token[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', 'Access Token'),
-    (r'(?i)secret[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', 'Secret Key'),
+    (r'(?i)api[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "API Key"),
+    (r'(?i)access[_-]?token[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Access Token"),
+    (r'(?i)secret[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Secret Key"),
     # AWS
-    (r'AKIA[0-9A-Z]{16}', 'AWS Access Key ID'),
-    (r'(?i)aws[_-]?secret[_-]?access[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', 'AWS Secret Key'),
+    (r"AKIA[0-9A-Z]{16}", "AWS Access Key ID"),
+    (
+        r'(?i)aws[_-]?secret[_-]?access[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]',
+        "AWS Secret Key",
+    ),
     # Database URLs
-    (r'(?i)(postgres|postgresql|mysql|mongodb)://[^\s\'"]+', 'Database URL'),
+    (r'(?i)(postgres|postgresql|mysql|mongodb)://[^\s\'"]+', "Database URL"),
     # Generic high-entropy strings that might be secrets
-    (r'(?i)(password|passwd|pwd)[\s]*[:=][\s]*[\'"]([^\'"]{8,})[\'"]', 'Password'),
-    (r'(?i)private[_-]?key[\s]*[:=]', 'Private Key'),
-    (r'-----BEGIN [A-Z ]+PRIVATE KEY-----', 'Private Key Block'),
+    (r'(?i)(password|passwd|pwd)[\s]*[:=][\s]*[\'"]([^\'"]{8,})[\'"]', "Password"),
+    (r"(?i)private[_-]?key[\s]*[:=]", "Private Key"),
+    (r"-----BEGIN [A-Z ]+PRIVATE KEY-----", "Private Key Block"),
 ]
 
 
@@ -38,7 +42,7 @@ def scan_for_secrets(content: str, filepath: str = "") -> List[Tuple[str, str, i
         List of (secret_type, matched_text, line_number) tuples
     """
     findings = []
-    lines = content.split('\n')
+    lines = content.split("\n")
 
     for i, line in enumerate(lines, 1):
         for pattern, secret_type in SECRET_PATTERNS:
@@ -46,7 +50,11 @@ def scan_for_secrets(content: str, filepath: str = "") -> List[Tuple[str, str, i
             for match in matches:
                 # Extract the matched secret value
                 if match.groups():
-                    secret_value = match.group(1) if match.lastindex and match.lastindex >= 1 else match.group(0)
+                    secret_value = (
+                        match.group(1)
+                        if match.lastindex and match.lastindex >= 1
+                        else match.group(0)
+                    )
                 else:
                     secret_value = match.group(0)
 
@@ -65,7 +73,7 @@ def redact_secrets(content: str) -> str:
     redacted = content
     for pattern, _ in SECRET_PATTERNS:
         # Replace with [REDACTED] but preserve formatting
-        redacted = re.sub(pattern, '[REDACTED]', redacted, flags=re.IGNORECASE)
+        redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
     return redacted
 
 
@@ -108,7 +116,7 @@ def compute_file_hash(filepath: str, algorithm: str = "sha256") -> str:
     """
     hash_obj = hashlib.new(algorithm)
 
-    with open(filepath, 'rb') as f:
+    with open(filepath, "rb") as f:
         for chunk in iter(lambda: f.read(4096), b""):
             hash_obj.update(chunk)
 
@@ -128,17 +136,17 @@ def validate_file_type(filename: str, allowed_mime_types: Set[str]) -> bool:
     """
     # Map common extensions to MIME types for validation
     extension_to_mime = {
-        '.yaml': 'text/yaml',
-        '.yml': 'text/yaml',
-        '.json': 'application/json',
-        '.csv': 'text/csv',
-        '.txt': 'text/plain',
-        '.md': 'text/markdown',
-        '.py': 'text/x-python',
-        '.cpp': 'text/xc++src',
-        '.dockerfile': 'text/dockerfile',
-        '.mcap': 'application/octet-stream',
-        '.mp4': 'video/mp4',
+        ".yaml": "text/yaml",
+        ".yml": "text/yaml",
+        ".json": "application/json",
+        ".csv": "text/csv",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+        ".py": "text/x-python",
+        ".cpp": "text/xc++src",
+        ".dockerfile": "text/dockerfile",
+        ".mcap": "application/octet-stream",
+        ".mp4": "video/mp4",
     }
 
     file_ext = Path(filename).suffix.lower()

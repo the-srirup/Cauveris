@@ -1,6 +1,7 @@
 """
 Hypothesis generator for creating falsifiable root-cause hypotheses.
 """
+
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -9,7 +10,7 @@ import yaml
 from cauveris.schemas.incident import Incident
 from cauveris.schemas.hypothesis import Hypothesis
 from cauveris.model_gateway.base import ModelGateway
-from cauveris.model_gateway.local import LocalModelGateway
+from cauveris.model_gateway import create_model_gateway
 from cauveris.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,12 @@ class HypothesisGenerator:
 
     def __init__(self, model_gateway: Optional[ModelGateway] = None):
         self.settings = get_settings()
-        self.model_gateway: ModelGateway = model_gateway or LocalModelGateway()
+        if model_gateway is None:
+            # In production, this will use NebiusModelGateway if NEBIUS_API_KEY is set
+            # For testing, pass force_local=True to use LocalModelGateway
+            self.model_gateway = create_model_gateway()
+        else:
+            self.model_gateway = model_gateway
 
     def _locate_bundle_path(self, incident: Incident) -> Optional[Path]:
         """Locate bundle path for incident."""
@@ -53,7 +59,7 @@ class HypothesisGenerator:
         bundle_path = self._locate_bundle_path(incident)
 
         # Extract evidence features
-        timeline_events = getattr(incident, 'timeline_events', [])
+        timeline_events = getattr(incident, "timeline_events", [])
         deployment_info = self._extract_deployment_info(bundle_path)
         timeline_analysis = self._analyze_timeline_for_latency(timeline_events)
         config_analysis = self._analyze_configurations(bundle_path)
@@ -107,7 +113,9 @@ class HypothesisGenerator:
                 hypotheses.append(h4)
 
         # Scan real-world logs and timeline events for domain-agnostic failure patterns
-        real_world_hyps = self._generate_real_world_hypotheses(incident, timeline_events, bundle_path)
+        real_world_hyps = self._generate_real_world_hypotheses(
+            incident, timeline_events, bundle_path
+        )
         hypotheses.extend(real_world_hyps)
 
         if not hypotheses:
@@ -123,7 +131,7 @@ class HypothesisGenerator:
             "deployment_detected": False,
             "deployment_id": None,
             "batching_window_change": None,
-            "deployment_time": None
+            "deployment_time": None,
         }
         if not bundle_path:
             return deployment_info
@@ -131,7 +139,7 @@ class HypothesisGenerator:
         deploy_path = bundle_path / "deployments" / "events.json"
         if deploy_path.exists():
             try:
-                with open(deploy_path, 'r', encoding='utf-8') as f:
+                with open(deploy_path, "r", encoding="utf-8") as f:
                     deploy_data = json.load(f)
 
                 deployment_info["deployment_detected"] = True
@@ -143,11 +151,13 @@ class HypothesisGenerator:
                 if isinstance(changes, list):
                     for change in changes:
                         if isinstance(change, dict):
-                            if "batching_window" in change.get("change", "").lower() or "dynamic_batching" in change.get("file", ""):
+                            if "batching_window" in change.get(
+                                "change", ""
+                            ).lower() or "dynamic_batching" in change.get("file", ""):
                                 deployment_info["batching_window_change"] = {
                                     "old_value": change.get("old_value", 100),
                                     "new_value": change.get("new_value", 200),
-                                    "change_type": "increase"
+                                    "change_type": "increase",
                                 }
                                 break
                 elif isinstance(changes, dict):
@@ -157,14 +167,16 @@ class HypothesisGenerator:
                         deployment_info["batching_window_change"] = {
                             "old_value": w_change.get("from", 100),
                             "new_value": w_change.get("to", 200),
-                            "change_type": "increase"
+                            "change_type": "increase",
                         }
             except Exception as e:
                 logger.debug(f"Failed to parse deployment info: {e}")
 
         return deployment_info
 
-    def _analyze_timeline_for_latency(self, timeline_events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _analyze_timeline_for_latency(
+        self, timeline_events: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Analyze timeline events for latency patterns."""
         analysis = {
             "latency_spike_detected": False,
@@ -172,7 +184,7 @@ class HypothesisGenerator:
             "latency_increase_percent": 0.0,
             "baseline_latency_ms": 0.0,
             "stale_detection_events": 0,
-            "transform_timeout_events": 0
+            "transform_timeout_events": 0,
         }
 
         latencies = []
@@ -198,7 +210,9 @@ class HypothesisGenerator:
             analysis["max_latency_ms"] = max(latencies)
             if analysis["baseline_latency_ms"] > 0:
                 diff = analysis["max_latency_ms"] - analysis["baseline_latency_ms"]
-                analysis["latency_increase_percent"] = (diff / analysis["baseline_latency_ms"]) * 100.0
+                analysis["latency_increase_percent"] = (
+                    diff / analysis["baseline_latency_ms"]
+                ) * 100.0
                 analysis["latency_spike_detected"] = analysis["latency_increase_percent"] > 20.0
 
         return analysis
@@ -209,7 +223,7 @@ class HypothesisGenerator:
         config_analysis: Dict[str, Any] = {
             "inference_batching_window": 200,
             "robot_freshness_budget": 120,
-            "config_files_found": config_files
+            "config_files_found": config_files,
         }
         if not bundle_path:
             return config_analysis
@@ -218,7 +232,7 @@ class HypothesisGenerator:
         if inference_path.exists():
             config_files.append("config/inference.yaml")
             try:
-                with open(inference_path, 'r', encoding='utf-8') as f:
+                with open(inference_path, "r", encoding="utf-8") as f:
                     cfg = yaml.safe_load(f)
                 window = cfg.get("dynamic_batching", {}).get("batching_window_ms")
                 if window is not None:
@@ -230,7 +244,7 @@ class HypothesisGenerator:
         if robot_params_path.exists():
             config_files.append("config/robot_params.yaml")
             try:
-                with open(robot_params_path, 'r', encoding='utf-8') as f:
+                with open(robot_params_path, "r", encoding="utf-8") as f:
                     cfg = yaml.safe_load(f)
                 budget = cfg.get("safety", {}).get("detection_freshness_budget_ms")
                 if budget is not None:
@@ -245,14 +259,19 @@ class HypothesisGenerator:
         incident: Incident,
         deployment_info: Dict[str, Any],
         timeline_analysis: Dict[str, Any],
-        config_analysis: Dict[str, Any]
+        config_analysis: Dict[str, Any],
     ) -> Optional[Hypothesis]:
         """Generate H1: Increased dynamic batching window caused inference latency to exceed freshness budget."""
-        supporting_artifacts = ["deployments/events.json", "config/inference.yaml", "traces/otel.json", "metrics/gpu.csv"]
+        supporting_artifacts = [
+            "deployments/events.json",
+            "config/inference.yaml",
+            "traces/otel.json",
+            "metrics/gpu.csv",
+        ]
         contradicting_artifacts = []
         missing_evidence = [
             "Per-client latency breakdown across batch sizes",
-            "GPU hardware timestamp traces"
+            "GPU hardware timestamp traces",
         ]
 
         freshness_budget = config_analysis.get("robot_freshness_budget", 120)
@@ -262,9 +281,7 @@ class HypothesisGenerator:
             f"Inference latency P99 ({timeline_analysis.get('max_latency_ms', 155):.0f}ms) "
             f"exceeds robot freshness budget ({freshness_budget}ms) under dynamic batching window {batch_window}ms"
         )
-        falsifying_obs = (
-            f"Inference P99 latency remains below {freshness_budget * 0.8:.0f}ms despite batching window {batch_window}ms"
-        )
+        falsifying_obs = f"Inference P99 latency remains below {freshness_budget * 0.8:.0f}ms despite batching window {batch_window}ms"
         intervention = f"Reduce dynamic batching window from {batch_window}ms to 100ms in config/inference.yaml"
 
         return Hypothesis(
@@ -285,8 +302,8 @@ class HypothesisGenerator:
             safety_constraints=[
                 "Maintain minimum perception throughput of 5 FPS",
                 "Ensure detection latency P99 <= 100ms",
-                "Do not disable robot safety watchdog"
-            ]
+                "Do not disable robot safety watchdog",
+            ],
         )
 
     def _generate_h2_qos_hypothesis(
@@ -294,19 +311,24 @@ class HypothesisGenerator:
         incident: Incident,
         deployment_info: Dict[str, Any],
         timeline_analysis: Dict[str, Any],
-        config_analysis: Dict[str, Any]
+        config_analysis: Dict[str, Any],
     ) -> Optional[Hypothesis]:
         """Generate H2: ROS QoS queue retaining older messages."""
-        supporting_artifacts = ["logs/ros-nodes.jsonl", "source/robot-stack/src/detection_client.py"]
+        supporting_artifacts = [
+            "logs/ros-nodes.jsonl",
+            "source/robot-stack/src/detection_client.py",
+        ]
         contradicting_artifacts = ["deployments/events.json"]
         missing_evidence = [
             "ROS 2 middleware executor queue metrics",
-            "DDS message delivery latency trace"
+            "DDS message delivery latency trace",
         ]
 
         expected_obs = "Subscriber queue retains older detections during network bursts, delivering stale frames to control loop"
         falsifying_obs = "Queue depth is bounded to 1 and drops all previous unconsumed messages"
-        intervention = "Adjust ROS 2 QoS profile: set depth=1 and history=KEEP_LAST in detection client"
+        intervention = (
+            "Adjust ROS 2 QoS profile: set depth=1 and history=KEEP_LAST in detection client"
+        )
 
         return Hypothesis(
             hypothesis_id="h2_qos_stale_messages",
@@ -325,8 +347,8 @@ class HypothesisGenerator:
             likely_parameters=["qos_depth", "history"],
             safety_constraints=[
                 "Maintain reliable delivery of emergency obstacle frames",
-                "Ensure detection consumer does not block on empty queue"
-            ]
+                "Ensure detection consumer does not block on empty queue",
+            ],
         )
 
     def _generate_h3_clock_skew_hypothesis(
@@ -335,7 +357,7 @@ class HypothesisGenerator:
         deployment_info: Dict[str, Any],
         timeline_analysis: Dict[str, Any],
         config_analysis: Dict[str, Any],
-        bundle_path: Optional[Path]
+        bundle_path: Optional[Path],
     ) -> Optional[Hypothesis]:
         """Generate H3: Clock skew between cloud service and robot."""
         supporting_artifacts = ["logs/system.log"]
@@ -362,8 +384,8 @@ class HypothesisGenerator:
             likely_parameters=["clock_skew_tolerance_ms"],
             safety_constraints=[
                 "Maintain time synchronization within 10ms",
-                "Never disable timestamp verification"
-            ]
+                "Never disable timestamp verification",
+            ],
         )
 
     def _generate_h4_gpu_load_hypothesis(
@@ -372,14 +394,16 @@ class HypothesisGenerator:
         deployment_info: Dict[str, Any],
         timeline_analysis: Dict[str, Any],
         config_analysis: Dict[str, Any],
-        bundle_path: Optional[Path]
+        bundle_path: Optional[Path],
     ) -> Optional[Hypothesis]:
         """Generate H4: Independent GPU load or thermal throttling."""
         supporting_artifacts = ["metrics/gpu.csv", "logs/system.log"]
         contradicting_artifacts = ["deployments/events.json"]
 
         expected_obs = "GPU utilization spikes to 100% or thermal throttling causes sudden kernel execution slowdowns"
-        falsifying_obs = "GPU temperature < 70C and clock frequency remains at maximum boost throughout"
+        falsifying_obs = (
+            "GPU temperature < 70C and clock frequency remains at maximum boost throughout"
+        )
         intervention = "Cap inference max batch size to 4 and adjust GPU power limits to prevent thermal throttling"
 
         return Hypothesis(
@@ -399,8 +423,8 @@ class HypothesisGenerator:
             likely_parameters=["max_batch_size", "power_limit_watts"],
             safety_constraints=[
                 "Do not exceed GPU power budget",
-                "Ensure inference server availability > 99.9%"
-            ]
+                "Ensure inference server availability > 99.9%",
+            ],
         )
 
     def _generate_fallback_hypothesis(self, incident: Incident) -> Hypothesis:
@@ -420,14 +444,11 @@ class HypothesisGenerator:
             estimated_cost=1.5,
             likely_files=["config/inference.yaml"],
             likely_parameters=["batching_window_ms"],
-            safety_constraints=["Do not disable safety watchdog"]
+            safety_constraints=["Do not disable safety watchdog"],
         )
 
     def _generate_real_world_hypotheses(
-        self,
-        incident: Incident,
-        timeline_events: List[Dict[str, Any]],
-        bundle_path: Optional[Path]
+        self, incident: Incident, timeline_events: List[Dict[str, Any]], bundle_path: Optional[Path]
     ) -> List[Hypothesis]:
         """Scan real-world events and error logs for domain-agnostic failure patterns."""
         hypotheses = []
@@ -441,69 +462,81 @@ class HypothesisGenerator:
 
             if "oom" in msg or "out of memory" in msg or "memory limit" in msg or "heap" in msg:
                 oom_events.append(src)
-            elif "timeout" in msg or "timed out" in msg or "connection refused" in msg or "504" in msg or "econnrefused" in msg:
+            elif (
+                "timeout" in msg
+                or "timed out" in msg
+                or "connection refused" in msg
+                or "504" in msg
+                or "econnrefused" in msg
+            ):
                 timeout_events.append(src)
             elif "deadlock" in msg or "lock timeout" in msg or "pool exhausted" in msg:
                 deadlock_events.append(src)
 
         if oom_events:
             unique_src = list(set(oom_events))
-            hypotheses.append(Hypothesis(
-                hypothesis_id="h_memory_exhaustion",
-                causal_claim="Process memory consumption exceeded memory quota, triggering an Out-Of-Memory termination and dropped requests",
-                status="INFERRED",
-                supporting_artifact_ids=unique_src,
-                contradicting_artifact_ids=[],
-                missing_evidence=["Heap profiler memory snapshot"],
-                confidence_prior=0.90,
-                expected_observation="Memory usage approaches 100% threshold prior to process termination",
-                falsifying_observation="Peak memory usage remains < 60% of assigned limit",
-                intervention="Increase container memory quota and patch memory leak in worker lifecycle",
-                estimated_trials=3,
-                estimated_cost=1.0,
-                likely_files=unique_src,
-                likely_parameters=["memory_limit_mb", "max_heap_size"],
-                safety_constraints=["Do not disable memory cgroup limits"]
-            ))
+            hypotheses.append(
+                Hypothesis(
+                    hypothesis_id="h_memory_exhaustion",
+                    causal_claim="Process memory consumption exceeded memory quota, triggering an Out-Of-Memory termination and dropped requests",
+                    status="INFERRED",
+                    supporting_artifact_ids=unique_src,
+                    contradicting_artifact_ids=[],
+                    missing_evidence=["Heap profiler memory snapshot"],
+                    confidence_prior=0.90,
+                    expected_observation="Memory usage approaches 100% threshold prior to process termination",
+                    falsifying_observation="Peak memory usage remains < 60% of assigned limit",
+                    intervention="Increase container memory quota and patch memory leak in worker lifecycle",
+                    estimated_trials=3,
+                    estimated_cost=1.0,
+                    likely_files=unique_src,
+                    likely_parameters=["memory_limit_mb", "max_heap_size"],
+                    safety_constraints=["Do not disable memory cgroup limits"],
+                )
+            )
 
         if timeout_events:
             unique_src = list(set(timeout_events))
-            hypotheses.append(Hypothesis(
-                hypothesis_id="h_network_timeout",
-                causal_claim="Upstream service dependency or network transport latency exceeded client socket deadline, causing cascading request cancellation",
-                status="INFERRED",
-                supporting_artifact_ids=unique_src,
-                contradicting_artifact_ids=[],
-                missing_evidence=["Packet capture trace at ingress router"],
-                confidence_prior=0.85,
-                expected_observation="Downstream call durations spike beyond configured client timeout",
-                falsifying_observation="Round-trip latency to upstream dependencies remains < 50ms",
-                intervention="Configure connection pool circuit-breakers and increase timeout threshold with exponential backoff",
-                estimated_trials=3,
-                estimated_cost=1.2,
-                likely_files=unique_src,
-                likely_parameters=["timeout_ms", "connect_timeout", "retry_count"],
-                safety_constraints=["Prevent infinite retry storms"]
-            ))
+            hypotheses.append(
+                Hypothesis(
+                    hypothesis_id="h_network_timeout",
+                    causal_claim="Upstream service dependency or network transport latency exceeded client socket deadline, causing cascading request cancellation",
+                    status="INFERRED",
+                    supporting_artifact_ids=unique_src,
+                    contradicting_artifact_ids=[],
+                    missing_evidence=["Packet capture trace at ingress router"],
+                    confidence_prior=0.85,
+                    expected_observation="Downstream call durations spike beyond configured client timeout",
+                    falsifying_observation="Round-trip latency to upstream dependencies remains < 50ms",
+                    intervention="Configure connection pool circuit-breakers and increase timeout threshold with exponential backoff",
+                    estimated_trials=3,
+                    estimated_cost=1.2,
+                    likely_files=unique_src,
+                    likely_parameters=["timeout_ms", "connect_timeout", "retry_count"],
+                    safety_constraints=["Prevent infinite retry storms"],
+                )
+            )
 
         if deadlock_events:
             unique_src = list(set(deadlock_events))
-            hypotheses.append(Hypothesis(
-                hypothesis_id="h_concurrency_deadlock",
-                causal_claim="Unsynchronized concurrent resource acquisition produced a lock deadlock / threadpool starvation across worker processes",
-                status="INFERRED",
-                supporting_artifact_ids=unique_src,
-                contradicting_artifact_ids=[],
-                missing_evidence=["Thread stack dump (jstack/pstack)"],
-                confidence_prior=0.80,
-                expected_observation="Thread pool worker count reaches maximum saturation without completed tasks",
-                falsifying_observation="Active worker thread count remains responsive with normal lock turnaround",
-                intervention="Enforce strict global lock ordering and add bounded acquire timeouts",
-                estimated_trials=4,
-                estimated_cost=1.5,
-                likely_files=unique_src,
-                likely_parameters=["lock_timeout_ms", "max_workers"],
-                safety_constraints=["Avoid priority inversion"]
-            ))
+            hypotheses.append(
+                Hypothesis(
+                    hypothesis_id="h_concurrency_deadlock",
+                    causal_claim="Unsynchronized concurrent resource acquisition produced a lock deadlock / threadpool starvation across worker processes",
+                    status="INFERRED",
+                    supporting_artifact_ids=unique_src,
+                    contradicting_artifact_ids=[],
+                    missing_evidence=["Thread stack dump (jstack/pstack)"],
+                    confidence_prior=0.80,
+                    expected_observation="Thread pool worker count reaches maximum saturation without completed tasks",
+                    falsifying_observation="Active worker thread count remains responsive with normal lock turnaround",
+                    intervention="Enforce strict global lock ordering and add bounded acquire timeouts",
+                    estimated_trials=4,
+                    estimated_cost=1.5,
+                    likely_files=unique_src,
+                    likely_parameters=["lock_timeout_ms", "max_workers"],
+                    safety_constraints=["Avoid priority inversion"],
+                )
+            )
 
         return hypotheses

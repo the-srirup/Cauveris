@@ -3,12 +3,19 @@
  * Section 3.1 & Day 7-8 of Holographic Reconstruction Plan
  */
 
-import React, { useRef, useState, useMemo } from "react";
+import React, { useRef, useState, useMemo, useCallback, useEffect, useLayoutEffect } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { CausalNode, CausalLink } from "../types";
 import { getNodeColor, getLinkColor } from "../utils/colorPalettes";
+
+// Stable emissive instances — R3F copies these into material.emissive on
+// prop updates (`emissive.set(value)`), so sharing them across nodes is
+// safe; the alternative was allocating fresh THREE.Colors per node on
+// every render.
+const EMISSIVE_SELECTED = new THREE.Color("#38bdf8");
+const EMISSIVE_NONE = new THREE.Color(0x000000);
 
 interface NodeMeshProps {
   node: CausalNode;
@@ -18,15 +25,23 @@ interface NodeMeshProps {
   onHover: (id: string | null) => void;
 }
 
-function NodeMesh({ node, isSelected, isHovered, onSelect, onHover }: NodeMeshProps) {
+const NodeMesh = React.memo(function NodeMesh({ node, isSelected, isHovered, onSelect, onHover }: NodeMeshProps) {
   const meshRef = useRef<THREE.Mesh>(null);
   const color = useMemo(() => getNodeColor(node.type, node.health), [node.type, node.health]);
+  const hoverEmissive = useMemo(() => new THREE.Color(color).multiplyScalar(0.4), [color]);
+
+  // Read-through for the frame loop: with React.memo this component skips
+  // re-renders when hover moves elsewhere, and a memoized component's
+  // useFrame closure would otherwise keep stale isSelected/isHovered.
+  const visualStateRef = useRef({ isSelected, isHovered });
+  visualStateRef.current = { isSelected, isHovered };
 
   useFrame((state) => {
     if (meshRef.current) {
       // Gentle floating animation
       meshRef.current.rotation.y = state.clock.elapsedTime * 0.3;
-      if (isSelected || isHovered) {
+      const { isSelected: sel, isHovered: hov } = visualStateRef.current;
+      if (sel || hov) {
         const pulse = 1.0 + 0.15 * Math.sin(state.clock.elapsedTime * 4);
         meshRef.current.scale.setScalar(pulse);
       } else {
@@ -52,13 +67,7 @@ function NodeMesh({ node, isSelected, isHovered, onSelect, onHover }: NodeMeshPr
         <sphereGeometry args={[node.radius || 10, 24, 24]} />
         <meshStandardMaterial
           color={color}
-          emissive={
-            isSelected
-              ? new THREE.Color("#38bdf8")
-              : isHovered
-              ? new THREE.Color(color).multiplyScalar(0.4)
-              : new THREE.Color(0x000000)
-          }
+          emissive={isSelected ? EMISSIVE_SELECTED : isHovered ? hoverEmissive : EMISSIVE_NONE}
           emissiveIntensity={isSelected ? 0.6 : 0.2}
           roughness={0.3}
           metalness={0.2}
@@ -98,19 +107,26 @@ function NodeMesh({ node, isSelected, isHovered, onSelect, onHover }: NodeMeshPr
       </Html>
     </group>
   );
-}
+});
 
 interface LinkLineProps {
   link: CausalLink;
   nodesMap: Map<string, CausalNode>;
 }
 
-function LinkLine({ link, nodesMap }: LinkLineProps) {
+// Hover transitions re-render the whole graph — memoizing LinkLine (with
+// the stable callbacks below) keeps the N links out of those renders.
+const LinkLine = React.memo(function LinkLine({ link, nodesMap }: LinkLineProps) {
   const srcId = typeof link.source === "object" ? (link.source as any).id : link.source;
   const tgtId = typeof link.target === "object" ? (link.target as any).id : link.target;
   const src = nodesMap.get(srcId);
   const tgt = nodesMap.get(tgtId);
 
+  // Create the line keyed on stable ids + style — NOT on node-object identity,
+  // which changes on every force-layout tick (the previous deps rebuilt the
+  // geometry + material + Line for every link on every tick and never disposed
+  // the old objects). Position changes are applied in place by the
+  // useLayoutEffect below.
   const lineObj = useMemo(() => {
     if (!src || !tgt) return null;
 
@@ -123,16 +139,43 @@ function LinkLine({ link, nodesMap }: LinkLineProps) {
       color: linkColor,
       transparent: true,
       opacity: Math.max(0.3, Math.min(0.85, (link.strength || 0.5) + 0.2)),
-      linewidth: 2,
     });
 
     return new THREE.Line(geom, mat);
-  }, [src, tgt, link.strength, link.type]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcId, tgtId, link.strength, link.type]);
+
+  // Release the previous geometry/material when the line is recreated or the
+  // component unmounts (R3F never auto-disposes <primitive> object swaps).
+  useEffect(() => {
+    return () => {
+      if (lineObj) {
+        lineObj.geometry.dispose();
+        (lineObj.material as THREE.Material).dispose();
+      }
+    };
+  }, [lineObj]);
+
+  // Keep the line endpoints in sync with the (per-tick) layout positions by
+  // mutating the existing position buffer — no per-tick allocation.
+  useLayoutEffect(() => {
+    if (!lineObj || !src || !tgt) return;
+    const posAttr = lineObj.geometry.getAttribute("position") as THREE.BufferAttribute;
+    if (!posAttr) return;
+    posAttr.setXYZ(0, src.position.x, src.position.y, src.position.z);
+    posAttr.setXYZ(1, tgt.position.x, tgt.position.y, tgt.position.z);
+    posAttr.needsUpdate = true;
+    // needsUpdate only re-uploads the buffer; it does NOT invalidate the
+    // cached boundingSphere, which three computes once from the INITIAL
+    // endpoints — without this, links get wrongly frustum-culled once the
+    // layout moves away from its initial centroid. (2-point geometry: cheap.)
+    lineObj.geometry.computeBoundingSphere();
+  });
 
   if (!lineObj) return null;
 
   return <primitive object={lineObj} />;
-}
+});
 
 export interface CausalGraph3DProps {
   nodes: CausalNode[];
@@ -157,10 +200,21 @@ export function CausalGraph3D({
     return map;
   }, [nodes]);
 
-  const handleHover = (id: string | null) => {
-    setHoveredNodeId(id);
-    onNodeHover?.(id);
-  };
+  // Stable identities so the memoized NodeMesh/LinkLine actually skip
+  // renders: the old inline `onSelect={(id) => ...}` lambda had a fresh
+  // identity per node per render, defeating any memoization.
+  const handleHover = useCallback(
+    (id: string | null) => {
+      setHoveredNodeId(id);
+      onNodeHover?.(id);
+    },
+    [onNodeHover]
+  );
+
+  const handleSelect = useCallback(
+    (id: string) => onNodeSelect(id === selectedNodeId ? null : id),
+    [onNodeSelect, selectedNodeId]
+  );
 
   return (
     <group>
@@ -180,7 +234,7 @@ export function CausalGraph3D({
           node={node}
           isSelected={node.id === selectedNodeId}
           isHovered={node.id === hoveredNodeId}
-          onSelect={(id) => onNodeSelect(id === selectedNodeId ? null : id)}
+          onSelect={handleSelect}
           onHover={handleHover}
         />
       ))}

@@ -9,6 +9,7 @@ Tests cover:
 - Timeline to HEU conversion
 - Cross-layer correlations
 """
+
 import pytest
 import numpy as np
 
@@ -181,16 +182,28 @@ class TestHolographicEvidenceUnit:
 
     def test_hash_and_eq(self):
         heu1 = HolographicEvidenceUnit(
-            heu_id="same_id", timestamp_ns=0, boundary_layer=BoundaryLayer.APPLICATION_LOG,
-            source_component="a", source_instance="1", payload={}
+            heu_id="same_id",
+            timestamp_ns=0,
+            boundary_layer=BoundaryLayer.APPLICATION_LOG,
+            source_component="a",
+            source_instance="1",
+            payload={},
         )
         heu2 = HolographicEvidenceUnit(
-            heu_id="same_id", timestamp_ns=100, boundary_layer=BoundaryLayer.METRICS_EXPORT,
-            source_component="b", source_instance="2", payload={}
+            heu_id="same_id",
+            timestamp_ns=100,
+            boundary_layer=BoundaryLayer.METRICS_EXPORT,
+            source_component="b",
+            source_instance="2",
+            payload={},
         )
         heu3 = HolographicEvidenceUnit(
-            heu_id="different_id", timestamp_ns=0, boundary_layer=BoundaryLayer.APPLICATION_LOG,
-            source_component="a", source_instance="1", payload={}
+            heu_id="different_id",
+            timestamp_ns=0,
+            boundary_layer=BoundaryLayer.APPLICATION_LOG,
+            source_component="a",
+            source_instance="1",
+            payload={},
         )
 
         assert heu1 == heu2
@@ -320,8 +333,9 @@ class TestComputePhaseVector:
 
     def test_causality_dimension(self):
         event = {"timestamp_ns": 0, "attributes": {}}
-        phase = _compute_phase_vector(event, incident_duration_ns=1_000_000_000,
-                                     causal_depth=2, max_causal_depth=4)
+        phase = _compute_phase_vector(
+            event, incident_duration_ns=1_000_000_000, causal_depth=2, max_causal_depth=4
+        )
         assert phase[1] == 0.5  # 2/4
 
     def test_resource_dimensions_from_encoded(self):
@@ -362,7 +376,11 @@ class TestConvertTimelineToHeus:
                 "source_type": "jsonl_log",
                 "source": "nav_controller.log",
                 "message": "High CPU usage detected",
-                "attributes": {"service": "navigation_controller", "instance": "nav-1", "level": "WARN"},
+                "attributes": {
+                    "service": "navigation_controller",
+                    "instance": "nav-1",
+                    "level": "WARN",
+                },
                 "status": "warning",
             },
             {
@@ -387,39 +405,45 @@ class TestConvertTimelineToHeus:
         assert heus[1].source_component == "navigation_controller"
 
     def test_heus_have_phase_vectors(self):
-        timeline = [{
-            "event_id": "evt_1",
-            "timestamp_ns": 100_000_000,
-            "source_type": "jsonl_log",
-            "source": "test.log",
-            "message": "Test",
-            "attributes": {"service": "test_svc"},
-        }]
+        timeline = [
+            {
+                "event_id": "evt_1",
+                "timestamp_ns": 100_000_000,
+                "source_type": "jsonl_log",
+                "source": "test.log",
+                "message": "Test",
+                "attributes": {"service": "test_svc"},
+            }
+        ]
         heus = convert_timeline_to_heus(timeline, {}, 1_000_000_000)
         assert heus[0].phase_vector.shape == (8,)
         assert not np.allclose(heus[0].phase_vector, 0)
 
     def test_heus_have_encoded_dimensions(self):
-        timeline = [{
-            "event_id": "evt_1",
-            "timestamp_ns": 100_000_000,
-            "source_type": "jsonl_log",
-            "source": "test.log",
-            "message": "CPU throttling",
-            "attributes": {"service": "test_svc"},
-        }]
+        timeline = [
+            {
+                "event_id": "evt_1",
+                "timestamp_ns": 100_000_000,
+                "source_type": "jsonl_log",
+                "source": "test.log",
+                "message": "CPU throttling",
+                "attributes": {"service": "test_svc"},
+            }
+        ]
         heus = convert_timeline_to_heus(timeline, {}, 1_000_000_000)
         assert "cpu_pressure" in heus[0].encoded_dimensions
 
     def test_heus_have_reconstruction_weight(self):
-        timeline = [{
-            "event_id": "evt_1",
-            "timestamp_ns": 100_000_000,
-            "source_type": "otel_trace",
-            "source": "traces",
-            "message": "Span",
-            "attributes": {"service": "test_svc"},
-        }]
+        timeline = [
+            {
+                "event_id": "evt_1",
+                "timestamp_ns": 100_000_000,
+                "source_type": "otel_trace",
+                "source": "traces",
+                "message": "Span",
+                "attributes": {"service": "test_svc"},
+            }
+        ]
         heus = convert_timeline_to_heus(timeline, {}, 1_000_000_000)
         # OTel traces should have high weight
         assert heus[0].reconstruction_weight >= 0.9
@@ -479,9 +503,18 @@ class TestComputeDependencyCounts:
 
     def test_counts_from_otel_traces(self):
         timeline = [
-            {"source_type": "otel_trace", "attributes": {"service.name": "svc_a", "peer.service": "svc_b"}},
-            {"source_type": "otel_trace", "attributes": {"service.name": "svc_a", "peer.service": "svc_c"}},
-            {"source_type": "otel_trace", "attributes": {"service.name": "svc_b", "peer.service": "svc_c"}},
+            {
+                "source_type": "otel_trace",
+                "attributes": {"service.name": "svc_a", "peer.service": "svc_b"},
+            },
+            {
+                "source_type": "otel_trace",
+                "attributes": {"service.name": "svc_a", "peer.service": "svc_c"},
+            },
+            {
+                "source_type": "otel_trace",
+                "attributes": {"service.name": "svc_b", "peer.service": "svc_c"},
+            },
         ]
         counts = _compute_dependency_counts(timeline)
         assert counts["svc_a"] == 2
@@ -493,16 +526,12 @@ class TestComputeReconstructionWeight:
 
     def test_otel_trace_high_weight(self):
         weight = _compute_reconstruction_weight(
-            BoundaryLayer.DISTRIBUTED_TRACE,
-            {"cpu_pressure": 0.5}
+            BoundaryLayer.DISTRIBUTED_TRACE, {"cpu_pressure": 0.5}
         )
         assert weight >= 0.9
 
     def test_infrastructure_log_lower_weight(self):
-        weight = _compute_reconstruction_weight(
-            BoundaryLayer.INFRASTRUCTURE_LOG,
-            {}
-        )
+        weight = _compute_reconstruction_weight(BoundaryLayer.INFRASTRUCTURE_LOG, {})
         assert weight < 0.7
 
 
@@ -530,16 +559,22 @@ class TestAddCrossLayerCorrelations:
     def test_correlations_added_same_component_same_ms(self):
         heus = [
             HolographicEvidenceUnit(
-                heu_id="heu_1", timestamp_ns=100_000_000,
+                heu_id="heu_1",
+                timestamp_ns=100_000_000,
                 boundary_layer=BoundaryLayer.APPLICATION_LOG,
-                source_component="svc_a", source_instance="i1",
-                payload={}, phase_vector=np.zeros(8)
+                source_component="svc_a",
+                source_instance="i1",
+                payload={},
+                phase_vector=np.zeros(8),
             ),
             HolographicEvidenceUnit(
-                heu_id="heu_2", timestamp_ns=100_500_000,
+                heu_id="heu_2",
+                timestamp_ns=100_500_000,
                 boundary_layer=BoundaryLayer.METRICS_EXPORT,
-                source_component="svc_a", source_instance="i1",
-                payload={}, phase_vector=np.zeros(8)
+                source_component="svc_a",
+                source_instance="i1",
+                payload={},
+                phase_vector=np.zeros(8),
             ),
         ]
         _add_cross_layer_correlations(heus)
@@ -549,16 +584,22 @@ class TestAddCrossLayerCorrelations:
     def test_no_correlation_different_component(self):
         heus = [
             HolographicEvidenceUnit(
-                heu_id="heu_1", timestamp_ns=100_000_000,
+                heu_id="heu_1",
+                timestamp_ns=100_000_000,
                 boundary_layer=BoundaryLayer.APPLICATION_LOG,
-                source_component="svc_a", source_instance="i1",
-                payload={}, phase_vector=np.zeros(8)
+                source_component="svc_a",
+                source_instance="i1",
+                payload={},
+                phase_vector=np.zeros(8),
             ),
             HolographicEvidenceUnit(
-                heu_id="heu_2", timestamp_ns=100_000_000,
+                heu_id="heu_2",
+                timestamp_ns=100_000_000,
                 boundary_layer=BoundaryLayer.METRICS_EXPORT,
-                source_component="svc_b", source_instance="i1",
-                payload={}, phase_vector=np.zeros(8)
+                source_component="svc_b",
+                source_instance="i1",
+                payload={},
+                phase_vector=np.zeros(8),
             ),
         ]
         _add_cross_layer_correlations(heus)

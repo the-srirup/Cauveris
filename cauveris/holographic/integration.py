@@ -19,13 +19,24 @@ from .heu_kernel import CausalKernelBuilder, KernelConfig
 from .gpu_kernels import GPUConfig, create_gpu_kernel_builder, is_gpu_available
 from .measurement import build_measurement_system, MeasurementConfig
 from .solver import HolographicSolver, SolverConfig, SolverMethod
-from .multiscale import MultiScaleReconstructor, MultiScaleConfig, ReconstructionScale, reconstruct_multiscale
-from .compression import HolographicCompressor, CompressionConfig, CompressionMethod, EvidenceSynthesizer
+from .multiscale import (
+    MultiScaleReconstructor,
+    MultiScaleConfig,
+    ReconstructionScale,
+    reconstruct_multiscale,
+)
+from .compression import (
+    HolographicCompressor,
+    CompressionConfig,
+    CompressionMethod,
+    EvidenceSynthesizer,
+)
 from .reconstruction import (
     HolographicReconstruction,
     ReconstructedServiceState,
     ReconstructedNetworkState,
     NetworkEdge,
+    PRESSURE_DIMENSIONS,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,6 +45,7 @@ logger = logging.getLogger(__name__)
 @dataclass(slots=True)
 class HolographicConfig:
     """Configuration for holographic analysis."""
+
     # Solver settings
     solver_method: SolverMethod = SolverMethod.SLSQP
     max_iterations: int = 200
@@ -44,10 +56,12 @@ class HolographicConfig:
 
     # Multi-scale settings
     enable_multiscale: bool = True
-    target_scales: List[ReconstructionScale] = field(default_factory=lambda: [
-        ReconstructionScale.INCIDENT,
-        ReconstructionScale.TRANSACTION,
-    ])
+    target_scales: List[ReconstructionScale] = field(
+        default_factory=lambda: [
+            ReconstructionScale.INCIDENT,
+            ReconstructionScale.TRANSACTION,
+        ]
+    )
     enable_prior_chaining: bool = True
 
     # Compression settings
@@ -79,6 +93,7 @@ class HolographicConfig:
 @dataclass
 class HolographicAnalysisResult:
     """Complete result of holographic analysis."""
+
     incident_id: str
     timestamp_ns: int
     time_window_ns: Tuple[int, int]
@@ -132,7 +147,9 @@ class HolographicAnalyzer:
         config: Optional[HolographicConfig] = None,
     ):
         self.config = config or HolographicConfig()
-        self._kernel_builder: Any = None  # Can be CausalKernelBuilder or GPUAcceleratedKernelBuilder
+        self._kernel_builder: Any = (
+            None  # Can be CausalKernelBuilder or GPUAcceleratedKernelBuilder
+        )
         self._topology: Optional[SystemTopology] = None
         self._reconstructor: Optional[MultiScaleReconstructor] = None
         self._compressor: Optional[HolographicCompressor] = None
@@ -160,6 +177,7 @@ class HolographicAnalyzer:
             HolographicAnalysisResult with full reconstruction
         """
         import time
+
         start_time = time.time()
 
         # Build or use topology
@@ -172,7 +190,14 @@ class HolographicAnalyzer:
 
         # Build HEUs
         window = self._infer_time_window(timeline)
-        heus = convert_timeline_to_heus(timeline, temporal_analysis or {}, window[1])
+        # Every consumer below takes the incident DURATION (window span), not
+        # an absolute end timestamp: convert_timeline_to_heus normalizes each
+        # event's timestamp_ns against this value, so passing window[1] (an
+        # epoch-nanosecond count) pinned every event's time phase at ~1.0.
+        # (_infer_time_window pads each side by >= 1e9 ns, so the span can
+        # never be zero when a timeline exists.)
+        duration_ns = window[1] - window[0]
+        heus = convert_timeline_to_heus(timeline, temporal_analysis or {}, duration_ns)
         logger.info(f"Generated {len(heus)} HEUs from timeline")
 
         if len(heus) == 0:
@@ -190,10 +215,12 @@ class HolographicAnalyzer:
             )
             logger.info(f"Compressing {len(heus)} HEUs...")
             self._compressor = HolographicCompressor(topology, comp_config)
-            compression_result = self._compressor.compress(heus, window[1])
+            compression_result = self._compressor.compress(heus, duration_ns)
             heus = compression_result.compressed_heus
-            logger.info(f"Compressed to {len(heus)} HEUs (ratio: {compression_result.compression_ratio:.1f}x, "
-                       f"fidelity: {compression_result.fidelity_retention:.3f})")
+            logger.info(
+                f"Compressed to {len(heus)} HEUs (ratio: {compression_result.compression_ratio:.1f}x, "
+                f"fidelity: {compression_result.fidelity_retention:.3f})"
+            )
 
         # Build causal kernels - use GPU acceleration if available and configured
         if self.config.use_gpu and is_gpu_available():
@@ -208,7 +235,9 @@ class HolographicAnalyzer:
 
         # Build measurement system
         measurement_config = MeasurementConfig()
-        system = build_measurement_system(topology, heus, window[1], self._kernel_builder, measurement_config)
+        system = build_measurement_system(
+            topology, heus, duration_ns, self._kernel_builder, measurement_config
+        )
         logger.info(f"Measurement system: {system.n_obs} obs, {system.n_state} state dims")
 
         # Solve inverse problem
@@ -225,7 +254,9 @@ class HolographicAnalyzer:
 
         # Decode reconstruction
         decoded = solver.decode_state(solver_result.x)
-        reconstruction = self._build_reconstruction(incident_id, window, decoded, solver_result, topology)
+        reconstruction = self._build_reconstruction(
+            incident_id, window, decoded, solver_result, topology
+        )
 
         # Multi-scale reconstruction
         scale_results = {}
@@ -234,13 +265,19 @@ class HolographicAnalyzer:
                 target_scales=self.config.target_scales,
                 enable_prior_chaining=self.config.enable_prior_chaining,
             )
-            self._reconstructor = MultiScaleReconstructor(topology, ms_config)
-            scale_results = reconstruct_multiscale(topology, timeline, window, {})
+            # ms_config is the 5th parameter of reconstruct_multiscale (after
+            # the optional raw_signals) — the old call left it out, so the
+            # user's scale settings were silently dropped and the function
+            # built its own default config internally. (The `self._reconstructor`
+            # line was dead storage: nothing ever read it back.)
+            scale_results = reconstruct_multiscale(topology, timeline, window, None, ms_config)
             # Update reconstruction fidelity from finest scale
             if scale_results:
                 finest = min(scale_results.keys(), key=lambda s: s.time_window_ns)
                 if scale_results[finest]:
-                    reconstruction.overall_fidelity = scale_results[finest].reconstruction.overall_fidelity
+                    reconstruction.overall_fidelity = scale_results[
+                        finest
+                    ].reconstruction.overall_fidelity
 
         # Evidence synthesis for missing layers
         synthesized_heus = []
@@ -262,7 +299,9 @@ class HolographicAnalyzer:
         reconstruction.observed_layers = self._get_observed_layers(heus)
         reconstruction.missing_boundary_layers = [
             f"{comp}.{layer.value}" if hasattr(layer, "value") else f"{comp}.{layer}"
-            for comp, layers in self._missing_layers(topology, reconstruction.observed_layers).items()
+            for comp, layers in self._missing_layers(
+                topology, reconstruction.observed_layers
+            ).items()
             for layer in layers
         ]
 
@@ -274,9 +313,7 @@ class HolographicAnalyzer:
             detector = HolographicAnomalyDetector(
                 topology, sensitivity=self.config.anomaly_sensitivity
             )
-            anomaly_report = detector.detect(
-                reconstruction, temporal_data=temporal_analysis
-            )
+            anomaly_report = detector.detect(reconstruction, temporal_data=temporal_analysis)
             logger.info(f"Anomaly detection: {anomaly_report.summary}")
 
         # Phase 4: visualization data
@@ -373,7 +410,7 @@ class HolographicAnalyzer:
                     latency_ms=edge.latency_ms,
                     loss_rate=0.0,  # Would be from reconstruction
                     bandwidth_mbps=1000.0,
-                )
+                ),
             )
 
         # Overall fidelity
@@ -383,7 +420,9 @@ class HolographicAnalyzer:
 
         return recon
 
-    def _get_observed_layers(self, heus: List[HolographicEvidenceUnit]) -> Dict[str, List[BoundaryLayer]]:
+    def _get_observed_layers(
+        self, heus: List[HolographicEvidenceUnit]
+    ) -> Dict[str, List[BoundaryLayer]]:
         """Get observed boundary layers per component."""
         observed = {}
         for heu in heus:
@@ -438,11 +477,13 @@ class HolographicAnalyzer:
         if temporal_root and holographic_root:
             agreement["root_cause"] = temporal_root == holographic_root
             if temporal_root != holographic_root:
-                discrepancies.append({
-                    "type": "root_cause_mismatch",
-                    "temporal": temporal_root,
-                    "holographic": holographic_root,
-                })
+                discrepancies.append(
+                    {
+                        "type": "root_cause_mismatch",
+                        "temporal": temporal_root,
+                        "holographic": holographic_root,
+                    }
+                )
             else:
                 enhanced_confidence.append("root_cause")
 
@@ -459,22 +500,29 @@ class HolographicAnalyzer:
                     agreement[f"{comp}_cpu"] = True
                     enhanced_confidence.append(f"{comp}_cpu")
                 else:
-                    discrepancies.append({
-                        "type": "cpu_mismatch",
-                        "component": comp,
-                        "temporal": temp_cpu,
-                        "holographic": holo_cpu,
-                        "diff": diff,
-                    })
+                    discrepancies.append(
+                        {
+                            "type": "cpu_mismatch",
+                            "component": comp,
+                            "temporal": temp_cpu,
+                            "holographic": holo_cpu,
+                            "diff": diff,
+                        }
+                    )
 
         return crossref
 
-    def _get_holographic_root_cause(self, reconstruction: HolographicReconstruction) -> Optional[str]:
+    def _get_holographic_root_cause(
+        self, reconstruction: HolographicReconstruction
+    ) -> Optional[str]:
         """Extract primary root cause from reconstruction."""
-        max_pressure = 0
+        max_pressure = 0.0
         root = None
         for svc, state in reconstruction.reconstructed_services.items():
-            for dim, val in state.__dict__.items():
+            # ReconstructedServiceState is a slots dataclass (no __dict__);
+            # only the normalized pressure dimensions are meaningful here.
+            for dim in PRESSURE_DIMENSIONS:
+                val = getattr(state, dim)
                 if val > max_pressure:
                     max_pressure = val
                     root = f"{svc}/{dim}"

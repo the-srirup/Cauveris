@@ -7,6 +7,7 @@ This test file validates the full pipeline:
 3. Run the TemporalAnalyzer
 4. Assert expected findings (detection freshness breach, co-temporal ambiguity)
 """
+
 import pytest
 from pathlib import Path
 
@@ -27,6 +28,7 @@ def golden_incident_bundle(tmp_path: Path):
     # Build the timeline so tests have real data
     builder = TimelineBuilder()
     import asyncio
+
     incident = asyncio.run(builder.build(incident))
     return incident
 

@@ -4,11 +4,11 @@ Holographic Reconstruction data structures.
 Contains the structured output of the holographic reconstruction engine:
 reconstructed service states, network state, resource state, and ambiguity regions.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
-
 
 
 @dataclass(slots=True)
@@ -19,17 +19,18 @@ class ReconstructedServiceState:
     This represents the "bulk" state inferred from boundary evidence.
     All values are normalized to [0, 1] where 1.0 = maximum observed/expected.
     """
+
     component_name: str
     instance_id: str
 
     # Resource utilization (normalized)
-    cpu_usage: float = 0.0          # 0=idle, 1=saturated
-    memory_usage: float = 0.0       # 0=empty, 1=OOM risk
-    network_usage: float = 0.0      # 0=idle, 1=saturated
+    cpu_usage: float = 0.0  # 0=idle, 1=saturated
+    memory_usage: float = 0.0  # 0=empty, 1=OOM risk
+    network_usage: float = 0.0  # 0=idle, 1=saturated
 
     # Error/health state
-    error_rate: float = 0.0         # 0=no errors, 1=constant errors
-    latency_p99_ms: float = 0.0     # Reconstructed P99 latency
+    error_rate: float = 0.0  # 0=no errors, 1=constant errors
+    latency_p99_ms: float = 0.0  # Reconstructed P99 latency
 
     # Configuration state
     config_version: str = ""
@@ -44,14 +45,20 @@ class ReconstructedServiceState:
     downstream_health: Dict[str, float] = field(default_factory=dict)
 
     # Reconstruction quality
-    confidence: float = 0.0         # Overall confidence in this reconstruction [0,1]
-    coverage: float = 0.0          # Boundary layer coverage [0,1]
+    confidence: float = 0.0  # Overall confidence in this reconstruction [0,1]
+    coverage: float = 0.0  # Boundary layer coverage [0,1]
     contributing_heus: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         # Clamp all float fields to [0,1]
-        for field_name in ("cpu_usage", "memory_usage", "network_usage",
-                          "error_rate", "confidence", "coverage"):
+        for field_name in (
+            "cpu_usage",
+            "memory_usage",
+            "network_usage",
+            "error_rate",
+            "confidence",
+            "coverage",
+        ):
             value = getattr(self, field_name)
             if not 0.0 <= value <= 1.0:
                 object.__setattr__(self, field_name, max(0.0, min(1.0, value)))
@@ -80,10 +87,10 @@ class ReconstructedServiceState:
     def is_healthy(self) -> bool:
         """Quick health check based on reconstructed state."""
         return (
-            self.cpu_usage < 0.85 and
-            self.memory_usage < 0.85 and
-            self.error_rate < 0.1 and
-            self.confidence > 0.5
+            self.cpu_usage < 0.85
+            and self.memory_usage < 0.85
+            and self.error_rate < 0.1
+            and self.confidence > 0.5
         )
 
     @property
@@ -104,6 +111,18 @@ class ReconstructedServiceState:
         return None
 
 
+# The pressure dimensions monitored for root-cause extraction. These are the
+# normalized [0, 1] resource/error fields (clamped in __post_init__); the other
+# fields are metadata (names/versions), scalar quality metrics, or unnormalized
+# values (latency_p99_ms, deployment_time_ns) and must not be treated as pressure.
+PRESSURE_DIMENSIONS: Tuple[str, ...] = (
+    "cpu_usage",
+    "memory_usage",
+    "network_usage",
+    "error_rate",
+)
+
+
 @dataclass(slots=True)
 class ReconstructedNetworkState:
     """
@@ -111,6 +130,7 @@ class ReconstructedNetworkState:
 
     Captures latency, loss, and queue depth for each service-to-service edge.
     """
+
     edges: Dict[Tuple[str, str], "NetworkEdge"] = field(default_factory=dict)
 
     def add_edge(self, source: str, target: str, edge: "NetworkEdge") -> None:
@@ -121,16 +141,14 @@ class ReconstructedNetworkState:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "edges": {
-                f"{src}->{dst}": edge.to_dict()
-                for (src, dst), edge in self.edges.items()
-            }
+            "edges": {f"{src}->{dst}": edge.to_dict() for (src, dst), edge in self.edges.items()}
         }
 
 
 @dataclass(slots=True)
 class NetworkEdge:
     """Single service-to-service network connection state."""
+
     source: str
     target: str
     latency_ms: float = 0.0
@@ -164,6 +182,7 @@ class ReconstructedResourceState:
 
     Aggregated view of all resources across the system.
     """
+
     total_cpu_cores: float = 0.0
     total_memory_gb: float = 0.0
     total_network_gbps: float = 0.0
@@ -218,11 +237,12 @@ class AmbiguityRegion:
     Indicates where the boundary evidence was insufficient to uniquely
     determine the bulk state. These are the "dark spots" in the hologram.
     """
+
     component: str
     time_range_ns: Tuple[int, int]  # (start, end)
     affected_dimensions: List[str]  # e.g., ["cpu_pressure", "memory_pressure"]
-    ambiguity_score: float          # 0=certain, 1=completely ambiguous
-    missing_layers: List[str]       # Boundary layers not observed
+    ambiguity_score: float  # 0=certain, 1=completely ambiguous
+    missing_layers: List[str]  # Boundary layers not observed
     description: str
 
     def __post_init__(self) -> None:
@@ -255,6 +275,7 @@ class HolographicReconstruction:
 
     This is the "3D image" reconstructed from the "2D hologram" of boundary HEUs.
     """
+
     incident_id: str
     reconstruction_timestamp_ns: int
     time_window_ns: Tuple[int, int]  # (start, end) of incident window
@@ -265,13 +286,15 @@ class HolographicReconstruction:
     reconstructed_resources: Optional[ReconstructedResourceState] = None
 
     # Quality metrics
-    overall_fidelity: float = 0.0           # 0-1, overall reconstruction accuracy
+    overall_fidelity: float = 0.0  # 0-1, overall reconstruction accuracy
     per_component_fidelity: Dict[str, float] = field(default_factory=dict)
-    coverage_map: Dict[str, Dict[str, float]] = field(default_factory=dict)  # component -> layer -> coverage
+    coverage_map: Dict[str, Dict[str, float]] = field(
+        default_factory=dict
+    )  # component -> layer -> coverage
     ambiguity_regions: List[AmbiguityRegion] = field(default_factory=list)
-    holographic_entropy: float = 0.0        # Information-theoretic uncertainty
-    boundary_residual: float = 0.0          # ||M·x - b|| / ||b||
-    constraint_violation: float = 0.0       # Physics constraint satisfaction
+    holographic_entropy: float = 0.0  # Information-theoretic uncertainty
+    boundary_residual: float = 0.0  # ||M·x - b|| / ||b||
+    constraint_violation: float = 0.0  # Physics constraint satisfaction
 
     # Evidence used
     boundary_heus: List[str] = field(default_factory=list)  # HEU IDs used
@@ -280,7 +303,9 @@ class HolographicReconstruction:
     # Observed HEUs grouped by component (for visualization / re-analysis).
     # Typed loosely to avoid a circular import on heu.py.
     observed_heus: Dict[str, List[Any]] = field(default_factory=dict)
-    observed_layers: Dict[str, List[Any]] = field(default_factory=dict)  # component -> [BoundaryLayer]
+    observed_layers: Dict[str, List[Any]] = field(
+        default_factory=dict
+    )  # component -> [BoundaryLayer]
 
     # Compression metadata
     compression_metadata: Dict[str, Any] = field(default_factory=dict)
@@ -299,8 +324,12 @@ class HolographicReconstruction:
             "reconstructed_services": {
                 k: v.to_dict() for k, v in self.reconstructed_services.items()
             },
-            "reconstructed_network": self.reconstructed_network.to_dict() if self.reconstructed_network else {},
-            "reconstructed_resources": self.reconstructed_resources.to_dict() if self.reconstructed_resources else {},
+            "reconstructed_network": self.reconstructed_network.to_dict()
+            if self.reconstructed_network
+            else {},
+            "reconstructed_resources": self.reconstructed_resources.to_dict()
+            if self.reconstructed_resources
+            else {},
             "overall_fidelity": self.overall_fidelity,
             "per_component_fidelity": self.per_component_fidelity,
             "coverage_map": self.coverage_map,

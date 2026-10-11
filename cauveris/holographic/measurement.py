@@ -5,6 +5,7 @@ Implements the forward model that maps internal system state (bulk) to
 boundary observations (HEUs). This is the measurement operator in the
 holographic inverse problem.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -21,6 +22,7 @@ from .heu_kernel import CausalKernelBuilder
 @dataclass(slots=True)
 class StateDimension:
     """Maps a (component, dimension) pair to a state vector index."""
+
     component: str
     dimension: str  # cpu, memory, network, error, config, deploy, queue, etc.
     index: int
@@ -32,15 +34,16 @@ class StateDimension:
 @dataclass(slots=True)
 class MeasurementRow:
     """One row of the measurement matrix M (one HEU observation)."""
+
     heu_id: str
     boundary_layer: BoundaryLayer
     component: str
     dimension: str  # What state dimension this observation informs
     state_indices: List[int]  # Indices in state vector x
-    coefficients: np.ndarray   # M[row, state_indices] values
+    coefficients: np.ndarray  # M[row, state_indices] values
     timestamp_ns: int
-    observation_value: float   # Normalized observation b[row]
-    noise_std: float = 0.1     # Expected noise standard deviation
+    observation_value: float  # Normalized observation b[row]
+    noise_std: float = 0.1  # Expected noise standard deviation
 
 
 @dataclass(slots=True)
@@ -52,17 +55,18 @@ class MeasurementSystem:
     b: observation vector (n_observations)
     x: state vector (n_state_dims) - what we solve for
     """
+
     # Sparse measurement matrix
     M: sp.csr_matrix
-    b: np.ndarray                    # Observation vector
-    state_dims: List[StateDimension] # Mapping from state index to (component, dimension)
-    measurements: List[MeasurementRow] # Per-observation metadata
-    n_state: int                     # Total state dimensions
-    n_obs: int                       # Total observations
+    b: np.ndarray  # Observation vector
+    state_dims: List[StateDimension]  # Mapping from state index to (component, dimension)
+    measurements: List[MeasurementRow]  # Per-observation metadata
+    n_state: int  # Total state dimensions
+    n_obs: int  # Total observations
 
     # Normalization info
     state_scales: Dict[int, float] = field(default_factory=dict)  # Per-dimension scaling
-    obs_scales: Dict[int, float] = field(default_factory=dict)    # Per-observation scaling
+    obs_scales: Dict[int, float] = field(default_factory=dict)  # Per-observation scaling
 
     def to_dense(self) -> Tuple[np.ndarray, np.ndarray]:
         """Convert to dense arrays (for small systems or debugging)."""
@@ -102,13 +106,13 @@ class MeasurementSystemBuilder:
 
         # Predefined state dimensions per component
         self._base_dimensions = [
-            "cpu_pressure",      # 0-1: CPU utilization / saturation
-            "memory_pressure",   # 0-1: Memory utilization / saturation
-            "network_latency",   # 0-1: Normalized latency (ms / 1000)
-            "error_rate",        # 0-1: Error rate
-            "config_change",     # 0-1: Configuration drift magnitude
-            "deployment_activity", # 0-1: Active deployment coupling
-            "resource_contention", # 0-1: Generic resource contention
+            "cpu_pressure",  # 0-1: CPU utilization / saturation
+            "memory_pressure",  # 0-1: Memory utilization / saturation
+            "network_latency",  # 0-1: Normalized latency (ms / 1000)
+            "error_rate",  # 0-1: Error rate
+            "config_change",  # 0-1: Configuration drift magnitude
+            "deployment_activity",  # 0-1: Active deployment coupling
+            "resource_contention",  # 0-1: Generic resource contention
             "service_dependency",  # 0-1: Downstream dependency pressure
         ]
 
@@ -279,15 +283,29 @@ class MeasurementSystemBuilder:
         # Log level based
         if "level" in payload:
             level = str(payload["level"]).upper()
-            mapping = {"DEBUG": 0.0, "INFO": 0.1, "WARN": 0.3, "WARNING": 0.3,
-                       "ERROR": 0.7, "FATAL": 0.9, "CRITICAL": 1.0}
+            mapping = {
+                "DEBUG": 0.0,
+                "INFO": 0.1,
+                "WARN": 0.3,
+                "WARNING": 0.3,
+                "ERROR": 0.7,
+                "FATAL": 0.9,
+                "CRITICAL": 1.0,
+            }
             return mapping.get(level, 0.5)
 
         # Status based
         if "status" in payload:
             status = str(payload["status"]).lower()
-            mapping = {"ok": 0.0, "success": 0.0, "warning": 0.3, "warn": 0.3,
-                       "error": 0.7, "failed": 0.8, "fatal": 1.0}
+            mapping = {
+                "ok": 0.0,
+                "success": 0.0,
+                "warning": 0.3,
+                "warn": 0.3,
+                "error": 0.7,
+                "failed": 0.8,
+                "fatal": 1.0,
+            }
             return mapping.get(status, 0.5)
 
         return None
@@ -296,13 +314,13 @@ class MeasurementSystemBuilder:
         """Estimate observation noise standard deviation for this HEU."""
         # Base noise by boundary layer
         layer_noise = {
-            BoundaryLayer.DISTRIBUTED_TRACE: 0.05,   # Low noise, precise timestamps
-            BoundaryLayer.METRICS_EXPORT: 0.1,       # Aggregated, some noise
-            BoundaryLayer.APPLICATION_LOG: 0.15,     # Structured logs, moderate
+            BoundaryLayer.DISTRIBUTED_TRACE: 0.05,  # Low noise, precise timestamps
+            BoundaryLayer.METRICS_EXPORT: 0.1,  # Aggregated, some noise
+            BoundaryLayer.APPLICATION_LOG: 0.15,  # Structured logs, moderate
             BoundaryLayer.INFRASTRUCTURE_LOG: 0.25,  # Mixed sources
-            BoundaryLayer.CONFIG_STATE: 0.1,         # Sparse but precise
-            BoundaryLayer.DEPLOYMENT_EVENT: 0.05,    # Clear events
-            BoundaryLayer.NETWORK_FLOW: 0.2,         # Sampled flow data
+            BoundaryLayer.CONFIG_STATE: 0.1,  # Sparse but precise
+            BoundaryLayer.DEPLOYMENT_EVENT: 0.05,  # Clear events
+            BoundaryLayer.NETWORK_FLOW: 0.2,  # Sampled flow data
         }
         base = layer_noise.get(heu.boundary_layer, 0.15)
 
@@ -340,9 +358,13 @@ class MeasurementSystemBuilder:
                     row_indices.append(i)
                     col_indices.append(idx)
                     data.append(row.coefficients[j] if j < len(row.coefficients) else 1.0)
-                    state_scales[idx].append(abs(row.coefficients[j]) if j < len(row.coefficients) else 1.0)
+                    state_scales[idx].append(
+                        abs(row.coefficients[j]) if j < len(row.coefficients) else 1.0
+                    )
 
-        M = sp.csr_matrix((data, (row_indices, col_indices)), shape=(n_obs, n_state), dtype=np.float32)
+        M = sp.csr_matrix(
+            (data, (row_indices, col_indices)), shape=(n_obs, n_state), dtype=np.float32
+        )
 
         # Compute per-dimension scales (max coefficient magnitude)
         final_state_scales = {}
@@ -366,10 +388,11 @@ class MeasurementSystemBuilder:
 @dataclass
 class MeasurementConfig:
     """Configuration for measurement system builder."""
-    include_cross_component: bool = True      # Include cross-propagation effects
-    time_window_ns: int = 60_000_000_000      # 60 second window for temporal context
-    min_reconstruction_weight: float = 0.1    # Filter low-weight HEUs
-    max_observations: int = 10000             # Cap for performance
+
+    include_cross_component: bool = True  # Include cross-propagation effects
+    time_window_ns: int = 60_000_000_000  # 60 second window for temporal context
+    min_reconstruction_weight: float = 0.1  # Filter low-weight HEUs
+    max_observations: int = 10000  # Cap for performance
 
 
 def build_measurement_system(
@@ -406,19 +429,44 @@ if __name__ == "__main__":
     from .heu import HolographicEvidenceUnit, BoundaryLayer, convert_timeline_to_heus
 
     topo = SystemTopology()
-    topo.add_component(ComponentInfo(name="svc_a", capacity=ResourceCapacity(cpu_cores=4.0), boundary_layers=["application_log", "metrics_export"]))
-    topo.add_component(ComponentInfo(name="svc_b", capacity=ResourceCapacity(cpu_cores=2.0), boundary_layers=["application_log", "metrics_export"]))
+    topo.add_component(
+        ComponentInfo(
+            name="svc_a",
+            capacity=ResourceCapacity(cpu_cores=4.0),
+            boundary_layers=["application_log", "metrics_export"],
+        )
+    )
+    topo.add_component(
+        ComponentInfo(
+            name="svc_b",
+            capacity=ResourceCapacity(cpu_cores=2.0),
+            boundary_layers=["application_log", "metrics_export"],
+        )
+    )
     topo.add_causal_edge(CausalEdge(source="svc_a", target="svc_b", latency_ms=5.0))
 
     timeline = [
-        {"event_id": "1", "timestamp_ns": 100_000_000, "source_type": "jsonl_log", "message": "High CPU",
-         "attributes": {"service": "svc_a", "cpu_usage": 0.8}, "status": "warning"},
-        {"event_id": "2", "timestamp_ns": 200_000_000, "source_type": "csv_metrics", "message": "Metric",
-         "attributes": {"service": "svc_a", "cpu_usage": 0.7}, "status": "ok"},
+        {
+            "event_id": "1",
+            "timestamp_ns": 100_000_000,
+            "source_type": "jsonl_log",
+            "message": "High CPU",
+            "attributes": {"service": "svc_a", "cpu_usage": 0.8},
+            "status": "warning",
+        },
+        {
+            "event_id": "2",
+            "timestamp_ns": 200_000_000,
+            "source_type": "csv_metrics",
+            "message": "Metric",
+            "attributes": {"service": "svc_a", "cpu_usage": 0.7},
+            "status": "ok",
+        },
     ]
     heus = convert_timeline_to_heus(timeline, {}, 1_000_000_000)
 
     from .heu_kernel import CausalKernelBuilder
+
     kernel_builder = CausalKernelBuilder(topo)
     kernel_builder.build_all_kernels()
 

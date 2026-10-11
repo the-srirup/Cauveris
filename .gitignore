@@ -169,10 +169,18 @@ Thumbs.db
 
 
 
-# Assistant / Development Tool Configurations
+# Local development and editor artifacts
 **/AGENTS.md
 **/BUILD_STATUS.md
-
-# Debug/Development logs (personal reference)
 DEBUGGING_LOG.md
 cauveris.log
+.ai-generated/
+.claude/
+**/CLAUDE.md
+**/.claude/
+
+# Production deployment configs (not for repo - use .env files instead)
+Dockerfile
+Dockerfile.worker
+docker-compose.prod.yml
+.env.production.example

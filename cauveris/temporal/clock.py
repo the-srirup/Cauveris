@@ -17,6 +17,7 @@ sense (servers are well-synchronized via NTP). They are:
 This module's outputs are used by the causal detector with explicit tolerance
 policies, not as standalone erratic flags.
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,15 +34,17 @@ class ClockStatus(str, Enum):
     """
     Operational status of a clock domain, derived from measurement.
     """
-    REFERENCE = "reference"      # Zero-offset by design
+
+    REFERENCE = "reference"  # Zero-offset by design
     SYNCHRONIZED = "synchronized"  # Measured offset within threshold
-    OFFSET = "offset"            # Offset exceeds threshold but consistent
-    UNKNOWN = "unknown"          # No measurable data
+    OFFSET = "offset"  # Offset exceeds threshold but consistent
+    UNKNOWN = "unknown"  # No measurable data
 
 
 @dataclass
 class DomainClockModel:
     """Per-domain clock characteristics measured from evidence."""
+
     domain: ClockDomain
     offset_ns: int = 0
     jitter_ns: int = 0
@@ -134,9 +137,7 @@ class ClockSkewAnalyzer:
 
         return result
 
-    def _apply_manifest_clock_alignment(
-        self, manifest: Dict[str, Any]
-    ) -> ClockAnalysisResult:
+    def _apply_manifest_clock_alignment(self, manifest: Dict[str, Any]) -> ClockAnalysisResult:
         result = ClockAnalysisResult()
         domains_data = manifest.get("domains", {})
 
@@ -174,7 +175,9 @@ class ClockSkewAnalyzer:
 
         for m in messages:
             if m.get("detection_age_ms") is not None:
-                result.domains.setdefault(ClockDomain.ROBOT, DomainClockModel(domain=ClockDomain.ROBOT))
+                result.domains.setdefault(
+                    ClockDomain.ROBOT, DomainClockModel(domain=ClockDomain.ROBOT)
+                )
 
     def _detect_co_temporal_ambiguity(
         self, evidence: List[Any], result: ClockAnalysisResult
@@ -200,9 +203,7 @@ class ClockSkewAnalyzer:
 
         return result
 
-    def _finalize_domains(
-        self, result: ClockAnalysisResult, evidence: List[Any]
-    ) -> None:
+    def _finalize_domains(self, result: ClockAnalysisResult, evidence: List[Any]) -> None:
         if not result.domains:
             for domain in [ClockDomain.CLOUD, ClockDomain.HOST, ClockDomain.ROBOT]:
                 result.domains[domain] = DomainClockModel(domain=domain)

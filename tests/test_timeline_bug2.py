@@ -2,14 +2,17 @@
 """
 Test script to reproduce the timeline builder bug with present bundle.
 """
+
 import sys
 import os
 import asyncio
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cauveris.schemas.incident import Incident
 from cauveris.timeline.builder import TimelineBuilder
 from pathlib import Path
+
 
 async def test_timeline_builder_with_present_bundle():
     """Test timeline builder when bundle directory exists but has issues."""
@@ -49,7 +52,7 @@ async def test_timeline_builder_with_present_bundle():
         print(f"Result timeline_events length: {len(result.timeline_events)}")
 
         # Check if timeline_events is properly set
-        if hasattr(result, 'timeline_events'):
+        if hasattr(result, "timeline_events"):
             print("Result has timeline_events attribute: True")
             print(f"Result timeline_events value: {result.timeline_events}")
         else:
@@ -58,7 +61,9 @@ async def test_timeline_builder_with_present_bundle():
     except Exception as e:
         print(f"ERROR during build: {e}")
         import traceback
+
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     asyncio.run(test_timeline_builder_with_present_bundle())

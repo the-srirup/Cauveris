@@ -1,6 +1,7 @@
 """
 Comprehensive integration tests for Cauveris FastAPI endpoints.
 """
+
 import pytest
 from httpx import AsyncClient, ASGITransport
 from cauveris.api.main import app, incidents, pipeline_contexts

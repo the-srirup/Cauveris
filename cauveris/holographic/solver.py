@@ -7,6 +7,7 @@ Implements the convex optimization problem:
 With entropy regularization encouraging sparse, structured solutions
 consistent with holographic principle.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -22,45 +23,48 @@ from .topology import SystemTopology, ComponentInfo, CausalEdge
 
 class SolverMethod(Enum):
     """Optimization method."""
-    L_BFGS_B = "L-BFGS-B"        # Constrained quasi-Newton
-    TRUST_CONSTR = "trust-constr" # Trust region with constraints
-    SLSQP = "SLSQP"               # Sequential least squares
-    ADMM = "admm"                 # ADMM for large sparse systems
+
+    L_BFGS_B = "L-BFGS-B"  # Constrained quasi-Newton
+    TRUST_CONSTR = "trust-constr"  # Trust region with constraints
+    SLSQP = "SLSQP"  # Sequential least squares
+    ADMM = "admm"  # ADMM for large sparse systems
 
 
 @dataclass(slots=True)
 class SolverConfig:
     """Configuration for holographic inverse solver."""
+
     method: SolverMethod = SolverMethod.SLSQP
     max_iterations: int = 500
     tolerance: float = 1e-6
     ftol: float = 1e-9
 
     # Regularization weights
-    lambda_data: float = 1.0         # Data fidelity weight (||Mx - b||²)
-    lambda_entropy: float = 0.1      # Holographic entropy weight
-    lambda_temporal: float = 0.01    # Temporal continuity weight (||x - x_prior||²)
-    lambda_physics: float = 10.0     # Physics constraint weight
-    lambda_sparsity: float = 0.01    # L1 sparsity weight
+    lambda_data: float = 1.0  # Data fidelity weight (||Mx - b||²)
+    lambda_entropy: float = 0.1  # Holographic entropy weight
+    lambda_temporal: float = 0.01  # Temporal continuity weight (||x - x_prior||²)
+    lambda_physics: float = 10.0  # Physics constraint weight
+    lambda_sparsity: float = 0.01  # L1 sparsity weight
 
     # Bounds
     state_lower_bound: float = 0.0
-    state_upper_bound: float = 1.5   # Allow slight overshoot for pressure
+    state_upper_bound: float = 1.5  # Allow slight overshoot for pressure
 
     # Convergence
     verbose: bool = False
     track_history: bool = False
 
     # Physics constraints
-    enforce_monotonic: bool = True    # Pressure should not decrease without reason
-    enforce_capacity: bool = True     # Pressure <= capacity limits
-    enforce_causality: bool = True    # Causal ordering constraints
+    enforce_monotonic: bool = True  # Pressure should not decrease without reason
+    enforce_capacity: bool = True  # Pressure <= capacity limits
+    enforce_causality: bool = True  # Causal ordering constraints
 
 
 @dataclass(slots=True)
 class SolverResult:
     """Result of holographic inverse solve."""
-    x: np.ndarray                      # Optimized state vector
+
+    x: np.ndarray  # Optimized state vector
     success: bool
     message: str
     iterations: int
@@ -76,14 +80,16 @@ class SolverResult:
     # Convergence info
     gradient_norm: float
     constraint_violation: float
-    boundary_residual: float          # ||M·x - b|| / ||b||
+    boundary_residual: float  # ||M·x - b|| / ||b||
 
     # History (if track_history=True)
     history: List[Dict[str, Any]] = field(default_factory=list)
 
     def __str__(self) -> str:
-        return (f"SolverResult(success={self.success}, iter={self.iterations}, "
-                f"obj={self.objective_value:.6f}, ||Mx-b||/||b||={self.boundary_residual:.4f})")
+        return (
+            f"SolverResult(success={self.success}, iter={self.iterations}, "
+            f"obj={self.objective_value:.6f}, ||Mx-b||/||b||={self.boundary_residual:.4f})"
+        )
 
 
 class HolographicSolver:
@@ -128,7 +134,9 @@ class HolographicSolver:
 
     def set_prior(self, x_prior: np.ndarray) -> None:
         """Set prior state for temporal continuity regularization."""
-        assert x_prior.shape == (self.n_state,), f"Prior shape mismatch: {x_prior.shape} vs {self.n_state}"
+        assert x_prior.shape == (self.n_state,), (
+            f"Prior shape mismatch: {x_prior.shape} vs {self.n_state}"
+        )
         self.x_prior = x_prior.astype(np.float32)
 
     def solve(self) -> SolverResult:
@@ -154,7 +162,9 @@ class HolographicSolver:
         x0 = self._initial_guess().astype(np.float64)
 
         # Bounds (use float64 for SLSQP)
-        bounds = [(float(self.config.state_lower_bound), float(self.config.state_upper_bound))] * self.n_state
+        bounds = [
+            (float(self.config.state_lower_bound), float(self.config.state_upper_bound))
+        ] * self.n_state
 
         # Objective function (float64 -> float64)
         def objective(x: np.ndarray) -> float:
@@ -169,61 +179,71 @@ class HolographicSolver:
         # Run optimizer
         if self.config.method == SolverMethod.L_BFGS_B:
             result = opt.minimize(
-                objective, x0, method='L-BFGS-B',
+                objective,
+                x0,
+                method="L-BFGS-B",
                 jac=gradient,
                 bounds=bounds,
                 options={
-                    'maxiter': self.config.max_iterations,
-                    'ftol': self.config.ftol,
-                    'gtol': self.config.tolerance,
-                }
+                    "maxiter": self.config.max_iterations,
+                    "ftol": self.config.ftol,
+                    "gtol": self.config.tolerance,
+                },
             )
         elif self.config.method == SolverMethod.TRUST_CONSTR:
             result = opt.minimize(
-                objective, x0, method='trust-constr',
+                objective,
+                x0,
+                method="trust-constr",
                 jac=gradient,
                 bounds=bounds,
                 constraints=constraints,
                 options={
-                    'maxiter': self.config.max_iterations,
-                    'gtol': self.config.tolerance,
-                    'verbose': 2 if self.config.verbose else 0,
-                }
+                    "maxiter": self.config.max_iterations,
+                    "gtol": self.config.tolerance,
+                    "verbose": 2 if self.config.verbose else 0,
+                },
             )
         elif self.config.method == SolverMethod.SLSQP:
             result = opt.minimize(
-                objective, x0, method='SLSQP',
+                objective,
+                x0,
+                method="SLSQP",
                 jac=gradient,
                 bounds=bounds,
                 constraints=constraints,
                 options={
-                    'maxiter': self.config.max_iterations,
-                    'ftol': self.config.ftol,
-                }
+                    "maxiter": self.config.max_iterations,
+                    "ftol": self.config.ftol,
+                },
             )
         elif self.config.method == SolverMethod.ADMM:
             # ADMM not yet implemented, fallback to SLSQP for now
             result = opt.minimize(
-                objective, x0, method='SLSQP',
+                objective,
+                x0,
+                method="SLSQP",
                 jac=gradient,
                 bounds=bounds,
                 constraints=constraints,
                 options={
-                    'maxiter': self.config.max_iterations,
-                    'ftol': self.config.ftol,
-                }
+                    "maxiter": self.config.max_iterations,
+                    "ftol": self.config.ftol,
+                },
             )
         else:
             # Fallback to SLSQP
             result = opt.minimize(
-                objective, x0, method='SLSQP',
+                objective,
+                x0,
+                method="SLSQP",
                 jac=gradient,
                 bounds=bounds,
                 constraints=constraints,
                 options={
-                    'maxiter': self.config.max_iterations,
-                    'ftol': self.config.ftol,
-                }
+                    "maxiter": self.config.max_iterations,
+                    "ftol": self.config.ftol,
+                },
             )
 
         # Compute final objective components (convert back to float32)
@@ -241,7 +261,7 @@ class HolographicSolver:
             x=x_opt,
             success=result.success,
             message=str(result.message),
-            iterations=result.nit if hasattr(result, 'nit') else 0,
+            iterations=result.nit if hasattr(result, "nit") else 0,
             objective_value=result.fun,
             data_term=data_term,
             entropy_term=entropy_term,
@@ -273,36 +293,38 @@ class HolographicSolver:
 
         try:
             x0 = sp.linalg.spsolve(A, rhs)
-            return np.clip(x0, self.config.state_lower_bound, self.config.state_upper_bound).astype(np.float32)
+            return np.clip(x0, self.config.state_lower_bound, self.config.state_upper_bound).astype(
+                np.float32
+            )
         except Exception:
             return np.zeros(self.n_state, dtype=np.float32)
 
     def _objective(self, x: np.ndarray) -> float:
         """Full objective function."""
         obj = (
-            self.config.lambda_data * self._data_term(x) +
-            self.config.lambda_entropy * self._entropy_term(x) +
-            self.config.lambda_temporal * self._temporal_term(x) +
-            self.config.lambda_physics * self._physics_term(x) +
-            self.config.lambda_sparsity * self._sparsity_term(x)
+            self.config.lambda_data * self._data_term(x)
+            + self.config.lambda_entropy * self._entropy_term(x)
+            + self.config.lambda_temporal * self._temporal_term(x)
+            + self.config.lambda_physics * self._physics_term(x)
+            + self.config.lambda_sparsity * self._sparsity_term(x)
         )
         return float(obj)
 
     def _gradient(self, x: np.ndarray) -> np.ndarray:
         """Gradient of full objective."""
         grad = (
-            self.config.lambda_data * self._data_gradient(x) +
-            self.config.lambda_entropy * self._entropy_gradient(x) +
-            self.config.lambda_temporal * self._temporal_gradient(x) +
-            self.config.lambda_physics * self._physics_gradient(x) +
-            self.config.lambda_sparsity * self._sparsity_gradient(x)
+            self.config.lambda_data * self._data_gradient(x)
+            + self.config.lambda_entropy * self._entropy_gradient(x)
+            + self.config.lambda_temporal * self._temporal_gradient(x)
+            + self.config.lambda_physics * self._physics_gradient(x)
+            + self.config.lambda_sparsity * self._sparsity_gradient(x)
         )
         return grad.astype(np.float32)
 
     def _data_term(self, x: np.ndarray) -> float:
         """Data fidelity: ||M·x - b||²"""
         residual = self.M @ x - self.b
-        return float(np.sum(residual ** 2))
+        return float(np.sum(residual**2))
 
     def _data_gradient(self, x: np.ndarray) -> np.ndarray:
         """Gradient of data term: 2 M^T (M x - b)"""
@@ -343,7 +365,7 @@ class HolographicSolver:
         # = -(log(x/Σx) + 1)/Σx + entropy/Σx
         entropy = -np.sum(p * np.log(p + 1e-12))
 
-        grad = (-(np.log(p + 1e-12) + 1) / total + entropy / (total * total))
+        grad = -(np.log(p + 1e-12) + 1) / total + entropy / (total * total)
 
         # Only gradient where x > 0
         grad[x <= 1e-10] = 0.0
@@ -355,7 +377,7 @@ class HolographicSolver:
         if self.x_prior is None:
             return 0.0
         diff = x - self.x_prior
-        return float(np.sum(diff ** 2))
+        return float(np.sum(diff**2))
 
     def _temporal_gradient(self, x: np.ndarray) -> np.ndarray:
         """Gradient of temporal term."""
@@ -425,7 +447,7 @@ class HolographicSolver:
         # Subgradient: sign(x) for x != 0, [-1, 1] for x = 0
         # We use smoothed sign: x / sqrt(x² + ε)
         eps = 1e-6
-        return (x / np.sqrt(x ** 2 + eps)).astype(np.float32)
+        return (x / np.sqrt(x**2 + eps)).astype(np.float32)
 
     def _build_constraints(self) -> List[dict]:
         """Build constraints for trust-constr/SLSQP."""
@@ -436,10 +458,7 @@ class HolographicSolver:
             for i, sd in enumerate(self.state_dims):
                 if "pressure" in sd.dimension:
                     # x[i] <= 1.5
-                    constraints.append({
-                        'type': 'ineq',
-                        'fun': lambda x, idx=i: 1.5 - x[idx]
-                    })
+                    constraints.append({"type": "ineq", "fun": lambda x, idx=i: 1.5 - x[idx]})
 
         return constraints
 
@@ -541,15 +560,39 @@ if __name__ == "__main__":
     from .measurement import build_measurement_system
 
     topo = SystemTopology()
-    topo.add_component(ComponentInfo(name="svc_a", capacity=ResourceCapacity(cpu_cores=4.0), boundary_layers=["application_log", "metrics_export"]))
-    topo.add_component(ComponentInfo(name="svc_b", capacity=ResourceCapacity(cpu_cores=2.0), boundary_layers=["application_log", "metrics_export"]))
+    topo.add_component(
+        ComponentInfo(
+            name="svc_a",
+            capacity=ResourceCapacity(cpu_cores=4.0),
+            boundary_layers=["application_log", "metrics_export"],
+        )
+    )
+    topo.add_component(
+        ComponentInfo(
+            name="svc_b",
+            capacity=ResourceCapacity(cpu_cores=2.0),
+            boundary_layers=["application_log", "metrics_export"],
+        )
+    )
     topo.add_causal_edge(CausalEdge(source="svc_a", target="svc_b", latency_ms=5.0))
 
     timeline = [
-        {"event_id": "1", "timestamp_ns": 100_000_000, "source_type": "jsonl_log", "message": "High CPU",
-         "attributes": {"service": "svc_a", "cpu_usage": 0.8}, "status": "warning"},
-        {"event_id": "2", "timestamp_ns": 200_000_000, "source_type": "csv_metrics", "message": "Metric",
-         "attributes": {"service": "svc_a", "cpu_usage": 0.7}, "status": "ok"},
+        {
+            "event_id": "1",
+            "timestamp_ns": 100_000_000,
+            "source_type": "jsonl_log",
+            "message": "High CPU",
+            "attributes": {"service": "svc_a", "cpu_usage": 0.8},
+            "status": "warning",
+        },
+        {
+            "event_id": "2",
+            "timestamp_ns": 200_000_000,
+            "source_type": "csv_metrics",
+            "message": "Metric",
+            "attributes": {"service": "svc_a", "cpu_usage": 0.7},
+            "status": "ok",
+        },
     ]
     heus = convert_timeline_to_heus(timeline, {}, 1_000_000_000)
 

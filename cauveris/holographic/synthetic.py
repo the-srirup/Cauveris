@@ -22,11 +22,13 @@ from cauveris.holographic.heu import (
 )
 from cauveris.holographic.reconstruction import (
     HolographicReconstruction,
+    PRESSURE_DIMENSIONS,
 )
 
 
 class IncidentType(Enum):
     """Types of synthetic incidents to generate."""
+
     CPU_SPIKE_CASCADE = "cpu_spike_cascade"
     MEMORY_LEAK = "memory_leak"
     NETWORK_PARTITION = "network_partition"
@@ -39,6 +41,7 @@ class IncidentType(Enum):
 @dataclass
 class GroundTruthState:
     """Known ground truth internal state for validation."""
+
     component_states: Dict[str, Dict[str, float]]  # {comp: {dim: value}}
     network_states: Dict[Tuple[str, str], Dict[str, float]]  # {(src,dst): {latency, loss}}
     root_cause: str  # Component name
@@ -51,6 +54,7 @@ class GroundTruthState:
 @dataclass
 class SyntheticIncident:
     """Complete synthetic incident with topology, timeline, and ground truth."""
+
     topology: SystemTopology
     timeline: List[Dict[str, Any]]
     ground_truth: GroundTruthState
@@ -91,27 +95,31 @@ class SyntheticIncidentGenerator:
         # Build chain topology: svc_0 -> svc_1 -> svc_2 -> ...
         topology = SystemTopology()
         for i in range(n_services):
-            topology.add_component(ComponentInfo(
-                name=f"svc_{i}",
-                component_type="service",
-                capacity=ResourceCapacity(
-                    cpu_cores=4.0 + i * 2.0,
-                    memory_gb=8.0,
-                    max_rps=5000,
-                ),
-                boundary_layers=[
-                    "application_log",
-                    "metrics_export",
-                    "distributed_trace",
-                ],
-            ))
+            topology.add_component(
+                ComponentInfo(
+                    name=f"svc_{i}",
+                    component_type="service",
+                    capacity=ResourceCapacity(
+                        cpu_cores=4.0 + i * 2.0,
+                        memory_gb=8.0,
+                        max_rps=5000,
+                    ),
+                    boundary_layers=[
+                        "application_log",
+                        "metrics_export",
+                        "distributed_trace",
+                    ],
+                )
+            )
             if i > 0:
-                topology.add_causal_edge(CausalEdge(
-                    source=f"svc_{i-1}",
-                    target=f"svc_{i}",
-                    latency_ms=5.0,
-                    edge_type="rpc",
-                ))
+                topology.add_causal_edge(
+                    CausalEdge(
+                        source=f"svc_{i - 1}",
+                        target=f"svc_{i}",
+                        latency_ms=5.0,
+                        edge_type="rpc",
+                    )
+                )
 
         # Time parameters
         duration_ns = 60_000_000_000  # 60 seconds
@@ -128,7 +136,9 @@ class SyntheticIncidentGenerator:
             if i == 0:
                 cpu_pressure = 0.95  # root cause
             elif spike_start + cascade_delay < duration_ns:
-                cpu_pressure = 0.3 + 0.6 * np.exp(-(spike_start + cascade_delay - spike_start) / 10_000_000_000)
+                cpu_pressure = 0.3 + 0.6 * np.exp(
+                    -(spike_start + cascade_delay - spike_start) / 10_000_000_000
+                )
 
             component_states[f"svc_{i}"] = {
                 "cpu_pressure": cpu_pressure,
@@ -163,29 +173,44 @@ class SyntheticIncidentGenerator:
     def _generate_memory_leak(self, **kwargs) -> SyntheticIncident:
         """Gradual memory leak in database service."""
         topology = SystemTopology()
-        topology.add_component(ComponentInfo(
-            name="api",
-            component_type="gateway",
-            capacity=ResourceCapacity(cpu_cores=8.0, memory_gb=16.0),
-            boundary_layers=["application_log", "metrics_export", "distributed_trace"],
-        ))
-        topology.add_component(ComponentInfo(
-            name="db",
-            component_type="database",
-            capacity=ResourceCapacity(cpu_cores=16.0, memory_gb=64.0),
-            boundary_layers=["application_log", "metrics_export", "infrastructure_log"],
-        ))
-        topology.add_causal_edge(CausalEdge(
-            source="api", target="db", latency_ms=2.0, edge_type="db",
-        ))
+        topology.add_component(
+            ComponentInfo(
+                name="api",
+                component_type="gateway",
+                capacity=ResourceCapacity(cpu_cores=8.0, memory_gb=16.0),
+                boundary_layers=["application_log", "metrics_export", "distributed_trace"],
+            )
+        )
+        topology.add_component(
+            ComponentInfo(
+                name="db",
+                component_type="database",
+                capacity=ResourceCapacity(cpu_cores=16.0, memory_gb=64.0),
+                boundary_layers=["application_log", "metrics_export", "infrastructure_log"],
+            )
+        )
+        topology.add_causal_edge(
+            CausalEdge(
+                source="api",
+                target="db",
+                latency_ms=2.0,
+                edge_type="db",
+            )
+        )
 
         duration = 300_000_000_000  # 5 minutes
         leak_rate = 0.0025  # per second - faster leak to trigger thresholds
 
         component_states = {
-            "api": {"cpu_pressure": 0.4, "memory_pressure": 0.6, "network_latency": 0.1, "error_rate": 0.05},
+            "api": {
+                "cpu_pressure": 0.4,
+                "memory_pressure": 0.6,
+                "network_latency": 0.1,
+                "error_rate": 0.05,
+            },
             "db": {
-                "cpu_pressure": 0.3 + leak_rate * 300,  # gradually increases to ~1.05 -> clamped to 1.0
+                "cpu_pressure": 0.3
+                + leak_rate * 300,  # gradually increases to ~1.05 -> clamped to 1.0
                 "memory_pressure": 0.2 + leak_rate * 300,  # leak: 0.2 -> 0.95
                 "network_latency": 0.1 + leak_rate * 100,
                 "error_rate": 0.02,
@@ -217,11 +242,19 @@ class SyntheticIncidentGenerator:
         """Network partition between two service groups."""
         topology = SystemTopology()
         # Group A
-        topology.add_component(ComponentInfo(name="gateway", boundary_layers=["application_log", "metrics_export"]))
-        topology.add_component(ComponentInfo(name="auth", boundary_layers=["application_log", "metrics_export"]))
+        topology.add_component(
+            ComponentInfo(name="gateway", boundary_layers=["application_log", "metrics_export"])
+        )
+        topology.add_component(
+            ComponentInfo(name="auth", boundary_layers=["application_log", "metrics_export"])
+        )
         # Group B
-        topology.add_component(ComponentInfo(name="payments", boundary_layers=["application_log", "metrics_export"]))
-        topology.add_component(ComponentInfo(name="orders", boundary_layers=["application_log", "metrics_export"]))
+        topology.add_component(
+            ComponentInfo(name="payments", boundary_layers=["application_log", "metrics_export"])
+        )
+        topology.add_component(
+            ComponentInfo(name="orders", boundary_layers=["application_log", "metrics_export"])
+        )
 
         # Normal edges
         topology.add_causal_edge(CausalEdge(source="gateway", target="auth"))
@@ -235,10 +268,30 @@ class SyntheticIncidentGenerator:
         partition_start = 20_000_000_000
 
         component_states = {
-            "gateway": {"cpu_pressure": 0.5, "memory_pressure": 0.4, "network_latency": 0.8, "error_rate": 0.3},
-            "auth": {"cpu_pressure": 0.3, "memory_pressure": 0.3, "network_latency": 0.2, "error_rate": 0.05},
-            "payments": {"cpu_pressure": 0.4, "memory_pressure": 0.4, "network_latency": 0.7, "error_rate": 0.25},
-            "orders": {"cpu_pressure": 0.3, "memory_pressure": 0.3, "network_latency": 0.1, "error_rate": 0.01},
+            "gateway": {
+                "cpu_pressure": 0.5,
+                "memory_pressure": 0.4,
+                "network_latency": 0.8,
+                "error_rate": 0.3,
+            },
+            "auth": {
+                "cpu_pressure": 0.3,
+                "memory_pressure": 0.3,
+                "network_latency": 0.2,
+                "error_rate": 0.05,
+            },
+            "payments": {
+                "cpu_pressure": 0.4,
+                "memory_pressure": 0.4,
+                "network_latency": 0.7,
+                "error_rate": 0.25,
+            },
+            "orders": {
+                "cpu_pressure": 0.3,
+                "memory_pressure": 0.3,
+                "network_latency": 0.1,
+                "error_rate": 0.01,
+            },
         }
 
         network_states = {
@@ -272,11 +325,18 @@ class SyntheticIncidentGenerator:
     def _generate_deployment_rollback(self, **kwargs) -> SyntheticIncident:
         """Bad deployment causing config regression."""
         topology = SystemTopology()
-        topology.add_component(ComponentInfo(
-            name="svc",
-            capacity=ResourceCapacity(cpu_cores=4.0),
-            boundary_layers=["application_log", "metrics_export", "distributed_trace", "deployment_event"],
-        ))
+        topology.add_component(
+            ComponentInfo(
+                name="svc",
+                capacity=ResourceCapacity(cpu_cores=4.0),
+                boundary_layers=[
+                    "application_log",
+                    "metrics_export",
+                    "distributed_trace",
+                    "deployment_event",
+                ],
+            )
+        )
 
         duration = 120_000_000_000  # 2 minutes
         deploy_time = 30_000_000_000
@@ -316,15 +376,39 @@ class SyntheticIncidentGenerator:
     def _generate_dependency_failure(self, **kwargs) -> SyntheticIncident:
         """Upstream dependency (cache/db) fails, cascading to consumers."""
         topology = SystemTopology()
-        topology.add_component(ComponentInfo(name="cache", capacity=ResourceCapacity(), boundary_layers=["application_log", "infrastructure_log"]))
-        topology.add_component(ComponentInfo(name="app", capacity=ResourceCapacity(), boundary_layers=["application_log", "metrics_export", "distributed_trace"]))
-        topology.add_causal_edge(CausalEdge(source="app", target="cache", latency_ms=1.0, edge_type="cache"))
+        topology.add_component(
+            ComponentInfo(
+                name="cache",
+                capacity=ResourceCapacity(),
+                boundary_layers=["application_log", "infrastructure_log"],
+            )
+        )
+        topology.add_component(
+            ComponentInfo(
+                name="app",
+                capacity=ResourceCapacity(),
+                boundary_layers=["application_log", "metrics_export", "distributed_trace"],
+            )
+        )
+        topology.add_causal_edge(
+            CausalEdge(source="app", target="cache", latency_ms=1.0, edge_type="cache")
+        )
 
         duration = 60_000_000_000
 
         component_states = {
-            "cache": {"cpu_pressure": 0.9, "memory_pressure": 0.8, "error_rate": 0.8, "network_latency": 0.9},
-            "app": {"cpu_pressure": 0.6, "memory_pressure": 0.5, "error_rate": 0.4, "service_dependency": 0.9},
+            "cache": {
+                "cpu_pressure": 0.9,
+                "memory_pressure": 0.8,
+                "error_rate": 0.8,
+                "network_latency": 0.9,
+            },
+            "app": {
+                "cpu_pressure": 0.6,
+                "memory_pressure": 0.5,
+                "error_rate": 0.4,
+                "service_dependency": 0.9,
+            },
         }
 
         ground_truth = GroundTruthState(
@@ -351,18 +435,42 @@ class SyntheticIncidentGenerator:
     def _generate_resource_contention(self, **kwargs) -> SyntheticIncident:
         """Multiple services contending for shared resource (DB connection pool)."""
         topology = SystemTopology()
-        topology.add_component(ComponentInfo(name="app1", boundary_layers=["application_log", "metrics_export"]))
-        topology.add_component(ComponentInfo(name="app2", boundary_layers=["application_log", "metrics_export"]))
-        topology.add_component(ComponentInfo(name="db", boundary_layers=["application_log", "metrics_export", "infrastructure_log"]))
+        topology.add_component(
+            ComponentInfo(name="app1", boundary_layers=["application_log", "metrics_export"])
+        )
+        topology.add_component(
+            ComponentInfo(name="app2", boundary_layers=["application_log", "metrics_export"])
+        )
+        topology.add_component(
+            ComponentInfo(
+                name="db",
+                boundary_layers=["application_log", "metrics_export", "infrastructure_log"],
+            )
+        )
         topology.add_causal_edge(CausalEdge(source="app1", target="db", latency_ms=2.0))
         topology.add_causal_edge(CausalEdge(source="app2", target="db", latency_ms=2.0))
 
         duration = 60_000_000_000
 
         component_states = {
-            "app1": {"cpu_pressure": 0.4, "memory_pressure": 0.3, "resource_contention": 0.8, "error_rate": 0.15},
-            "app2": {"cpu_pressure": 0.5, "memory_pressure": 0.4, "resource_contention": 0.9, "error_rate": 0.25},
-            "db": {"cpu_pressure": 0.7, "memory_pressure": 0.6, "resource_contention": 0.95, "network_latency": 0.6},
+            "app1": {
+                "cpu_pressure": 0.4,
+                "memory_pressure": 0.3,
+                "resource_contention": 0.8,
+                "error_rate": 0.15,
+            },
+            "app2": {
+                "cpu_pressure": 0.5,
+                "memory_pressure": 0.4,
+                "resource_contention": 0.9,
+                "error_rate": 0.25,
+            },
+            "db": {
+                "cpu_pressure": 0.7,
+                "memory_pressure": 0.6,
+                "resource_contention": 0.95,
+                "network_latency": 0.6,
+            },
         }
 
         ground_truth = GroundTruthState(
@@ -389,9 +497,18 @@ class SyntheticIncidentGenerator:
     def _generate_silent_data_corruption(self, **kwargs) -> SyntheticIncident:
         """Silent data corruption - no errors, wrong results. Hardest to detect."""
         topology = SystemTopology()
-        topology.add_component(ComponentInfo(name="api", boundary_layers=["application_log", "metrics_export", "distributed_trace"]))
-        topology.add_component(ComponentInfo(name="processor", boundary_layers=["application_log", "metrics_export"]))
-        topology.add_component(ComponentInfo(name="storage", boundary_layers=["application_log", "infrastructure_log"]))
+        topology.add_component(
+            ComponentInfo(
+                name="api",
+                boundary_layers=["application_log", "metrics_export", "distributed_trace"],
+            )
+        )
+        topology.add_component(
+            ComponentInfo(name="processor", boundary_layers=["application_log", "metrics_export"])
+        )
+        topology.add_component(
+            ComponentInfo(name="storage", boundary_layers=["application_log", "infrastructure_log"])
+        )
         topology.add_causal_edge(CausalEdge(source="api", target="processor"))
         topology.add_causal_edge(CausalEdge(source="processor", target="storage"))
 
@@ -399,8 +516,18 @@ class SyntheticIncidentGenerator:
 
         # Ground truth: all metrics look normal, but logical errors occur
         component_states = {
-            "api": {"cpu_pressure": 0.3, "memory_pressure": 0.3, "error_rate": 0.01, "config_change": 0.0},
-            "processor": {"cpu_pressure": 0.4, "memory_pressure": 0.3, "error_rate": 0.001, "config_change": 0.0},  # Very low error rate!
+            "api": {
+                "cpu_pressure": 0.3,
+                "memory_pressure": 0.3,
+                "error_rate": 0.01,
+                "config_change": 0.0,
+            },
+            "processor": {
+                "cpu_pressure": 0.4,
+                "memory_pressure": 0.3,
+                "error_rate": 0.001,
+                "config_change": 0.0,
+            },  # Very low error rate!
             "storage": {"cpu_pressure": 0.3, "memory_pressure": 0.4, "error_rate": 0.0},
         }
 
@@ -455,9 +582,7 @@ class SyntheticIncidentGenerator:
                 # Metrics export
                 if "metrics_export" in topology.components[comp_name].boundary_layers:
                     event_id += 1
-                    metric_event = self._create_metric_event(
-                        comp_name, comp_state, affected, t_ns
-                    )
+                    metric_event = self._create_metric_event(comp_name, comp_state, affected, t_ns)
                     timeline.append(metric_event)
 
                 # Distributed trace
@@ -471,33 +596,37 @@ class SyntheticIncidentGenerator:
                 # Infrastructure log
                 if "infrastructure_log" in topology.components[comp_name].boundary_layers:
                     event_id += 1
-                    infra_event = self._create_infra_event(
-                        comp_name, comp_state, affected, t_ns
-                    )
+                    infra_event = self._create_infra_event(comp_name, comp_state, affected, t_ns)
                     timeline.append(infra_event)
 
                 # Deployment event
                 if "deployment_event" in topology.components[comp_name].boundary_layers:
                     if ground_truth.incident_type == IncidentType.DEPLOYMENT_ROLLBACK:
                         event_id += 1
-                        deploy_event = self._create_deploy_event(
-                            comp_name, t_ns, ground_truth
-                        )
+                        deploy_event = self._create_deploy_event(comp_name, t_ns, ground_truth)
                         timeline.append(deploy_event)
 
         return timeline
 
-    def _create_log_event(self, comp: str, state: Dict, affected: bool, t_ns: int, gt: GroundTruthState) -> Dict:
+    def _create_log_event(
+        self, comp: str, state: Dict, affected: bool, t_ns: int, gt: GroundTruthState
+    ) -> Dict:
         """Create application log event."""
         if not affected:
             msg = f"Normal operation in {comp}"
-            attrs = {"cpu_usage": state.get("cpu_pressure", 0.3), "memory_usage": state.get("memory_pressure", 0.3)}
+            attrs = {
+                "cpu_usage": state.get("cpu_pressure", 0.3),
+                "memory_usage": state.get("memory_pressure", 0.3),
+            }
             status = "ok"
         else:
             # Generate realistic log based on root cause
             if comp == gt.root_cause and "cpu_pressure" in state and state["cpu_pressure"] > 0.8:
-                msg = f"CRITICAL: CPU utilization at {int(state['cpu_pressure']*100)}%"
-                attrs = {"cpu_usage": state["cpu_pressure"], "thread_count": int(state["cpu_pressure"]*100)}
+                msg = f"CRITICAL: CPU utilization at {int(state['cpu_pressure'] * 100)}%"
+                attrs = {
+                    "cpu_usage": state["cpu_pressure"],
+                    "thread_count": int(state["cpu_pressure"] * 100),
+                }
                 status = "critical"
             elif "error_rate" in state and state["error_rate"] > 0.2:
                 msg = "ERROR: High error rate detected"
@@ -538,7 +667,9 @@ class SyntheticIncidentGenerator:
             "status": "ok" if not affected else "warning",
         }
 
-    def _create_trace_event(self, comp: str, state: Dict, affected: bool, t_ns: int, topo: SystemTopology) -> Dict:
+    def _create_trace_event(
+        self, comp: str, state: Dict, affected: bool, t_ns: int, topo: SystemTopology
+    ) -> Dict:
         """Create distributed trace event."""
         # Pick a random trace span
         trace_id = f"trace_{t_ns % 1000}"
@@ -612,6 +743,22 @@ def generate_all_incident_types() -> List[SyntheticIncident]:
     ]
 
 
+# Ground-truth state keys (generator vocabulary) → the matching
+# ReconstructedServiceState field names (normalized [0, 1] pressure dims).
+# The two vocabularies diverged ("cpu_pressure" vs "cpu_usage"), so every
+# comparison used mismatched names: the root-cause equality could never
+# fire, and the per-component cosine read literal zeros for the recon side.
+# gt keys with no normalized analog on the recon side (config_change,
+# resource_contention, service_dependency, deployment_activity) have no
+# entry here and are skipped by comparisons rather than scored as zeros.
+GT_DIMENSION_TO_RECON: Dict[str, str] = {
+    "cpu_pressure": "cpu_usage",
+    "memory_pressure": "memory_usage",
+    "network_latency": "network_usage",
+    "error_rate": "error_rate",
+}
+
+
 def validate_reconstruction(
     incident: SyntheticIncident,
     reconstruction: HolographicReconstruction,
@@ -636,18 +783,34 @@ def validate_reconstruction(
 
     # Check root cause identification
     recon_root = ""
-    max_pressure = 0
+    recon_dim = ""
+    max_pressure = 0.0
     for svc, sstate in reconstruction.reconstructed_services.items():
-        # Find the dimension with highest pressure
-        for dim, val in sstate.__dict__.items():
+        # Find the dimension with highest pressure. ReconstructedServiceState is
+        # a slots dataclass (no __dict__) — iterate the normalized pressure dims.
+        for dim in PRESSURE_DIMENSIONS:
+            val = getattr(sstate, dim)
             if val > max_pressure:
                 max_pressure = val
                 recon_root = f"{svc}/{dim}"
+                recon_dim = dim
 
-    gt_root = f"{gt.root_cause}/{gt.root_cause_dimension}"
-    results["root_cause_correct"] = recon_root == gt_root
+    # Compare in the reconstruction's vocabulary: map the gt dimension name
+    # onto the recon field name first. Dimensions the recon side cannot
+    # express (config_change, resource_contention, ...) can never match a
+    # pressure dim, so for those the component match alone decides
+    # root_cause_correct and the dimension is scored as incorrect.
+    gt_dim_mapped = GT_DIMENSION_TO_RECON.get(gt.root_cause_dimension)
+    results["root_cause_dimension_correct"] = (
+        recon_dim != "" and gt_dim_mapped is not None and recon_dim == gt_dim_mapped
+    )
+    results["root_cause_correct"] = (
+        recon_root != ""
+        and recon_root.split("/", 1)[0] == gt.root_cause
+        and (gt_dim_mapped is None or results["root_cause_dimension_correct"])
+    )
     results["reconstructed_root_cause"] = recon_root
-    results["expected_root_cause"] = gt_root
+    results["expected_root_cause"] = f"{gt.root_cause}/{gt.root_cause_dimension}"
 
     # Per-component fidelity (cosine similarity of state vectors)
     total_similarity = 0
@@ -660,10 +823,22 @@ def validate_reconstruction(
 
         recon_state = reconstruction.reconstructed_services[comp]
 
-        # Build state vectors in same order
-        dims = sorted(gt_state.keys())
-        gt_vec = np.array([gt_state[d] for d in dims])
-        recon_vec = np.array([getattr(recon_state, d, 0) for d in dims])
+        # Build state vectors in the SAME vocabulary: translate gt dim names to
+        # recon field names and skip gt dims the recon state cannot express
+        # (previously each unmapped name read getattr(..., 0), so the recon
+        # vector was all zeros and every cosine collapsed to 0.0).
+        pairs = sorted(
+            (gt_dim, GT_DIMENSION_TO_RECON[gt_dim])
+            for gt_dim in gt_state
+            if gt_dim in GT_DIMENSION_TO_RECON
+        )
+        if not pairs:
+            # No comparable dimension — record 0.0 but keep it out of the mean.
+            results["per_component_fidelity"][comp] = 0.0
+            continue
+
+        gt_vec = np.array([gt_state[gt_dim] for gt_dim, _ in pairs])
+        recon_vec = np.array([getattr(recon_state, recon_dim) for _, recon_dim in pairs])
 
         # Cosine similarity
         norm_gt = np.linalg.norm(gt_vec)
@@ -706,6 +881,8 @@ if __name__ == "__main__":
     print(f"Generated {len(incidents)} synthetic incidents:")
     for inc in incidents:
         print(f"  {inc.incident_id}: {inc.ground_truth.incident_type.value}")
-        print(f"    Root cause: {inc.ground_truth.root_cause}/{inc.ground_truth.root_cause_dimension}")
+        print(
+            f"    Root cause: {inc.ground_truth.root_cause}/{inc.ground_truth.root_cause_dimension}"
+        )
         print(f"    HEUs: {len(inc.heus)}")
         print(f"    Components: {list(inc.ground_truth.component_states.keys())}")

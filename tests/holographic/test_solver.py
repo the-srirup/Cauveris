@@ -1,6 +1,7 @@
 """
 Unit tests for Holographic Inverse Solver - Phase 2.
 """
+
 import pytest
 import numpy as np
 import scipy.sparse as sp
@@ -12,7 +13,12 @@ from cauveris.holographic.solver import (
     SolverResult,
     solve_holographic_inverse,
 )
-from cauveris.holographic.topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
+from cauveris.holographic.topology import (
+    SystemTopology,
+    ComponentInfo,
+    ResourceCapacity,
+    CausalEdge,
+)
 from cauveris.holographic.heu import convert_timeline_to_heus
 from cauveris.holographic.heu_kernel import CausalKernelBuilder
 from cauveris.holographic.measurement import build_measurement_system, MeasurementConfig
@@ -74,30 +80,48 @@ class TestHolographicSolver:
 
     def setup_method(self):
         self.topo = SystemTopology()
-        self.topo.add_component(ComponentInfo(
-            name="svc_a",
-            capacity=ResourceCapacity(cpu_cores=4.0),
-            boundary_layers=["application_log", "metrics_export"]
-        ))
-        self.topo.add_component(ComponentInfo(
-            name="svc_b",
-            capacity=ResourceCapacity(cpu_cores=2.0),
-            boundary_layers=["application_log"]
-        ))
-        self.topo.add_causal_edge(CausalEdge(
-            source="svc_a",
-            target="svc_b",
-            latency_ms=5.0
-        ))
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_a",
+                capacity=ResourceCapacity(cpu_cores=4.0),
+                boundary_layers=["application_log", "metrics_export"],
+            )
+        )
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_b",
+                capacity=ResourceCapacity(cpu_cores=2.0),
+                boundary_layers=["application_log"],
+            )
+        )
+        self.topo.add_causal_edge(CausalEdge(source="svc_a", target="svc_b", latency_ms=5.0))
 
         # Build measurement system
         timeline = [
-            {"event_id": "1", "timestamp_ns": 100_000_000, "source_type": "jsonl_log", "message": "High CPU",
-             "attributes": {"service": "svc_a", "cpu_usage": 0.8}, "status": "warning"},
-            {"event_id": "2", "timestamp_ns": 200_000_000, "source_type": "csv_metrics", "message": "Metric",
-             "attributes": {"service": "svc_a", "cpu_usage": 0.7}, "status": "ok"},
-            {"event_id": "3", "timestamp_ns": 300_000_000, "source_type": "jsonl_log", "message": "Normal CPU",
-             "attributes": {"service": "svc_b", "cpu_usage": 0.3}, "status": "ok"},
+            {
+                "event_id": "1",
+                "timestamp_ns": 100_000_000,
+                "source_type": "jsonl_log",
+                "message": "High CPU",
+                "attributes": {"service": "svc_a", "cpu_usage": 0.8},
+                "status": "warning",
+            },
+            {
+                "event_id": "2",
+                "timestamp_ns": 200_000_000,
+                "source_type": "csv_metrics",
+                "message": "Metric",
+                "attributes": {"service": "svc_a", "cpu_usage": 0.7},
+                "status": "ok",
+            },
+            {
+                "event_id": "3",
+                "timestamp_ns": 300_000_000,
+                "source_type": "jsonl_log",
+                "message": "Normal CPU",
+                "attributes": {"service": "svc_b", "cpu_usage": 0.3},
+                "status": "ok",
+            },
         ]
         heus = convert_timeline_to_heus(timeline, {}, 1_000_000_000)
 
@@ -147,6 +171,7 @@ class TestHolographicSolver:
         empty_topo.add_component(ComponentInfo(name="svc_a"))
 
         from cauveris.holographic.measurement import MeasurementSystem
+
         empty_system = MeasurementSystem(
             M=sp.csr_matrix((0, 0)),
             b=np.array([]),
@@ -171,7 +196,7 @@ class TestHolographicSolver:
 
         # Data term should be ||b||^2 at x=0
         data_at_zero = solver._data_term(x_zero)
-        b_norm_sq = np.sum(self.measurement_system.b ** 2)
+        b_norm_sq = np.sum(self.measurement_system.b**2)
         assert abs(data_at_zero - b_norm_sq) < 1e-6
 
         # Entropy at zero should be log(n_state) (uniform distribution has max entropy)
@@ -207,11 +232,21 @@ class TestSolveHolographicInverse:
 
     def test_solve(self):
         topo = SystemTopology()
-        topo.add_component(ComponentInfo(name="svc_a", capacity=ResourceCapacity(), boundary_layers=["application_log"]))
+        topo.add_component(
+            ComponentInfo(
+                name="svc_a", capacity=ResourceCapacity(), boundary_layers=["application_log"]
+            )
+        )
 
         timeline = [
-            {"event_id": "1", "timestamp_ns": 100_000_000, "source_type": "jsonl_log", "message": "Test",
-             "attributes": {"service": "svc_a", "cpu_usage": 0.5}, "status": "ok"},
+            {
+                "event_id": "1",
+                "timestamp_ns": 100_000_000,
+                "source_type": "jsonl_log",
+                "message": "Test",
+                "attributes": {"service": "svc_a", "cpu_usage": 0.5},
+                "status": "ok",
+            },
         ]
         heus = convert_timeline_to_heus(timeline, {}, 1_000_000_000)
 

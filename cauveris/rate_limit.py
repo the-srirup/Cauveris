@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class RateLimitAlgorithm(Enum):
     """Supported rate limiting algorithms."""
+
     TOKEN_BUCKET = "token_bucket"
     SLIDING_WINDOW = "sliding_window"
     SLIDING_WINDOW_LOG = "sliding_window_log"  # More precise, stores all timestamps
@@ -35,6 +36,7 @@ class RateLimitAlgorithm(Enum):
 
 class RateLimitAction(Enum):
     """Action to take when rate limit is exceeded."""
+
     ALLOW = "allow"
     DENY = "deny"
 
@@ -42,6 +44,7 @@ class RateLimitAction(Enum):
 @dataclass
 class RateLimitConfig:
     """Configuration for a single rate limit window."""
+
     limit: int
     window_seconds: int
     algorithm: RateLimitAlgorithm = RateLimitAlgorithm.SLIDING_WINDOW_LOG
@@ -50,6 +53,7 @@ class RateLimitConfig:
 @dataclass
 class RateLimitResult:
     """Result of a rate limit check."""
+
     allowed: bool
     current_count: int
     limit: int
@@ -76,6 +80,7 @@ class RateLimitResult:
 @dataclass
 class RateLimitPolicy:
     """A named rate limit policy with multiple windows."""
+
     name: str
     windows: List[RateLimitConfig]
     cost: int = 1  # Cost in tokens for token bucket
@@ -86,92 +91,92 @@ COST_CLASS_POLICIES: Dict[str, RateLimitPolicy] = {
     "LOW_COST": RateLimitPolicy(
         name="low_cost",
         windows=[
-            RateLimitConfig(limit=100, window_seconds=60),      # 100/min
-            RateLimitConfig(limit=1000, window_seconds=3600),   # 1000/hr
+            RateLimitConfig(limit=100, window_seconds=60),  # 100/min
+            RateLimitConfig(limit=1000, window_seconds=3600),  # 1000/hr
         ],
     ),
     "NORMAL_READ": RateLimitPolicy(
         name="normal_read",
         windows=[
-            RateLimitConfig(limit=60, window_seconds=60),       # 60/min
-            RateLimitConfig(limit=500, window_seconds=3600),    # 500/hr
+            RateLimitConfig(limit=60, window_seconds=60),  # 60/min
+            RateLimitConfig(limit=500, window_seconds=3600),  # 500/hr
         ],
     ),
     "PUBLIC_READ": RateLimitPolicy(
         name="public_read",
         windows=[
-            RateLimitConfig(limit=200, window_seconds=60),      # 200/min
-            RateLimitConfig(limit=2000, window_seconds=3600),   # 2000/hr
+            RateLimitConfig(limit=200, window_seconds=60),  # 200/min
+            RateLimitConfig(limit=2000, window_seconds=3600),  # 2000/hr
         ],
     ),
     "MUTATION": RateLimitPolicy(
         name="mutation",
         windows=[
-            RateLimitConfig(limit=30, window_seconds=60),       # 30/min
-            RateLimitConfig(limit=200, window_seconds=3600),    # 200/hr
+            RateLimitConfig(limit=30, window_seconds=60),  # 30/min
+            RateLimitConfig(limit=200, window_seconds=3600),  # 200/hr
         ],
         cost=1,
     ),
     "UPLOAD": RateLimitPolicy(
         name="upload",
         windows=[
-            RateLimitConfig(limit=10, window_seconds=60),       # 10/min
-            RateLimitConfig(limit=50, window_seconds=3600),     # 50/hr
+            RateLimitConfig(limit=10, window_seconds=60),  # 10/min
+            RateLimitConfig(limit=50, window_seconds=3600),  # 50/hr
         ],
         cost=5,
     ),
     "COMPUTE": RateLimitPolicy(
         name="compute",
         windows=[
-            RateLimitConfig(limit=5, window_seconds=60),        # 5/min
-            RateLimitConfig(limit=30, window_seconds=3600),     # 30/hr
+            RateLimitConfig(limit=5, window_seconds=60),  # 5/min
+            RateLimitConfig(limit=30, window_seconds=3600),  # 30/hr
         ],
         cost=10,
     ),
     "EXPERIMENT": RateLimitPolicy(
         name="experiment",
         windows=[
-            RateLimitConfig(limit=3, window_seconds=60),        # 3/min
-            RateLimitConfig(limit=10, window_seconds=3600),     # 10/hr
+            RateLimitConfig(limit=3, window_seconds=60),  # 3/min
+            RateLimitConfig(limit=10, window_seconds=3600),  # 10/hr
         ],
         cost=20,
     ),
     "PATCH": RateLimitPolicy(
         name="patch",
         windows=[
-            RateLimitConfig(limit=5, window_seconds=60),        # 5/min
-            RateLimitConfig(limit=20, window_seconds=3600),     # 20/hr
+            RateLimitConfig(limit=5, window_seconds=60),  # 5/min
+            RateLimitConfig(limit=20, window_seconds=3600),  # 20/hr
         ],
         cost=15,
     ),
     "DOWNLOAD": RateLimitPolicy(
         name="download",
         windows=[
-            RateLimitConfig(limit=20, window_seconds=60),       # 20/min
-            RateLimitConfig(limit=200, window_seconds=3600),    # 200/hr
+            RateLimitConfig(limit=20, window_seconds=60),  # 20/min
+            RateLimitConfig(limit=200, window_seconds=3600),  # 200/hr
         ],
         cost=2,
     ),
     "STREAM": RateLimitPolicy(
         name="stream",
         windows=[
-            RateLimitConfig(limit=5, window_seconds=60),        # 5 concurrent
+            RateLimitConfig(limit=5, window_seconds=60),  # 5 concurrent
         ],
         cost=1,
     ),
     "MODEL": RateLimitPolicy(
         name="model",
         windows=[
-            RateLimitConfig(limit=20, window_seconds=60),       # 20/min
-            RateLimitConfig(limit=100, window_seconds=3600),    # 100/hr
+            RateLimitConfig(limit=20, window_seconds=60),  # 20/min
+            RateLimitConfig(limit=100, window_seconds=3600),  # 100/hr
         ],
         cost=50,
     ),
     "CRITICAL_COST": RateLimitPolicy(
         name="critical_cost",
         windows=[
-            RateLimitConfig(limit=2, window_seconds=60),        # 2/min
-            RateLimitConfig(limit=10, window_seconds=3600),     # 10/hr
+            RateLimitConfig(limit=2, window_seconds=60),  # 2/min
+            RateLimitConfig(limit=10, window_seconds=3600),  # 10/hr
         ],
         cost=100,
     ),
@@ -247,7 +252,7 @@ class InMemoryRateLimiter(RateLimiter):
     ) -> RateLimitResult:
         """Check all windows in the policy."""
         overall_allowed = True
-        overall_remaining = float('inf')
+        overall_remaining = float("inf")
         overall_reset = 0
         overall_retry_after = None
         current_counts = {}
@@ -347,6 +352,7 @@ class RedisRateLimiter(RateLimiter):
         if self._redis is None:
             try:
                 import redis.asyncio as redis
+
                 self._connection_pool = redis.ConnectionPool.from_url(
                     self._redis_url,
                     max_connections=20,
@@ -398,7 +404,7 @@ class RedisRateLimiter(RateLimiter):
 
         now = time.time()
         overall_allowed = True
-        overall_remaining = float('inf')
+        overall_remaining = float("inf")
         overall_reset = 0
         overall_retry_after = None
         current_counts = {}
@@ -584,7 +590,9 @@ async def check_rate_limit(
     Uses cost class policies by default.
     """
     limiter = get_rate_limiter()
-    policy = custom_policy or COST_CLASS_POLICIES.get(cost_class, COST_CLASS_POLICIES["NORMAL_READ"])
+    policy = custom_policy or COST_CLASS_POLICIES.get(
+        cost_class, COST_CLASS_POLICIES["NORMAL_READ"]
+    )
     return await limiter.check_limit(key, policy, cost)
 
 
@@ -602,6 +610,7 @@ def rate_limited(
         async def my_endpoint(request: Request, ...):
             ...
     """
+
     def decorator(func):
         async def wrapper(*args, **kwargs):
             # Extract request from args/kwargs
@@ -635,6 +644,7 @@ def rate_limited(
             # Add headers to response (would need response manipulation)
             if not result.allowed:
                 from fastapi import HTTPException
+
                 raise HTTPException(
                     status_code=429,
                     detail=f"Rate limit exceeded: {result.policy_name}",
@@ -642,7 +652,9 @@ def rate_limited(
                 )
 
             return await func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -656,8 +668,7 @@ class SyncRateLimiter:
     def check_limit(self, key: str, limit: int, window_seconds: int) -> tuple[bool, int, int]:
         """Sync check matching Phase 2 interface."""
         policy = RateLimitPolicy(
-            name="sync",
-            windows=[RateLimitConfig(limit=limit, window_seconds=window_seconds)]
+            name="sync", windows=[RateLimitConfig(limit=limit, window_seconds=window_seconds)]
         )
         # Run async method in sync context
         try:

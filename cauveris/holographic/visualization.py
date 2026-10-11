@@ -30,6 +30,7 @@ from .anomaly import AnomalyReport, AnomalySeverity
 
 class VisualizationFormat(Enum):
     """Output formats for visualization."""
+
     JSON = "json"
     MERMAID = "mermaid"
     PLOTLY = "plotly"
@@ -40,6 +41,7 @@ class VisualizationFormat(Enum):
 @dataclass
 class VisualizationData:
     """Complete visualization data package."""
+
     incident_id: str
     timestamp_ns: int
     format: VisualizationFormat = VisualizationFormat.JSON
@@ -72,7 +74,7 @@ class VisualizationData:
 
     def save(self, path: str) -> None:
         """Save to file."""
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             f.write(self.to_json())
 
 
@@ -233,7 +235,10 @@ class VisualizationDataGenerator:
         edges = []
 
         for edge in self.topology.causal_edges:
-            if edge.source in reconstruction.reconstructed_services and edge.target in reconstruction.reconstructed_services:
+            if (
+                edge.source in reconstruction.reconstructed_services
+                and edge.target in reconstruction.reconstructed_services
+            ):
                 src_state = reconstruction.reconstructed_services[edge.source]
                 tgt_state = reconstruction.reconstructed_services[edge.target]
 
@@ -290,7 +295,7 @@ class VisualizationDataGenerator:
         """
         layers = {}
 
-        observed_heus = getattr(reconstruction, 'observed_heus', {}) or {}
+        observed_heus = getattr(reconstruction, "observed_heus", {}) or {}
 
         for comp_name, state in reconstruction.reconstructed_services.items():
             comp = self.topology.components.get(comp_name)
@@ -303,7 +308,7 @@ class VisualizationDataGenerator:
 
             layer_data = {}
             for layer in comp.boundary_layers:
-                layer_name = layer.value if hasattr(layer, 'value') else str(layer)
+                layer_name = layer.value if hasattr(layer, "value") else str(layer)
                 layer_heus = [h for h in comp_heus if h.boundary_layer == layer]
 
                 if not layer_heus:
@@ -332,9 +337,7 @@ class VisualizationDataGenerator:
                     for dim, weight in (heu.encoded_dimensions or {}).items():
                         dim_weights.setdefault(dim, []).append(float(weight))
 
-                encoded = {
-                    dim: float(np.mean(vals)) for dim, vals in dim_weights.items()
-                }
+                encoded = {dim: float(np.mean(vals)) for dim, vals in dim_weights.items()}
 
                 reconstruction_weight = float(
                     np.mean([h.reconstruction_weight for h in layer_heus])
@@ -368,14 +371,19 @@ class VisualizationDataGenerator:
         hierarchy = []
 
         for scale, result in scale_results.items():
-            scale_name = scale.name if hasattr(scale, 'name') else str(scale)
-            hierarchy.append({
-                "scale": scale_name,
-                "time_window_ns": result.reconstruction.time_window_ns if hasattr(result.reconstruction, 'time_window_ns') else (0, 0),
-                "fidelity": result.reconstruction.overall_fidelity,
-                "num_components": len(result.reconstruction.reconstructed_services),
-                "prior_chained": getattr(scale_results.get(scale), 'prior_chained_from', None) is not None,
-            })
+            scale_name = scale.name if hasattr(scale, "name") else str(scale)
+            hierarchy.append(
+                {
+                    "scale": scale_name,
+                    "time_window_ns": result.reconstruction.time_window_ns
+                    if hasattr(result.reconstruction, "time_window_ns")
+                    else (0, 0),
+                    "fidelity": result.reconstruction.overall_fidelity,
+                    "num_components": len(result.reconstruction.reconstructed_services),
+                    "prior_chained": getattr(scale_results.get(scale), "prior_chained_from", None)
+                    is not None,
+                }
+            )
 
         return hierarchy
 
@@ -387,29 +395,35 @@ class VisualizationDataGenerator:
         regions = []
 
         for region in reconstruction.ambiguity_regions:
-            dim_str = ", ".join(region.affected_dimensions) if region.affected_dimensions else "unknown"
-            regions.append({
-                "component": region.component,
-                "dimension": dim_str,
-                "affected_dimensions": region.affected_dimensions,
-                "time_range_ns": region.time_range_ns,
-                "duration_ms": region.duration_ms,
-                "ambiguity_score": region.ambiguity_score,
-                "missing_layers": region.missing_layers,
-                "description": region.description,
-                "primary_value": region.ambiguity_score,
-                "ci_lower": max(0.0, region.ambiguity_score - 0.1),
-                "ci_upper": min(1.0, region.ambiguity_score + 0.1),
-                "ci_width": 0.2,
-                "entropy": region.ambiguity_score,
-                "num_alternatives": 0,
-                "alternatives": [],
-                "severity": (
-                    "high" if region.ambiguity_score > 0.5
-                    else "medium" if region.ambiguity_score > 0.2
-                    else "low"
-                ),
-            })
+            dim_str = (
+                ", ".join(region.affected_dimensions) if region.affected_dimensions else "unknown"
+            )
+            regions.append(
+                {
+                    "component": region.component,
+                    "dimension": dim_str,
+                    "affected_dimensions": region.affected_dimensions,
+                    "time_range_ns": region.time_range_ns,
+                    "duration_ms": region.duration_ms,
+                    "ambiguity_score": region.ambiguity_score,
+                    "missing_layers": region.missing_layers,
+                    "description": region.description,
+                    "primary_value": region.ambiguity_score,
+                    "ci_lower": max(0.0, region.ambiguity_score - 0.1),
+                    "ci_upper": min(1.0, region.ambiguity_score + 0.1),
+                    "ci_width": 0.2,
+                    "entropy": region.ambiguity_score,
+                    "num_alternatives": 0,
+                    "alternatives": [],
+                    "severity": (
+                        "high"
+                        if region.ambiguity_score > 0.5
+                        else "medium"
+                        if region.ambiguity_score > 0.2
+                        else "low"
+                    ),
+                }
+            )
 
         return regions
 
@@ -423,8 +437,13 @@ class VisualizationDataGenerator:
 
         # Compare states
         changes = []
-        for comp_name in set(orig.reconstructed_services.keys()) | set(interv.reconstructed_services.keys()):
-            if comp_name in orig.reconstructed_services and comp_name in interv.reconstructed_services:
+        for comp_name in set(orig.reconstructed_services.keys()) | set(
+            interv.reconstructed_services.keys()
+        ):
+            if (
+                comp_name in orig.reconstructed_services
+                and comp_name in interv.reconstructed_services
+            ):
                 o = orig.reconstructed_services[comp_name]
                 i = interv.reconstructed_services[comp_name]
 
@@ -434,14 +453,16 @@ class VisualizationDataGenerator:
                     diff = i_val - o_val
 
                     if abs(diff) > 0.01:
-                        changes.append({
-                            "component": comp_name,
-                            "dimension": dim,
-                            "original": o_val,
-                            "intervened": i_val,
-                            "change": diff,
-                            "improvement": diff < 0,  # Lower is better for most dims
-                        })
+                        changes.append(
+                            {
+                                "component": comp_name,
+                                "dimension": dim,
+                                "original": o_val,
+                                "intervened": i_val,
+                                "change": diff,
+                                "improvement": diff < 0,  # Lower is better for most dims
+                            }
+                        )
 
         return {
             "intervention": counterfactual.intervention.description,
@@ -507,7 +528,7 @@ class VisualizationDataGenerator:
             if comp.component_type == "database":
                 node_def = f'{comp_name}[("{label}")]'  # Stadium
             elif comp.component_type == "gateway":
-                node_def = f'{comp_name}>{{{label}}}]'  # Subroutine
+                node_def = f"{comp_name}>{{{label}}}]"  # Subroutine
             else:
                 node_def = f'{comp_name}["{label}"]'  # Rectangle
 
@@ -520,11 +541,16 @@ class VisualizationDataGenerator:
                 comp = anomaly.component.split("->")[0]  # Handle edge anomalies
                 if comp in reconstruction.reconstructed_services:
                     color = self.severity_colors.get(anomaly.severity, "#ef4444")
-                    lines.append(f"  style {comp} fill:{color},stroke:#7f1d1d,stroke-width:4px,stroke-dasharray: 5 5")
+                    lines.append(
+                        f"  style {comp} fill:{color},stroke:#7f1d1d,stroke-width:4px,stroke-dasharray: 5 5"
+                    )
 
         # Add edges
         for edge in self.topology.causal_edges:
-            if edge.source in reconstruction.reconstructed_services and edge.target in reconstruction.reconstructed_services:
+            if (
+                edge.source in reconstruction.reconstructed_services
+                and edge.target in reconstruction.reconstructed_services
+            ):
                 lines.append(f"  {edge.source} -->|{edge.latency_ms:.0f}ms| {edge.target}")
 
         # Add network edges
@@ -560,8 +586,12 @@ class VisualizationDataGenerator:
                 "<br>ERR: %{customdata[2]:.1%}<br>LAT: %{customdata[3]:.0f}ms<extra></extra>"
             ),
             "customdata": [
-                [n["metrics"]["cpu_usage"], n["metrics"]["memory_usage"],
-                 n["metrics"]["error_rate"], n["metrics"]["latency_p99_ms"]]
+                [
+                    n["metrics"]["cpu_usage"],
+                    n["metrics"]["memory_usage"],
+                    n["metrics"]["error_rate"],
+                    n["metrics"]["latency_p99_ms"],
+                ]
                 for n in bulk_nodes
             ],
         }
@@ -575,16 +605,18 @@ class VisualizationDataGenerator:
             src_pos = bulk_nodes[src_idx]["position"]
             tgt_pos = bulk_nodes[tgt_idx]["position"]
 
-            edge_traces.append({
-                "type": "scatter3d",
-                "mode": "lines",
-                "x": [src_pos[0], tgt_pos[0], None],
-                "y": [src_pos[1], tgt_pos[1], None],
-                "z": [src_pos[2], tgt_pos[2], None],
-                "line": {"color": edge["color"], "width": edge["thickness"]},
-                "showlegend": False,
-                "hoverinfo": "none",
-            })
+            edge_traces.append(
+                {
+                    "type": "scatter3d",
+                    "mode": "lines",
+                    "x": [src_pos[0], tgt_pos[0], None],
+                    "y": [src_pos[1], tgt_pos[1], None],
+                    "z": [src_pos[2], tgt_pos[2], None],
+                    "line": {"color": edge["color"], "width": edge["thickness"]},
+                    "showlegend": False,
+                    "hoverinfo": "none",
+                }
+            )
 
         return {
             "data": [node_trace] + edge_traces,
@@ -596,7 +628,7 @@ class VisualizationDataGenerator:
                     "zaxis": {"title": "Z"},
                 },
                 "showlegend": False,
-            }
+            },
         }
 
 
@@ -621,10 +653,16 @@ def generate_visualization_data(
 if __name__ == "__main__":
     # Quick test
     import sys
-    sys.path.insert(0, 'tests/holographic')
+
+    sys.path.insert(0, "tests/holographic")
     from synthetic import SyntheticIncidentGenerator, IncidentType
     from cauveris.holographic.integration import analyze_incident_holographically, HolographicConfig
-    from cauveris.holographic.counterfactual import CounterfactualHolographer, CausalKernelBuilder, Intervention, InterventionType
+    from cauveris.holographic.counterfactual import (
+        CounterfactualHolographer,
+        CausalKernelBuilder,
+        Intervention,
+        InterventionType,
+    )
     from cauveris.holographic.anomaly import create_anomaly_detector
 
     generator = SyntheticIncidentGenerator(seed=42)
@@ -646,7 +684,11 @@ if __name__ == "__main__":
 
     # Counterfactual
     holographer = CounterfactualHolographer(incident.topology, kernel_builder)
-    intervention = Intervention(intervention_type=InterventionType.CPU_SCALING, target_component="svc_0", parameters={"scale_factor": 4.0})
+    intervention = Intervention(
+        intervention_type=InterventionType.CPU_SCALING,
+        target_component="svc_0",
+        parameters={"scale_factor": 4.0},
+    )
     cf_result = holographer.simulate(result.reconstruction, intervention, result.time_window_ns)
 
     # Anomalies
@@ -654,7 +696,9 @@ if __name__ == "__main__":
     anomaly_report = detector.detect(result.reconstruction)
 
     # Generate visualization
-    viz_gen = VisualizationDataGenerator(incident.topology, incident.incident_id, result.reconstruction.reconstruction_timestamp_ns)
+    viz_gen = VisualizationDataGenerator(
+        incident.topology, incident.incident_id, result.reconstruction.reconstruction_timestamp_ns
+    )
     viz_data = viz_gen.generate(result.reconstruction, cf_result, anomaly_report)
 
     print(f"Bulk nodes: {len(viz_data.bulk_nodes)}")

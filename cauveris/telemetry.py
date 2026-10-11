@@ -65,7 +65,9 @@ class TelemetrySpan:
 
     def finish(self) -> None:
         self.end_time = time.time()
-        self.duration_ms = round((self.end_time - self.start_time) * 1000, 2) if self.start_time else 0.0
+        self.duration_ms = (
+            round((self.end_time - self.start_time) * 1000, 2) if self.start_time else 0.0
+        )
 
 
 class TelemetryBackend(ABC):
@@ -162,13 +164,17 @@ class ConsoleBackend(TelemetryBackend):
     def start_span(self, name: str, parent_span_id: Optional[str] = None) -> TelemetrySpan:
         span = TelemetrySpan(name=name, parent_span_id=parent_span_id)
         if self.config and self.config.debug:
-            print(f"[Telemetry Span Start] {span.name} (trace={span.trace_id}, span={span.span_id})")
+            print(
+                f"[Telemetry Span Start] {span.name} (trace={span.trace_id}, span={span.span_id})"
+            )
         return span
 
     def end_span(self, span: TelemetrySpan) -> None:
         span.finish()
         if self.config and self.config.debug:
-            print(f"[Telemetry Span End] {span.name} duration={span.duration_ms}ms status={span.status}")
+            print(
+                f"[Telemetry Span End] {span.name} duration={span.duration_ms}ms status={span.status}"
+            )
 
     def track_error(self, error: Exception, context: Optional[Dict[str, Any]] = None) -> None:
         print(f"[Telemetry Error] {type(error).__name__}: {error}")
@@ -190,6 +196,7 @@ class PrometheusBackend(TelemetryBackend):
         self._metrics: Dict[str, float] = {}
         try:
             from prometheus_client import Counter, Histogram, Gauge, start_http_server
+
             self._counter_cls = Counter
             self._histogram_cls = Histogram
             self._gauge_cls = Gauge
@@ -276,7 +283,9 @@ class PrometheusBackend(TelemetryBackend):
 
 
 # Context variables for request-scoped correlation IDs
-correlation_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="")
+correlation_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "correlation_id", default=""
+)
 incident_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("incident_id", default="")
 session_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("session_id", default="")
 
@@ -290,7 +299,9 @@ class TelemetryClient:
         self.initialized: bool = False
         self._session_id = str(uuid.uuid4())[:16]
 
-    async def initialize(self, config: Optional[TelemetryConfig] = None, backend: Optional[TelemetryBackend] = None) -> None:
+    async def initialize(
+        self, config: Optional[TelemetryConfig] = None, backend: Optional[TelemetryBackend] = None
+    ) -> None:
         config = config or TelemetryConfig()
         self.config = config
 
@@ -321,6 +332,7 @@ class TelemetryClient:
             return
 
         import random
+
         if random.random() > self.config.sample_rate:
             return
 
@@ -336,7 +348,13 @@ class TelemetryClient:
         )
         self.backend.track_event(event)
 
-    def track_metric(self, name: str, value: float, unit: Optional[str] = None, tags: Optional[Dict[str, str]] = None) -> None:
+    def track_metric(
+        self,
+        name: str,
+        value: float,
+        unit: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
+    ) -> None:
         if not self.initialized or not self.config.enabled:
             return
 
@@ -363,11 +381,13 @@ class TelemetryClient:
             return
 
         context = context or {}
-        context.update({
-            "session_id": self._session_id,
-            "correlation_id": correlation_id_var.get() or "",
-            "incident_id": incident_id_var.get() or "",
-        })
+        context.update(
+            {
+                "session_id": self._session_id,
+                "correlation_id": correlation_id_var.get() or "",
+                "incident_id": incident_id_var.get() or "",
+            }
+        )
         self.backend.track_error(error, context)
 
     async def flush(self) -> None:
@@ -384,8 +404,7 @@ telemetry = TelemetryClient()
 
 # Convenience functions
 async def initialize_telemetry(
-    config: Optional[TelemetryConfig] = None,
-    backend: Optional[TelemetryBackend] = None
+    config: Optional[TelemetryConfig] = None, backend: Optional[TelemetryBackend] = None
 ) -> None:
     """Initialize global telemetry client."""
     await telemetry.initialize(config, backend)
@@ -417,7 +436,7 @@ def track_api_request(
     status_code: int,
     duration_ms: float,
     success: bool,
-    incident_id: Optional[str] = None
+    incident_id: Optional[str] = None,
 ) -> None:
     """Track API request metrics."""
     if incident_id:
@@ -456,10 +475,7 @@ def track_api_request(
 
 
 def track_pipeline_stage(
-    stage_name: str,
-    status: str,
-    duration_ms: float,
-    incident_id: Optional[str] = None
+    stage_name: str, status: str, duration_ms: float, incident_id: Optional[str] = None
 ) -> None:
     """Track pipeline stage execution."""
     if incident_id:
@@ -489,7 +505,7 @@ def track_experiment(
     hypothesis_id: str,
     status: str,
     reproduction_rate: float,
-    incident_id: Optional[str] = None
+    incident_id: Optional[str] = None,
 ) -> None:
     """Track experiment execution."""
     if incident_id:
@@ -509,10 +525,7 @@ def track_experiment(
 
 
 def track_patch_verification(
-    patch_id: str,
-    score: float,
-    verified: bool,
-    incident_id: Optional[str] = None
+    patch_id: str, score: float, verified: bool, incident_id: Optional[str] = None
 ) -> None:
     """Track patch verification result."""
     if incident_id:
@@ -537,10 +550,7 @@ def track_patch_verification(
 
 
 def track_security_event(
-    event_type: str,
-    severity: str,
-    description: str,
-    incident_id: Optional[str] = None
+    event_type: str, severity: str, description: str, incident_id: Optional[str] = None
 ) -> None:
     """Track security events."""
     if incident_id:

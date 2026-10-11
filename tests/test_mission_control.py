@@ -12,14 +12,13 @@ Tests cover:
 - backend unavailable
 - failure display & dependency blocking
 """
+
 import io
 import zipfile
 import pytest
 from httpx import AsyncClient, ASGITransport
 from cauveris.api.main import app
 from cauveris.state_machine.orchestrator import PipelineOrchestrator, StageStatus
-
-
 
 
 @pytest.mark.asyncio
@@ -67,7 +66,7 @@ async def test_upload_validation(test_user):
         invalid_file = io.BytesIO(b"Not a zip file content")
         bad_upload = await client.post(
             f"/api/v1/incidents/{incident_id}/upload",
-            files={"file": ("bundle.txt", invalid_file, "text/plain")}
+            files={"file": ("bundle.txt", invalid_file, "text/plain")},
         )
         assert bad_upload.status_code == 400
         assert "ZIP archive" in bad_upload.json()["detail"]
@@ -75,7 +74,10 @@ async def test_upload_validation(test_user):
         # 3. Create a valid zip archive in-memory
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("manifest.yaml", "incident_id: UPLOAD-001\nsystem_name: amr-test\nrequired_evidence: []\n")
+            zf.writestr(
+                "manifest.yaml",
+                "incident_id: UPLOAD-001\nsystem_name: amr-test\nrequired_evidence: []\n",
+            )
             zf.writestr("logs/system.log", "2026-09-20T10:00:00Z system boot ok\n")
             zf.writestr("metrics/cpu.csv", "timestamp,cpu_percent\n2026-09-20T10:00:00Z,35\n")
         zip_buffer.seek(0)
@@ -83,7 +85,7 @@ async def test_upload_validation(test_user):
         # 4. Upload valid zip bundle
         upload_res = await client.post(
             f"/api/v1/incidents/{incident_id}/upload",
-            files={"file": ("bundle.zip", zip_buffer, "application/zip")}
+            files={"file": ("bundle.zip", zip_buffer, "application/zip")},
         )
         assert upload_res.status_code == 200
         up_data = upload_res.json()
@@ -180,6 +182,7 @@ async def test_terminal_states_and_dependency_blocking():
     # Test 1: Full pipeline reaches terminal state SUCCESS
     orch = PipelineOrchestrator()
     from cauveris.datasets.golden_incident import GoldenIncidentGenerator
+
     gen = GoldenIncidentGenerator()
     inc = gen.generate()
     _ctx = await orch.process_incident(inc)
@@ -267,6 +270,7 @@ async def test_failure_display_and_degraded_terminal_state():
     orch = PipelineOrchestrator()
     orch.simulate_degraded_stage = "report_generation"
     from cauveris.datasets.golden_incident import GoldenIncidentGenerator
+
     inc = GoldenIncidentGenerator().generate()
     await orch.process_incident(inc)
 

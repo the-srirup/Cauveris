@@ -12,6 +12,7 @@ of:
 
 This approach avoids flagging normal processing latency as anomalies.
 """
+
 from __future__ import annotations
 
 import logging
@@ -44,6 +45,7 @@ class CausalityViolation:
         confidence: 0..1 score, higher when delta is strongly negative
         description: Human-readable explanation
     """
+
     cause_id: str
     effect_id: str
     provenance: CausalityProvenance
@@ -58,6 +60,7 @@ class CausalEdge:
     """
     A directed edge in the inferred causal graph.
     """
+
     cause_id: str
     effect_id: str
     provenance: CausalityProvenance
@@ -153,7 +156,9 @@ class TemporalAnomalyDetector:
             return CausalityViolation(
                 cause_id=cause.evidence_id,
                 effect_id=effect.evidence_id,
-                provenance=cause.child_provenance.get(effect.evidence_id, CausalityProvenance.TEMPORAL_PROXIMITY),
+                provenance=cause.child_provenance.get(
+                    effect.evidence_id, CausalityProvenance.TEMPORAL_PROXIMITY
+                ),
                 timestamp_delta_ns=delta_ns,
                 tolerance_ns=tolerance_ns,
                 confidence=confidence,
@@ -192,11 +197,13 @@ def infer_causal_edges(
         for ev in evidence:
             if ev is dep or ev.timestamp_ns <= dep.timestamp_ns:
                 continue
-            edges.append(CausalEdge(
-                cause_id=dep.evidence_id,
-                effect_id=ev.evidence_id,
-                provenance=CausalityProvenance.DEPLOYMENT_CHAIN,
-            ))
+            edges.append(
+                CausalEdge(
+                    cause_id=dep.evidence_id,
+                    effect_id=ev.evidence_id,
+                    provenance=CausalityProvenance.DEPLOYMENT_CHAIN,
+                )
+            )
 
     # Freshness budget violation detection
     for ev in evidence:
@@ -216,10 +223,12 @@ def infer_causal_edges(
         for child in ev.child_candidates:
             prov = ev.child_provenance.get(child)
             if prov:
-                edges.append(CausalEdge(
-                    cause_id=ev.evidence_id,
-                    effect_id=child,
-                    provenance=prov,
-                ))
+                edges.append(
+                    CausalEdge(
+                        cause_id=ev.evidence_id,
+                        effect_id=child,
+                        provenance=prov,
+                    )
+                )
 
     return edges

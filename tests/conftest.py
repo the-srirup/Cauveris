@@ -1,11 +1,18 @@
 """
 Pytest configuration and shared fixtures for Cauveris tests.
 """
+
 import pytest
 from cauveris.api.main import (
-    incidents, pipeline_tasks, pipeline_progress, pipeline_contexts,
-    _incident_creation_timestamps, _active_incidents_per_user, _retained_incidents_per_user,
-    _active_incidents_per_org, _retained_incidents_per_org
+    incidents,
+    pipeline_tasks,
+    pipeline_progress,
+    pipeline_contexts,
+    _incident_creation_timestamps,
+    _active_incidents_per_user,
+    _retained_incidents_per_user,
+    _active_incidents_per_org,
+    _retained_incidents_per_org,
 )
 
 
@@ -24,60 +31,72 @@ def reset_all_state():
     _anonymous_incident_count = 0
     _global_active_incidents = 0
     from cauveris.idempotency import get_idempotency_store
+
     store = get_idempotency_store()
     if store is not None:
-        if hasattr(store, '_data'):
+        if hasattr(store, "_data"):
             store._data.clear()
     from cauveris.rate_limit import get_rate_limiter
+
     limiter = get_rate_limiter()
     if limiter is not None:
-        if hasattr(limiter, '_data'):
+        if hasattr(limiter, "_data"):
             limiter._data.clear()
-        if hasattr(limiter, '_locks'):
+        if hasattr(limiter, "_locks"):
             limiter._locks.clear()
     from cauveris.concurrency import get_concurrency_manager
+
     mgr = get_concurrency_manager()
     if mgr is not None:
         if mgr._store is not None:
-            if hasattr(mgr._store, '_slots'):
+            if hasattr(mgr._store, "_slots"):
                 mgr._store._slots.clear()
-            if hasattr(mgr._store, '_waiting'):
+            if hasattr(mgr._store, "_waiting"):
                 mgr._store._waiting.clear()
-            if hasattr(mgr._store, '_locks'):
+            if hasattr(mgr._store, "_locks"):
                 mgr._store._locks.clear()
     from cauveris.job_queue import get_job_queue
+
     jq = get_job_queue()
     if jq is not None:
         if jq._backend is not None:
-            if hasattr(jq._backend, '_queues'):
+            if hasattr(jq._backend, "_queues"):
                 jq._backend._queues.clear()
-            if hasattr(jq._backend, '_processing'):
+            if hasattr(jq._backend, "_processing"):
                 jq._backend._processing.clear()
-            if hasattr(jq._backend, '_dead_letter'):
+            if hasattr(jq._backend, "_dead_letter"):
                 jq._backend._dead_letter.clear()
-            if hasattr(jq._backend, '_completed'):
+            if hasattr(jq._backend, "_completed"):
                 jq._backend._completed.clear()
-            if hasattr(jq._backend, '_stats'):
+            if hasattr(jq._backend, "_stats"):
                 jq._backend._stats = {
-                    "enqueued": 0, "dequeued": 0, "completed": 0, "failed": 0,
-                    "dead_lettered": 0, "cancelled": 0, "expired": 0, "rejected_full": 0
+                    "enqueued": 0,
+                    "dequeued": 0,
+                    "completed": 0,
+                    "failed": 0,
+                    "dead_lettered": 0,
+                    "cancelled": 0,
+                    "expired": 0,
+                    "rejected_full": 0,
                 }
     # Reset auth store
     from cauveris.auth import get_auth_store
+
     auth_store = get_auth_store()
     if auth_store is not None:
-        if hasattr(auth_store, '_users'):
+        if hasattr(auth_store, "_users"):
             auth_store._users.clear()
-        if hasattr(auth_store, '_orgs'):
+        if hasattr(auth_store, "_orgs"):
             auth_store._orgs.clear()
-        if hasattr(auth_store, '_sessions'):
+        if hasattr(auth_store, "_sessions"):
             auth_store._sessions.clear()
-        if hasattr(auth_store, '_api_keys'):
+        if hasattr(auth_store, "_api_keys"):
             auth_store._api_keys.clear()
-        if hasattr(auth_store, '_audit_logs'):
+        if hasattr(auth_store, "_audit_logs"):
             auth_store._audit_logs.clear()
         # Re-add demo user if needed
         from cauveris.auth import User, UserRole, Organization
+
         demo_org = Organization(
             id="org_demo",
             name="Demo Organization",
@@ -113,7 +132,14 @@ def clean_state(request):
 @pytest.fixture
 async def test_user():
     """Create a test user and return auth headers."""
-    from cauveris.auth import get_auth_store, init_auth_store, TokenManager, UserRole, Organization, Session
+    from cauveris.auth import (
+        get_auth_store,
+        init_auth_store,
+        TokenManager,
+        UserRole,
+        Organization,
+        Session,
+    )
     from cauveris.config import get_settings
     import uuid
 
@@ -126,14 +152,17 @@ async def test_user():
 
     # Create organization with unique slug
     unique_slug = f"test-org-{uuid.uuid4().hex[:8]}"
-    org = await auth_store.create_org(Organization(
-        name="Test Org",
-        slug=unique_slug,
-        description="Test organization",
-    ))
+    org = await auth_store.create_org(
+        Organization(
+            name="Test Org",
+            slug=unique_slug,
+            description="Test organization",
+        )
+    )
 
     # Create user
     from cauveris.auth import User
+
     user = User(
         email=f"test-{uuid.uuid4().hex[:8]}@cauveris.local",
         full_name="Test User",
@@ -163,15 +192,22 @@ async def test_user():
         "access_token": session.access_token,
         "headers": {
             "Authorization": f"Bearer {session.access_token}",
-            "Cookie": f"access_token={session.access_token}; refresh_token={session.refresh_token}"
-        }
+            "Cookie": f"access_token={session.access_token}; refresh_token={session.refresh_token}",
+        },
     }
 
 
 @pytest.fixture
 async def test_user_admin():
     """Create an admin test user and return auth headers."""
-    from cauveris.auth import get_auth_store, init_auth_store, TokenManager, UserRole, Organization, Session
+    from cauveris.auth import (
+        get_auth_store,
+        init_auth_store,
+        TokenManager,
+        UserRole,
+        Organization,
+        Session,
+    )
     from cauveris.config import get_settings
     import uuid
 
@@ -184,14 +220,17 @@ async def test_user_admin():
 
     # Create organization with unique slug
     unique_slug = f"admin-org-{uuid.uuid4().hex[:8]}"
-    org = await auth_store.create_org(Organization(
-        name="Admin Org",
-        slug=unique_slug,
-        description="Admin test organization",
-    ))
+    org = await auth_store.create_org(
+        Organization(
+            name="Admin Org",
+            slug=unique_slug,
+            description="Admin test organization",
+        )
+    )
 
     # Create user
     from cauveris.auth import User
+
     user = User(
         email=f"admin-{uuid.uuid4().hex[:8]}@cauveris.local",
         full_name="Admin User",
@@ -221,6 +260,6 @@ async def test_user_admin():
         "access_token": session.access_token,
         "headers": {
             "Authorization": f"Bearer {session.access_token}",
-            "Cookie": f"access_token={session.access_token}; refresh_token={session.refresh_token}"
-        }
+            "Cookie": f"access_token={session.access_token}; refresh_token={session.refresh_token}",
+        },
     }

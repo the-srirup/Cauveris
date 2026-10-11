@@ -7,11 +7,12 @@ Implements hierarchical reconstruction across 4 scales:
 - TRANSACTION (seconds-minutes): Business transaction flow
 - REQUEST (milliseconds-seconds): Single trace span detail
 """
+
 from __future__ import annotations
 
 import numpy as np
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
@@ -25,19 +26,20 @@ from .heu_kernel import CausalKernelBuilder
 
 class ReconstructionScale(Enum):
     """Temporal scales for multi-scale reconstruction."""
-    SYSTEMIC = "systemic"       # Hours to days
-    INCIDENT = "incident"       # Minutes to hours
-    TRANSACTION = "transaction" # Seconds to minutes
-    REQUEST = "request"         # Milliseconds to seconds
+
+    SYSTEMIC = "systemic"  # Hours to days
+    INCIDENT = "incident"  # Minutes to hours
+    TRANSACTION = "transaction"  # Seconds to minutes
+    REQUEST = "request"  # Milliseconds to seconds
 
     @property
     def time_window_ns(self) -> int:
         """Time window in nanoseconds."""
         return {
             ReconstructionScale.SYSTEMIC: 24 * 60 * 60 * 1_000_000_000,  # 24 hours
-            ReconstructionScale.INCIDENT: 60 * 60 * 1_000_000_000,       # 1 hour
-            ReconstructionScale.TRANSACTION: 60 * 1_000_000_000,         # 1 minute
-            ReconstructionScale.REQUEST: 1_000_000_000,                   # 1 second
+            ReconstructionScale.INCIDENT: 60 * 60 * 1_000_000_000,  # 1 hour
+            ReconstructionScale.TRANSACTION: 60 * 1_000_000_000,  # 1 minute
+            ReconstructionScale.REQUEST: 1_000_000_000,  # 1 second
         }[self]
 
     @property
@@ -85,8 +87,9 @@ class ReconstructionScale(Enum):
 @dataclass(slots=True)
 class ScaleReconstruction:
     """Reconstruction result at a specific scale."""
+
     scale: ReconstructionScale
-    time_window_ns: Tuple[int, int]          # (start, end)
+    time_window_ns: Tuple[int, int]  # (start, end)
     heus: List[HolographicEvidenceUnit]
     reconstruction: HolographicReconstruction
     solver_result: Any
@@ -103,12 +106,15 @@ class ScaleReconstruction:
 @dataclass
 class MultiScaleConfig:
     """Configuration for multi-scale reconstruction."""
-    target_scales: List[ReconstructionScale] = field(default_factory=lambda: [
-        ReconstructionScale.SYSTEMIC,
-        ReconstructionScale.INCIDENT,
-        ReconstructionScale.TRANSACTION,
-        ReconstructionScale.REQUEST,
-    ])
+
+    target_scales: List[ReconstructionScale] = field(
+        default_factory=lambda: [
+            ReconstructionScale.SYSTEMIC,
+            ReconstructionScale.INCIDENT,
+            ReconstructionScale.TRANSACTION,
+            ReconstructionScale.REQUEST,
+        ]
+    )
     enable_prior_chaining: bool = True
     min_heus_per_scale: int = 5
     max_heus_per_scale: int = 5000
@@ -231,7 +237,9 @@ class MultiScaleReconstructor:
         )
 
         # Build HolographicReconstruction from result
-        reconstruction = self._build_reconstruction(result, measurement_system, scale, start_ns, end_ns)
+        reconstruction = self._build_reconstruction(
+            result, measurement_system, scale, start_ns, end_ns
+        )
 
         return ScaleReconstruction(
             scale=scale,
@@ -334,14 +342,16 @@ class MultiScaleReconstructor:
                 val = decoded[i]
                 # Low confidence if reconstruction weight was low or boundary residual high
                 if val < 0.1 or val > 1.0:
-                    recon.ambiguity_regions.append(AmbiguityRegion(
-                        component=sd.component,
-                        time_range_ns=(start_ns, end_ns),
-                        affected_dimensions=[sd.dimension],
-                        ambiguity_score=abs(val - 0.5) * 0.5,
-                        missing_layers=[],
-                        description=f"Ambiguous {sd.dimension} at scale {scale.value}",
-                    ))
+                    recon.ambiguity_regions.append(
+                        AmbiguityRegion(
+                            component=sd.component,
+                            time_range_ns=(start_ns, end_ns),
+                            affected_dimensions=[sd.dimension],
+                            ambiguity_score=abs(val - 0.5) * 0.5,
+                            missing_layers=[],
+                            description=f"Ambiguous {sd.dimension} at scale {scale.value}",
+                        )
+                    )
 
         return recon
 
@@ -357,17 +367,21 @@ class MultiScaleReconstructor:
             if not scale_result:
                 continue
 
-            comparison["fidelity_by_scale"][scale.value] = scale_result.reconstruction.overall_fidelity
+            comparison["fidelity_by_scale"][scale.value] = (
+                scale_result.reconstruction.overall_fidelity
+            )
 
             # Count ambiguous regions
             n_amb = len(scale_result.reconstruction.ambiguity_regions)
             comparison["ambiguity_by_scale"][scale.value] = n_amb
 
-            # Service states
+            # Service states. ReconstructedServiceState is a slots dataclass —
+            # it has no __dict__, so vars() raises; dataclasses.asdict() reads
+            # the fields directly and works on slots classes (field keys, so no
+            # underscore filtering is needed).
             services = scale_result.reconstruction.reconstructed_services
             comparison["state_consistency"][scale.value] = {
-                k: {k2: v2 for k2, v2 in vars(v).items() if not k2.startswith('_')}
-                for k, v in services.items()
+                k: asdict(v) for k, v in services.items()
             }
 
         return comparison
@@ -401,25 +415,44 @@ if __name__ == "__main__":
     from .topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
 
     topo = SystemTopology()
-    topo.add_component(ComponentInfo(name="svc_a", capacity=ResourceCapacity(cpu_cores=4.0), boundary_layers=["application_log", "metrics_export", "distributed_trace"]))
-    topo.add_component(ComponentInfo(name="svc_b", capacity=ResourceCapacity(cpu_cores=2.0), boundary_layers=["application_log", "metrics_export"]))
+    topo.add_component(
+        ComponentInfo(
+            name="svc_a",
+            capacity=ResourceCapacity(cpu_cores=4.0),
+            boundary_layers=["application_log", "metrics_export", "distributed_trace"],
+        )
+    )
+    topo.add_component(
+        ComponentInfo(
+            name="svc_b",
+            capacity=ResourceCapacity(cpu_cores=2.0),
+            boundary_layers=["application_log", "metrics_export"],
+        )
+    )
     topo.add_causal_edge(CausalEdge(source="svc_a", target="svc_b", latency_ms=5.0))
 
     # Timeline with events across time scales
     timeline = []
     for i in range(100):
-        timeline.append({
-            "event_id": f"evt_{i}",
-            "timestamp_ns": i * 10_000_000,  # 10ms steps
-            "source_type": "jsonl_log" if i % 3 != 0 else "csv_metrics",
-            "message": "Test event",
-            "attributes": {"service": "svc_a" if i % 2 == 0 else "svc_b", "cpu_usage": 0.5 + 0.3 * np.sin(i * 0.1)},
-            "status": "ok",
-        })
+        timeline.append(
+            {
+                "event_id": f"evt_{i}",
+                "timestamp_ns": i * 10_000_000,  # 10ms steps
+                "source_type": "jsonl_log" if i % 3 != 0 else "csv_metrics",
+                "message": "Test event",
+                "attributes": {
+                    "service": "svc_a" if i % 2 == 0 else "svc_b",
+                    "cpu_usage": 0.5 + 0.3 * np.sin(i * 0.1),
+                },
+                "status": "ok",
+            }
+        )
 
     results = reconstruct_multiscale(topo, timeline, (0, 1_000_000_000))
     for scale, result in results.items():
         if result:
-            print(f"{scale.value}: {len(result.heus)} HEUs, fidelity={result.reconstruction.overall_fidelity:.3f}")
+            print(
+                f"{scale.value}: {len(result.heus)} HEUs, fidelity={result.reconstruction.overall_fidelity:.3f}"
+            )
         else:
             print(f"{scale.value}: SKIPPED")

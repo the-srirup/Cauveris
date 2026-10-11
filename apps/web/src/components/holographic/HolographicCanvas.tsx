@@ -108,7 +108,7 @@ function BulkNodes({
   quality: "low" | "medium" | "high";
 }) {
   const { camera } = useThree();
-  const instancesRef = useRef<number>(nodes.length);
+  const count = Math.min(nodes.length, MAX_INSTANCES);
   const dummy = useRef(new THREE.Object3D());
   const meshRef = useRef<THREE.InstancedMesh | null>(null);
 
@@ -118,29 +118,40 @@ function BulkNodes({
     return new THREE.IcosahedronGeometry(1, detail);
   }, [quality]);
 
-  // Create instanced mesh
+  // R3F does not auto-dispose replaced attached objects — release the previous
+  // geometry when quality changes or the component unmounts.
   useEffect(() => {
-    const count = Math.min(nodes.length, MAX_INSTANCES);
-    instancesRef.current = count;
-
-    const material = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.9,
-      flatShading: quality === "low",
-    });
-
-    const mesh = new THREE.InstancedMesh(geometry, material, count);
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
-    meshRef.current = mesh;
-
     return () => {
       geometry.dispose();
-      material.dispose();
-      mesh.dispose();
     };
-  }, [nodes.length, quality]);
+  }, [geometry]);
+
+  // The declarative <instancedMesh> below is the single mesh in the scene.
+  // (The previous code built a second InstancedMesh here and overwrote
+  // meshRef, so frame updates hit an orphan mesh and the scene mesh never
+  // received instance matrices — everything stayed parked at the origin.)
+  // This effect only configures the R3F-created mesh: dynamic matrix usage and
+  // the per-instance color buffer (instanceColor is not auto-created by R3F).
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    if (!mesh.instanceColor || mesh.instanceColor.count !== count) {
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+      // instanceColor was introduced after material creation — force a shader
+      // rebuild so the USE_INSTANCING_COLOR path compiles in.
+      if (mesh.material) (mesh.material as THREE.Material).needsUpdate = true;
+    }
+  }, [count, quality]);
+
+  // Base colors are pure functions of node data — hoist out of the frame
+  // loop, which allocated a new THREE.Color per node per frame (GC churn
+  // on the hottest path).
+  const baseColors = useMemo(
+    () => nodes.map((n) => new THREE.Color(n.color)),
+    [nodes]
+  );
 
   // Update instances per frame
   useFrame(() => {
@@ -151,8 +162,9 @@ function BulkNodes({
     const matrix = dummy.current.matrix;
     const colors = mesh.instanceColor.array as Float32Array;
 
-    for (let i = 0; i < instancesRef.current && i < nodes.length; i++) {
+    for (let i = 0; i < count && i < nodes.length; i++) {
       const node = nodes[i];
+      const baseColor = baseColors[i];
 
       // Position
       dummy.current.position.set(...node.position);
@@ -166,7 +178,6 @@ function BulkNodes({
       mesh.setMatrixAt(i, matrix);
 
       // Color with health pulsing
-      const baseColor = new THREE.Color(node.color);
       const pulse = 1.0 + 0.1 * Math.sin(time * 2 + i);
       const r = Math.min(1, baseColor.r * pulse * node.health);
       const g = Math.min(1, baseColor.g * pulse * node.health);
@@ -224,10 +235,22 @@ function BulkNodes({
     <group>
       <instancedMesh
         ref={meshRef}
-        args={[geometry, undefined, instancesRef.current]}
+        args={[geometry, undefined, count]}
         onPointerMove={handlePointerMove}
         onClick={handleClick}
-      />
+      >
+        {/* key forces a fresh material (and shader rebuild) when quality changes */}
+        {/* No `vertexColors` prop: the geometry has no per-vertex 'color'
+            attribute, and USE_COLOR would bind a missing attribute (all-black
+            instanceColors × 0). The instanceColor buffer alone enables the
+            USE_INSTANCING_COLOR path in three r186+, which is what we want. */}
+        <meshStandardMaterial
+          key={quality}
+          transparent
+          opacity={0.9}
+          flatShading={quality === "low"}
+        />
+      </instancedMesh>
 
       {/* Node labels - HTML overlay */}
       {nodes.slice(0, 50).map((node, i) => (
@@ -526,7 +549,7 @@ function HolographicScene({
           <BulkNodes
             nodes={data.bulk_nodes}
             selectedId={selectedNode}
-            hoveredId={null} // handled by BulkNodes internally
+            hoveredId={null} // hover highlight is not tracked here — only `selectedId` renders highlight state
             onSelect={onNodeSelect}
             onHover={onNodeHover}
             quality={quality}

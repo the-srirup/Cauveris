@@ -1,6 +1,7 @@
 """
 Base schemas and enums for Cauveris.
 """
+
 from enum import Enum
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ import uuid
 
 class StatusLabel(str, Enum):
     """Status labels for evidence and conclusions."""
+
     OBSERVED = "OBSERVED"
     INFERRED = "INFERRED"
     REPRODUCED = "REPRODUCED"
@@ -30,6 +32,7 @@ class StatusLabel(str, Enum):
 
 class BaseEntity(BaseModel):
     """Base entity with common fields."""
+
     model_config = ConfigDict(validate_assignment=True)
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))

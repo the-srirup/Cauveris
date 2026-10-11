@@ -1,6 +1,7 @@
 """
 Main FastAPI application for Cauveris.
 """
+
 import asyncio
 import shutil
 import time
@@ -13,7 +14,17 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from threading import Lock
 from passlib.context import CryptContext
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Request, Response, Depends
+from fastapi import (
+    FastAPI,
+    File,
+    UploadFile,
+    HTTPException,
+    BackgroundTasks,
+    Request,
+    Response,
+    Depends,
+    WebSocket,
+)
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -28,18 +39,38 @@ from cauveris.security import scan_for_secrets, compute_file_hash
 from cauveris.patch.generator import PatchGenerator
 from cauveris.logging_config import get_logger, bind_request_context
 from cauveris.auth import (
-    init_auth_store, get_auth_store, TokenManager,
-    User, Organization, Session, APIKey, AuditLogEntry,
-    UserRole, TokenType, LoginRequest, RegisterRequest, RefreshRequest, APIKeyCreateRequest,
-    TokenResponse, UserResponse, APIKeyResponse,
-    authorize, TokenExpiredError, TokenInvalidError,
+    init_auth_store,
+    get_auth_store,
+    TokenManager,
+    User,
+    Organization,
+    Session,
+    APIKey,
+    AuditLogEntry,
+    UserRole,
+    TokenType,
+    LoginRequest,
+    RegisterRequest,
+    RefreshRequest,
+    APIKeyCreateRequest,
+    TokenResponse,
+    UserResponse,
+    APIKeyResponse,
+    authorize,
+    TokenExpiredError,
+    TokenInvalidError,
 )
 from cauveris.rate_limit import init_rate_limiter, get_rate_limiter
 from cauveris.idempotency import init_idempotency_store
-from cauveris.concurrency import init_concurrency_store, close_concurrency_store, get_concurrency_manager
+from cauveris.concurrency import (
+    init_concurrency_store,
+    close_concurrency_store,
+    get_concurrency_manager,
+)
 from cauveris.job_queue import init_job_queue, close_job_queue
 from cauveris.config import get_settings
 from cauveris.api.holographic import router as holographic_router
+
 
 class CreateIncidentRequest(BaseModel):
     title: Optional[str] = "Uploaded Incident"
@@ -48,10 +79,12 @@ class CreateIncidentRequest(BaseModel):
     golden: bool = False
     custom_id: Optional[str] = None
 
+
 class ApplyPatchRequest(BaseModel):
     target_directory: str = "."
     dry_run: bool = False
     rollback: bool = False
+
 
 class CustomSimulationRequest(BaseModel):
     batching_window_ms: float = 100.0
@@ -61,6 +94,7 @@ class CustomSimulationRequest(BaseModel):
     gpu_contention_ms: float = 0.0
     freshness_budget_ms: float = 120.0
     trials: int = 20
+
 
 logger = get_logger(__name__)
 
@@ -127,6 +161,7 @@ async def startup_event():
 async def shutdown_event():
     """Clean up rate limiter, idempotency store, concurrency manager, job queue, and auth store on shutdown."""
     from cauveris.idempotency import get_idempotency_store
+
     limiter = get_rate_limiter()
     await limiter.close()
     store = get_idempotency_store()
@@ -145,6 +180,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Correlation ID middleware for request tracing
 @app.middleware("http")
@@ -185,8 +221,8 @@ async def correlation_id_middleware(request: Request, call_next):
                 "incident_id": incident_id,
                 "duration_ms": duration_ms,
                 "error": str(e),
-                "error_type": type(e).__name__
-            }
+                "error_type": type(e).__name__,
+            },
         )
         raise
 
@@ -206,8 +242,8 @@ async def correlation_id_middleware(request: Request, call_next):
             "http_status": response.status_code,
             "request_id": request_id,
             "incident_id": incident_id,
-            "duration_ms": duration_ms
-        }
+            "duration_ms": duration_ms,
+        },
     )
 
     return response
@@ -249,12 +285,14 @@ async def rate_limit_middleware(request: Request, call_next):
     if limiter is not None:
         try:
             from cauveris.rate_limit_config import build_policies_from_settings
+
             policies = build_policies_from_settings()
             policy = policies.get(cost_class)
             if policy:
                 result = await limiter.check_limit(rate_limit_key, policy)
                 if not result.allowed:
                     from fastapi import HTTPException
+
                     raise HTTPException(
                         status_code=429,
                         detail=f"Rate limit exceeded for {cost_class}",
@@ -302,10 +340,16 @@ async def idempotency_middleware(request: Request, call_next):
 
     # Validate key format
     import re
-    if not re.match(r'^[a-zA-Z0-9_-]{1,256}$', idempotency_key):
+
+    if not re.match(r"^[a-zA-Z0-9_-]{1,256}$", idempotency_key):
         from fastapi import Response
+
         return Response(
-            content=json.dumps({"error": "Invalid Idempotency-Key format. Use alphanumeric, hyphen, underscore (max 256 chars)."}),
+            content=json.dumps(
+                {
+                    "error": "Invalid Idempotency-Key format. Use alphanumeric, hyphen, underscore (max 256 chars)."
+                }
+            ),
             status_code=400,
             media_type="application/json",
         )
@@ -325,13 +369,16 @@ async def idempotency_middleware(request: Request, call_next):
     operation = f"{request.method}:{request.url.path}"
 
     # Check idempotency
-    should_process, cached, error = await check_idempotency(request, idempotency_key, operation, store)
+    should_process, cached, error = await check_idempotency(
+        request, idempotency_key, operation, store
+    )
     if error:
         return error
 
     if cached:
         # Return cached response
         from fastapi import Response
+
         headers = cached["headers"] or {}
         headers["X-Idempotency-Replay"] = "true"
         return Response(
@@ -352,10 +399,12 @@ async def idempotency_middleware(request: Request, call_next):
             response_body += chunk
 
         # Save for future replays
-        state = IdempotencyState.COMPLETED if response.status_code < 400 else IdempotencyState.FAILED
+        state = (
+            IdempotencyState.COMPLETED if response.status_code < 400 else IdempotencyState.FAILED
+        )
         await save_idempotent_response(
             idempotency_key,
-            response_body.decode('utf-8', errors='ignore'),
+            response_body.decode("utf-8", errors="ignore"),
             response.status_code,
             dict(response.headers),
             state,
@@ -364,6 +413,7 @@ async def idempotency_middleware(request: Request, call_next):
 
         # Return new response with same body
         from fastapi import Response
+
         return Response(
             content=response_body,
             status_code=response.status_code,
@@ -380,11 +430,18 @@ async def auth_middleware(request: Request, call_next):
     """Validate JWT tokens and attach user/org/session to request state."""
     # Skip auth for public endpoints
     public_paths = {
-        "/", "/health", "/api/v1/health", "/api/v1/limits",
-        "/api/v1/auth/login", "/api/v1/auth/register",
+        "/",
+        "/health",
+        "/api/v1/health",
+        "/api/v1/limits",
+        "/api/v1/auth/login",
+        "/api/v1/auth/register",
         "/api/v1/auth/refresh",
-        "/api/v1/status-center", "/api/v1/model-health",
-        "/api/v1/model/configure", "/api/v1/model/test",
+        "/api/v1/status-center",
+        "/api/v1/model-health",
+        # NOTE: /api/v1/model/configure and /api/v1/model/test are intentionally
+        # NOT public — they mutate provider settings / reach out to remote hosts
+        # and are guarded per-endpoint by get_current_user instead.
     }
     if request.url.path in public_paths:
         return await call_next(request)
@@ -569,28 +626,49 @@ def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[st
     )
     if not global_minute_allowed:
         headers["Retry-After"] = str(retry_after)
-        return False, f"Global incident creation rate limit exceeded ({settings.max_incidents_per_minute}/minute)", retry_after, headers
+        return (
+            False,
+            f"Global incident creation rate limit exceeded ({settings.max_incidents_per_minute}/minute)",
+            retry_after,
+            headers,
+        )
 
     global_hour_allowed, global_hour_count, retry_after = _check_rate_limit(
         "global:hour", settings.max_incidents_per_hour, 3600
     )
     if not global_hour_allowed:
         headers["Retry-After"] = str(retry_after)
-        return False, f"Global incident creation rate limit exceeded ({settings.max_incidents_per_hour}/hour)", retry_after, headers
+        return (
+            False,
+            f"Global incident creation rate limit exceeded ({settings.max_incidents_per_hour}/hour)",
+            retry_after,
+            headers,
+        )
 
     global_day_allowed, global_day_count, retry_after = _check_rate_limit(
         "global:day", settings.max_incidents_per_day, 86400
     )
     if not global_day_allowed:
         headers["Retry-After"] = str(retry_after)
-        return False, f"Global incident creation rate limit exceeded ({settings.max_incidents_per_day}/day)", retry_after, headers
+        return (
+            False,
+            f"Global incident creation rate limit exceeded ({settings.max_incidents_per_day}/day)",
+            retry_after,
+            headers,
+        )
 
     headers["X-RateLimit-Global-Minute-Limit"] = str(settings.max_incidents_per_minute)
-    headers["X-RateLimit-Global-Minute-Remaining"] = str(max(0, settings.max_incidents_per_minute - global_minute_count))
+    headers["X-RateLimit-Global-Minute-Remaining"] = str(
+        max(0, settings.max_incidents_per_minute - global_minute_count)
+    )
     headers["X-RateLimit-Global-Hour-Limit"] = str(settings.max_incidents_per_hour)
-    headers["X-RateLimit-Global-Hour-Remaining"] = str(max(0, settings.max_incidents_per_hour - global_hour_count))
+    headers["X-RateLimit-Global-Hour-Remaining"] = str(
+        max(0, settings.max_incidents_per_hour - global_hour_count)
+    )
     headers["X-RateLimit-Global-Day-Limit"] = str(settings.max_incidents_per_day)
-    headers["X-RateLimit-Global-Day-Remaining"] = str(max(0, settings.max_incidents_per_day - global_day_count))
+    headers["X-RateLimit-Global-Day-Remaining"] = str(
+        max(0, settings.max_incidents_per_day - global_day_count)
+    )
 
     # Check per-user limits (if authenticated)
     if not is_anonymous:
@@ -599,18 +677,35 @@ def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[st
         )
         if not user_minute_allowed:
             headers["Retry-After"] = str(retry_after)
-            return False, f"User incident creation rate limit exceeded ({settings.max_incidents_per_minute}/minute)", retry_after, headers
+            return (
+                False,
+                f"User incident creation rate limit exceeded ({settings.max_incidents_per_minute}/minute)",
+                retry_after,
+                headers,
+            )
 
         headers["X-RateLimit-User-Minute-Limit"] = str(settings.max_incidents_per_minute)
-        headers["X-RateLimit-User-Minute-Remaining"] = str(max(0, settings.max_incidents_per_minute - user_minute_count))
+        headers["X-RateLimit-User-Minute-Remaining"] = str(
+            max(0, settings.max_incidents_per_minute - user_minute_count)
+        )
 
         # Check active incidents per user
         if _active_incidents_per_user[user_id] >= settings.max_active_incidents_per_user:
-            return False, f"User active incident limit exceeded ({settings.max_active_incidents_per_user})", 0, headers
+            return (
+                False,
+                f"User active incident limit exceeded ({settings.max_active_incidents_per_user})",
+                0,
+                headers,
+            )
 
         # Check retained incidents per user
         if _retained_incidents_per_user[user_id] >= settings.max_retained_incidents_per_user:
-            return False, f"User retained incident limit exceeded ({settings.max_retained_incidents_per_user})", 0, headers
+            return (
+                False,
+                f"User retained incident limit exceeded ({settings.max_retained_incidents_per_user})",
+                0,
+                headers,
+            )
 
         headers["X-Limit-Active-Incidents-User"] = str(settings.max_active_incidents_per_user)
         headers["X-Limit-Retained-Incidents-User"] = str(settings.max_retained_incidents_per_user)
@@ -619,10 +714,20 @@ def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[st
 
         # Check per-org limits
         if _active_incidents_per_org[org_id] >= settings.max_active_incidents_per_org:
-            return False, f"Organization active incident limit exceeded ({settings.max_active_incidents_per_org})", 0, headers
+            return (
+                False,
+                f"Organization active incident limit exceeded ({settings.max_active_incidents_per_org})",
+                0,
+                headers,
+            )
 
         if _retained_incidents_per_org[org_id] >= settings.max_retained_incidents_per_org:
-            return False, f"Organization retained incident limit exceeded ({settings.max_retained_incidents_per_org})", 0, headers
+            return (
+                False,
+                f"Organization retained incident limit exceeded ({settings.max_retained_incidents_per_org})",
+                0,
+                headers,
+            )
 
         headers["X-Limit-Active-Incidents-Org"] = str(settings.max_active_incidents_per_org)
         headers["X-Limit-Retained-Incidents-Org"] = str(settings.max_retained_incidents_per_org)
@@ -631,7 +736,12 @@ def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[st
     else:
         # Anonymous limits
         if _anonymous_incident_count >= settings.max_anonymous_incidents:
-            return False, f"Anonymous incident limit exceeded ({settings.max_anonymous_incidents})", 0, headers
+            return (
+                False,
+                f"Anonymous incident limit exceeded ({settings.max_anonymous_incidents})",
+                0,
+                headers,
+            )
 
         headers["X-Limit-Anonymous-Incidents"] = str(settings.max_anonymous_incidents)
         headers["X-Current-Anonymous-Incidents"] = str(_anonymous_incident_count)
@@ -639,7 +749,12 @@ def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[st
     # Check global active incidents
     with _global_active_incidents_lock:
         if _global_active_incidents >= settings.max_global_active_incidents:
-            return False, f"Global active incident limit exceeded ({settings.max_global_active_incidents})", 0, headers
+            return (
+                False,
+                f"Global active incident limit exceeded ({settings.max_global_active_incidents})",
+                0,
+                headers,
+            )
 
     headers["X-Limit-Global-Active-Incidents"] = str(settings.max_global_active_incidents)
     headers["X-Current-Global-Active-Incidents"] = str(_global_active_incidents)
@@ -673,9 +788,9 @@ def _record_incident_completed(incident_id: str, is_demonstration: bool = False)
         return
 
     # Try to get ownership from incident metadata (if set)
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
-    is_anon = getattr(incident, '_is_anonymous', False)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
+    is_anon = getattr(incident, "_is_anonymous", False)
 
     if owner_user and owner_org and not is_anon:
         _active_incidents_per_user[owner_user] = max(0, _active_incidents_per_user[owner_user] - 1)
@@ -697,12 +812,14 @@ def _record_incident_deleted(incident_id: str):
     if not incident:
         return
 
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
-    is_anon = getattr(incident, '_is_anonymous', False)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
+    is_anon = getattr(incident, "_is_anonymous", False)
 
     if owner_user and owner_org and not is_anon:
-        _retained_incidents_per_user[owner_user] = max(0, _retained_incidents_per_user[owner_user] - 1)
+        _retained_incidents_per_user[owner_user] = max(
+            0, _retained_incidents_per_user[owner_user] - 1
+        )
         _retained_incidents_per_org[owner_org] = max(0, _retained_incidents_per_org[owner_org] - 1)
     elif is_anon:
         global _anonymous_incident_count
@@ -710,96 +827,147 @@ def _record_incident_deleted(incident_id: str):
 
 
 def _ensure_incident(incident_id: str) -> Optional[Incident]:
-    """Ensure an incident is loaded in memory, hydrating from disk if available."""
+    """Ensure an incident is loaded in memory, hydrating from storage if available."""
     if incident_id in incidents:
         return incidents[incident_id]
 
-    # Check if golden incident
-    if incident_id.upper() in ["CAU-0001", "GOLDEN"]:
-        generator = GoldenIncidentGenerator()
-        incident = generator.generate()
-        incident.is_demonstration = True
-        incidents[incident.id] = incident
+    # Try to load from evidence store (disk)
+    from cauveris.ingestion.controller import IngestionController
+    import json
+    from pathlib import Path
+    from cauveris.schemas.incident import Incident
 
-        orch = PipelineOrchestrator()
-        orch.context = PipelineContext(incident=incident)
-        pipeline_tasks[incident.id] = orch
-        pipeline_progress[incident.id] = orch.get_pipeline_summary()
+    # Hypothesis/Experiment/PatchCandidate/VerificationReport are already
+    # module-level imports (lines above); re-importing them here shadowed the
+    # module-level names and pyflakes flagged one side as dead either way.
+    from cauveris.state_machine.orchestrator import (
+        PipelineOrchestrator,
+        PipelineContext,
+        StageStatus,
+    )
 
-        # Try to hydrate from existing report
-        report_file = Path(f"./report/{incident.id}/incident_report.json")
-        if report_file.exists():
-            try:
-                with open(report_file, 'r', encoding='utf-8') as f:
-                    report_data = json.load(f)
+    settings = get_settings()
+    evidence_path = Path(settings.evidence_store_path) / incident_id
+    if not evidence_path.exists():
+        # Also check common incident folder patterns
+        for pattern in [f"./incident-{incident_id}", f"./incident-{incident_id.lower()}"]:
+            p = Path(pattern)
+            if p.exists():
+                evidence_path = p
+                break
 
-                # Hydrate timeline & status
-                incident.timeline_events = report_data.get("timeline", [])
-                incident.status = "COMPLETED"
-                incident.temporal_analysis = report_data.get("temporal_analysis")
+    if not evidence_path.exists() or not (evidence_path / "manifest.yaml").exists():
+        if incident_id.upper() in ["CAU-0001", "GOLDEN"]:
+            generator = GoldenIncidentGenerator()
+            incident = generator.generate()
+            incident.is_demonstration = True
+            incidents[incident.id] = incident
+            return incident
+        return None
 
-                # Hydrate pipeline context objects
-                hyps = []
-                for h in report_data.get("hypotheses", []):
-                    try:
-                        hyps.append(Hypothesis(**h))
-                    except Exception:
-                        pass
+    # Load incident from evidence store
+    ingestion = IngestionController()
+    try:
+        coro = ingestion.load_incident_from_store(incident_id, evidence_path)
+        try:
+            asyncio.get_running_loop()
+            # We're inside a running event loop (any live API endpoint).
+            # asyncio.run() raises RuntimeError there, which the except below
+            # used to swallow — so on-disk incidents always silently hydrated
+            # as the minimal fallback instead of their real state. Run the
+            # coroutine on a private loop in a short-lived thread instead.
+            import concurrent.futures
 
-                exps = []
-                for e in report_data.get("experiments", []):
-                    try:
-                        exps.append(Experiment(**e))
-                    except Exception:
-                        pass
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                incident = pool.submit(asyncio.run, coro).result()
+        except RuntimeError:
+            # No running loop (worker process / script context) — direct.
+            incident = asyncio.run(coro)
+    except Exception:
+        # Fallback: create minimal incident
+        incident = Incident(
+            id=incident_id,
+            title=f"Incident {incident_id}",
+            description="Loaded from evidence store",
+            system_name="physical-ai-system",
+            status="OBSERVED",
+            bundle_path=str(evidence_path),
+        )
+    if incident.manifest is None:
+        incident.manifest = {}
+    incident.manifest["bundle_path"] = str(evidence_path)
 
-                patches = []
-                for p in report_data.get("patch_candidates", []):
-                    try:
-                        patches.append(PatchCandidate(**p))
-                    except Exception:
-                        pass
+    incidents[incident_id] = incident
 
-                reports = []
-                for v in report_data.get("verification_reports", []):
-                    try:
-                        reports.append(VerificationReport(**v))
-                    except Exception:
-                        pass
+    orch = PipelineOrchestrator()
+    orch.context = PipelineContext(incident=incident)
+    pipeline_tasks[incident.id] = orch
+    pipeline_progress[incident.id] = orch.get_pipeline_summary()
 
-                ctx = PipelineContext(
-                    incident=incident,
-                    validated_incident=incident,
-                    timeline_events=incident.timeline_events,
-                    temporal_analysis=incident.temporal_analysis,
-                    hypotheses=hyps,
-                    experiments=exps,
-                    patch_candidates=patches,
-                    verification_reports=reports,
-                    final_report=report_data
-                )
-                pipeline_contexts[incident.id] = ctx
-                orch.context = ctx
-                orch.current_state = "SUCCESS"
-                orch.current_progress = 1.0
-                for s in orch.stages:
-                    from cauveris.state_machine.orchestrator import StageStatus
-                    s.status = StageStatus.SUCCESS
-                pipeline_progress[incident.id] = orch.get_pipeline_summary()
-                logger.info(f"Hydrated full pipeline context for {incident.id} from report")
-            except Exception as e:
-                logger.warning(f"Failed to hydrate context from report: {e}")
+    # Try to hydrate from existing report
+    report_file = Path(f"./report/{incident.id}/incident_report.json")
+    if report_file.exists():
+        try:
+            with open(report_file, "r", encoding="utf-8") as f:
+                report_data = json.load(f)
 
-        return incident
+            # Hydrate timeline & status
+            incident.timeline_events = report_data.get("timeline", [])
+            incident.status = "COMPLETED"
+            incident.temporal_analysis = report_data.get("temporal_analysis")
 
-    return None
+            # Hydrate pipeline context objects
+            hyps = []
+            for h in report_data.get("hypotheses", []):
+                try:
+                    hyps.append(Hypothesis(**h))
+                except Exception:
+                    pass
 
+            exps = []
+            for e in report_data.get("experiments", []):
+                try:
+                    exps.append(Experiment(**e))
+                except Exception:
+                    pass
 
-# Preload CAU-0001 immediately on module load so endpoints are warm
-try:
-    _ensure_incident("CAU-0001")
-except Exception as _e:
-    logger.debug(f"Preload golden incident skipped: {_e}")
+            patches = []
+            for p in report_data.get("patch_candidates", []):
+                try:
+                    patches.append(PatchCandidate(**p))
+                except Exception:
+                    pass
+
+            reports = []
+            for v in report_data.get("verification_reports", []):
+                try:
+                    reports.append(VerificationReport(**v))
+                except Exception:
+                    pass
+
+            ctx = PipelineContext(
+                incident=incident,
+                validated_incident=incident,
+                timeline_events=incident.timeline_events,
+                temporal_analysis=incident.temporal_analysis,
+                hypotheses=hyps,
+                experiments=exps,
+                patch_candidates=patches,
+                verification_reports=reports,
+                final_report=report_data,
+            )
+            pipeline_contexts[incident.id] = ctx
+            orch.context = ctx
+            orch.current_state = "SUCCESS"
+            orch.current_progress = 1.0
+            for s in orch.stages:
+                s.status = StageStatus.SUCCESS
+            pipeline_progress[incident.id] = orch.get_pipeline_summary()
+            logger.info(f"Hydrated full pipeline context for {incident.id} from report")
+        except Exception as e:
+            logger.warning(f"Failed to hydrate context from report: {e}")
+
+    return incident
 
 
 # Include holographic router
@@ -823,6 +991,7 @@ async def health():
 # Authentication Endpoints (Phase 1)
 # =========================================================================
 
+
 @app.post("/api/v1/auth/login", response_model=TokenResponse)
 async def login(request: Request, response: Response, body: LoginRequest):
     """Authenticate user and return access/refresh tokens."""
@@ -835,15 +1004,24 @@ async def login(request: Request, response: Response, body: LoginRequest):
 
     # Rate limit check for login attempts
     forwarded = request.headers.get("X-Forwarded-For")
-    client_ip = forwarded.split(",")[0].strip() if forwarded else request.client.host if request.client else "unknown"
+    client_ip = (
+        forwarded.split(",")[0].strip()
+        if forwarded
+        else request.client.host
+        if request.client
+        else "unknown"
+    )
     from cauveris.rate_limit_config import build_policies_from_settings
+
     policies = build_policies_from_settings()
     rate_limit_policy = policies.get("auth", policies.get("mutation"))
     limiter = get_rate_limiter()
     if limiter and rate_limit_policy:
         result = await limiter.check_limit(f"ip:{client_ip}:login", rate_limit_policy)
         if not result.allowed:
-            raise HTTPException(status_code=429, detail="Too many login attempts", headers=result.headers)
+            raise HTTPException(
+                status_code=429, detail="Too many login attempts", headers=result.headers
+            )
 
     # Get user by email
     user = await auth_store.get_user_by_email(body.email)
@@ -852,35 +1030,41 @@ async def login(request: Request, response: Response, body: LoginRequest):
         if user:
             user.failed_login_attempts += 1
             if user.failed_login_attempts >= settings.auth_lockout_after_failures:
-                user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=settings.auth_lockout_duration_minutes)
+                user.locked_until = datetime.now(timezone.utc) + timedelta(
+                    minutes=settings.auth_lockout_duration_minutes
+                )
             await auth_store.update_user(user)
         # Audit log
-        await auth_store.write_audit_log(AuditLogEntry(
-            action="auth.login",
-            resource_type="user",
-            resource_id=user.id if user else body.email,
-            decision="deny",
-            reason="Invalid credentials",
-            ip_address=client_ip,
-            user_agent=request.headers.get("User-Agent", ""),
-            request_id=getattr(request.state, "request_id", None),
-        ))
+        await auth_store.write_audit_log(
+            AuditLogEntry(
+                action="auth.login",
+                resource_type="user",
+                resource_id=user.id if user else body.email,
+                decision="deny",
+                reason="Invalid credentials",
+                ip_address=client_ip,
+                user_agent=request.headers.get("User-Agent", ""),
+                request_id=getattr(request.state, "request_id", None),
+            )
+        )
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     # Check if account is locked
     if user.locked_until and user.locked_until > datetime.now(timezone.utc):
-        await auth_store.write_audit_log(AuditLogEntry(
-            user_id=user.id,
-            org_id=user.org_id,
-            action="auth.login",
-            resource_type="user",
-            resource_id=user.id,
-            decision="deny",
-            reason="Account locked",
-            ip_address=client_ip,
-            user_agent=request.headers.get("User-Agent", ""),
-            request_id=getattr(request.state, "request_id", None),
-        ))
+        await auth_store.write_audit_log(
+            AuditLogEntry(
+                user_id=user.id,
+                org_id=user.org_id,
+                action="auth.login",
+                resource_type="user",
+                resource_id=user.id,
+                decision="deny",
+                reason="Account locked",
+                ip_address=client_ip,
+                user_agent=request.headers.get("User-Agent", ""),
+                request_id=getattr(request.state, "request_id", None),
+            )
+        )
         raise HTTPException(status_code=403, detail="Account temporarily locked")
 
     # Check if org exists and is active
@@ -895,7 +1079,11 @@ async def login(request: Request, response: Response, body: LoginRequest):
     await auth_store.update_user(user)
 
     # Check concurrent session limit
-    sessions = await auth_store.list_user_sessions(user.id) if hasattr(auth_store, 'list_user_sessions') else []
+    sessions = (
+        await auth_store.list_user_sessions(user.id)
+        if hasattr(auth_store, "list_user_sessions")
+        else []
+    )
     active_sessions = [s for s in sessions if not s.is_revoked and not s.is_expired()]
     if len(active_sessions) >= settings.auth_session_max_concurrent:
         # Revoke oldest session
@@ -930,18 +1118,20 @@ async def login(request: Request, response: Response, body: LoginRequest):
     response.set_cookie("refresh_token", session.refresh_token, **refresh_cookie_options)
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        session_id=session.id,
-        action="auth.login",
-        resource_type="session",
-        resource_id=session.id,
-        decision="allow",
-        ip_address=client_ip,
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            session_id=session.id,
+            action="auth.login",
+            resource_type="session",
+            resource_id=session.id,
+            decision="allow",
+            ip_address=client_ip,
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     return TokenResponse(
         access_token=session.access_token,
@@ -953,7 +1143,7 @@ async def login(request: Request, response: Response, body: LoginRequest):
             "full_name": user.full_name,
             "role": user.role.value,
             "org_id": user.org_id,
-        }
+        },
     )
 
 
@@ -969,7 +1159,10 @@ async def register(request: Request, response: Response, body: RegisterRequest):
 
     # Validate password strength
     if len(body.password) < settings.auth_password_min_length:
-        raise HTTPException(status_code=400, detail=f"Password must be at least {settings.auth_password_min_length} characters")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {settings.auth_password_min_length} characters",
+        )
 
     # Check if user already exists
     existing = await auth_store.get_user_by_email(body.email)
@@ -1028,18 +1221,20 @@ async def register(request: Request, response: Response, body: RegisterRequest):
     response.set_cookie("refresh_token", session.refresh_token, **refresh_cookie_options)
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        session_id=session.id,
-        action="auth.register",
-        resource_type="user",
-        resource_id=user.id,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            session_id=session.id,
+            action="auth.register",
+            resource_type="user",
+            resource_id=user.id,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     return TokenResponse(
         access_token=session.access_token,
@@ -1051,7 +1246,7 @@ async def register(request: Request, response: Response, body: RegisterRequest):
             "full_name": user.full_name,
             "role": user.role.value,
             "org_id": user.org_id,
-        }
+        },
     )
 
 
@@ -1114,7 +1309,7 @@ async def refresh_token(request: Request, response: Response, body: RefreshReque
             "full_name": user.full_name,
             "role": user.role.value,
             "org_id": user.org_id,
-        }
+        },
     )
 
 
@@ -1129,8 +1324,18 @@ async def logout(request: Request, response: Response):
 
     # Clear cookies
     settings = get_settings()
-    response.delete_cookie("access_token", httponly=True, secure=settings.auth_cookie_secure, samesite=settings.auth_cookie_samesite)
-    response.delete_cookie("refresh_token", httponly=True, secure=settings.auth_cookie_secure, samesite=settings.auth_cookie_samesite)
+    response.delete_cookie(
+        "access_token",
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite=settings.auth_cookie_samesite,
+    )
+    response.delete_cookie(
+        "refresh_token",
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite=settings.auth_cookie_samesite,
+    )
 
     return {"message": "Logged out successfully"}
 
@@ -1160,7 +1365,9 @@ async def get_current_user_info(request: Request, user_data: tuple = Depends(get
 
 
 @app.post("/api/v1/auth/api-keys", response_model=APIKeyResponse)
-async def create_api_key(request: Request, body: APIKeyCreateRequest, user_data: tuple = Depends(get_current_user)):
+async def create_api_key(
+    request: Request, body: APIKeyCreateRequest, user_data: tuple = Depends(get_current_user)
+):
     """Create a new API key for service-to-service auth."""
     user_id, org_id, role = user_data
     auth_store = get_auth_store()
@@ -1173,6 +1380,7 @@ async def create_api_key(request: Request, body: APIKeyCreateRequest, user_data:
 
     # Check permission
     from cauveris.auth import authorize
+
     await authorize(auth_store, user, "api_key:manage")
 
     # Generate raw key
@@ -1188,22 +1396,26 @@ async def create_api_key(request: Request, body: APIKeyCreateRequest, user_data:
         key_prefix=key_prefix,
         scopes=body.scopes or ["incidents:read"],
         rate_limit=body.rate_limit,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=body.expires_in_days) if body.expires_in_days else None,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=body.expires_in_days)
+        if body.expires_in_days
+        else None,
     )
     api_key = await auth_store.create_api_key(api_key)
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="api_key.create",
-        resource_type="api_key",
-        resource_id=api_key.id,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="api_key.create",
+            resource_type="api_key",
+            resource_id=api_key.id,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     return APIKeyResponse(
         id=api_key.id,
@@ -1225,20 +1437,22 @@ async def list_api_keys(request: Request, user_data: tuple = Depends(get_current
         raise HTTPException(status_code=503, detail="Auth store not initialized")
 
     keys = await auth_store.list_api_keys(org_id, user_id)
-    return {"api_keys": [
-        {
-            "id": k.id,
-            "name": k.name,
-            "key_prefix": k.key_prefix,
-            "scopes": k.scopes,
-            "rate_limit": k.rate_limit,
-            "expires_at": k.expires_at,
-            "last_used_at": k.last_used_at,
-            "is_active": k.is_active,
-            "created_at": k.created_at,
-        }
-        for k in keys
-    ]}
+    return {
+        "api_keys": [
+            {
+                "id": k.id,
+                "name": k.name,
+                "key_prefix": k.key_prefix,
+                "scopes": k.scopes,
+                "rate_limit": k.rate_limit,
+                "expires_at": k.expires_at,
+                "last_used_at": k.last_used_at,
+                "is_active": k.is_active,
+                "created_at": k.created_at,
+            }
+            for k in keys
+        ]
+    }
 
 
 @app.get("/api/v1/limits")
@@ -1252,31 +1466,95 @@ async def get_limits(request: Request):
 
     # Get current counts from rate limit windows
     with _incident_creation_lock:
-        global_minute_timestamps = _prune_old_timestamps(_incident_creation_timestamps.get("global:minute", []), 60)
-        global_hour_timestamps = _prune_old_timestamps(_incident_creation_timestamps.get("global:hour", []), 3600)
-        global_day_timestamps = _prune_old_timestamps(_incident_creation_timestamps.get("global:day", []), 86400)
+        global_minute_timestamps = _prune_old_timestamps(
+            _incident_creation_timestamps.get("global:minute", []), 60
+        )
+        global_hour_timestamps = _prune_old_timestamps(
+            _incident_creation_timestamps.get("global:hour", []), 3600
+        )
+        global_day_timestamps = _prune_old_timestamps(
+            _incident_creation_timestamps.get("global:day", []), 86400
+        )
 
     response = {
         "global": {
-            "minute": {"limit": settings.max_incidents_per_minute, "used": len(global_minute_timestamps), "remaining": max(0, settings.max_incidents_per_minute - len(global_minute_timestamps))},
-            "hour": {"limit": settings.max_incidents_per_hour, "used": len(global_hour_timestamps), "remaining": max(0, settings.max_incidents_per_hour - len(global_hour_timestamps))},
-            "day": {"limit": settings.max_incidents_per_day, "used": len(global_day_timestamps), "remaining": max(0, settings.max_incidents_per_day - len(global_day_timestamps))},
-            "active_incidents": {"limit": settings.max_global_active_incidents, "used": _global_active_incidents, "remaining": max(0, settings.max_global_active_incidents - _global_active_incidents)},
-            "daily_creation": {"limit": settings.max_global_daily_creation, "used": len(global_day_timestamps), "remaining": max(0, settings.max_global_daily_creation - len(global_day_timestamps))},
+            "minute": {
+                "limit": settings.max_incidents_per_minute,
+                "used": len(global_minute_timestamps),
+                "remaining": max(
+                    0, settings.max_incidents_per_minute - len(global_minute_timestamps)
+                ),
+            },
+            "hour": {
+                "limit": settings.max_incidents_per_hour,
+                "used": len(global_hour_timestamps),
+                "remaining": max(0, settings.max_incidents_per_hour - len(global_hour_timestamps)),
+            },
+            "day": {
+                "limit": settings.max_incidents_per_day,
+                "used": len(global_day_timestamps),
+                "remaining": max(0, settings.max_incidents_per_day - len(global_day_timestamps)),
+            },
+            "active_incidents": {
+                "limit": settings.max_global_active_incidents,
+                "used": _global_active_incidents,
+                "remaining": max(
+                    0, settings.max_global_active_incidents - _global_active_incidents
+                ),
+            },
+            "daily_creation": {
+                "limit": settings.max_global_daily_creation,
+                "used": len(global_day_timestamps),
+                "remaining": max(
+                    0, settings.max_global_daily_creation - len(global_day_timestamps)
+                ),
+            },
         },
         "anonymous_limits": {
             "max_incidents": settings.max_anonymous_incidents,
             "current": _anonymous_incident_count,
             "remaining": max(0, settings.max_anonymous_incidents - _anonymous_incident_count),
-        } if is_anonymous else None,
+        }
+        if is_anonymous
+        else None,
         "user_limits": {
-            "active_incidents": {"limit": settings.max_active_incidents_per_user, "used": _active_incidents_per_user[user_id], "remaining": max(0, settings.max_active_incidents_per_user - _active_incidents_per_user[user_id])},
-            "retained_incidents": {"limit": settings.max_retained_incidents_per_user, "used": _retained_incidents_per_user[user_id], "remaining": max(0, settings.max_retained_incidents_per_user - _retained_incidents_per_user[user_id])},
-        } if not is_anonymous else None,
+            "active_incidents": {
+                "limit": settings.max_active_incidents_per_user,
+                "used": _active_incidents_per_user[user_id],
+                "remaining": max(
+                    0, settings.max_active_incidents_per_user - _active_incidents_per_user[user_id]
+                ),
+            },
+            "retained_incidents": {
+                "limit": settings.max_retained_incidents_per_user,
+                "used": _retained_incidents_per_user[user_id],
+                "remaining": max(
+                    0,
+                    settings.max_retained_incidents_per_user
+                    - _retained_incidents_per_user[user_id],
+                ),
+            },
+        }
+        if not is_anonymous
+        else None,
         "org_limits": {
-            "active_incidents": {"limit": settings.max_active_incidents_per_org, "used": _active_incidents_per_org[org_id], "remaining": max(0, settings.max_active_incidents_per_org - _active_incidents_per_org[org_id])},
-            "retained_incidents": {"limit": settings.max_retained_incidents_per_org, "used": _retained_incidents_per_org[org_id], "remaining": max(0, settings.max_retained_incidents_per_org - _retained_incidents_per_org[org_id])},
-        } if not is_anonymous else None,
+            "active_incidents": {
+                "limit": settings.max_active_incidents_per_org,
+                "used": _active_incidents_per_org[org_id],
+                "remaining": max(
+                    0, settings.max_active_incidents_per_org - _active_incidents_per_org[org_id]
+                ),
+            },
+            "retained_incidents": {
+                "limit": settings.max_retained_incidents_per_org,
+                "used": _retained_incidents_per_org[org_id],
+                "remaining": max(
+                    0, settings.max_retained_incidents_per_org - _retained_incidents_per_org[org_id]
+                ),
+            },
+        }
+        if not is_anonymous
+        else None,
     }
 
     return response
@@ -1301,17 +1579,19 @@ async def get_concurrency_stats(request: Request, user_data: tuple = Depends(get
     await authorize(auth_store, user, "concurrency:read")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="concurrency.stats.read",
-        resource_type="concurrency",
-        resource_id="global",
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="concurrency.stats.read",
+            resource_type="concurrency",
+            resource_id="global",
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     manager = get_concurrency_manager()
     if not manager:
@@ -1322,14 +1602,13 @@ async def get_concurrency_stats(request: Request, user_data: tuple = Depends(get
     for scope in scopes:
         stats[scope] = await manager.get_stats(scope)
 
-    return {
-        "scopes": stats,
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
+    return {"scopes": stats, "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/api/v1/concurrency/{scope}")
-async def get_concurrency_scope(request: Request, scope: str, user_data: tuple = Depends(get_current_user)):
+async def get_concurrency_scope(
+    request: Request, scope: str, user_data: tuple = Depends(get_current_user)
+):
     """
     Get concurrency stats for a specific scope.
     Requires: concurrency:read permission
@@ -1354,7 +1633,9 @@ async def get_concurrency_scope(request: Request, scope: str, user_data: tuple =
 
 
 @app.post("/api/v1/concurrency/{scope}/cleanup")
-async def cleanup_concurrency_scope(request: Request, scope: str, user_data: tuple = Depends(get_current_user)):
+async def cleanup_concurrency_scope(
+    request: Request, scope: str, user_data: tuple = Depends(get_current_user)
+):
     """
     Manually trigger stale slot cleanup for a scope.
     Requires: concurrency:manage permission
@@ -1379,18 +1660,20 @@ async def cleanup_concurrency_scope(request: Request, scope: str, user_data: tup
     removed = await manager._store.cleanup_stale(time.time() - settings.concurrency_stale_threshold)
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="concurrency.cleanup",
-        resource_type="concurrency",
-        resource_id=scope,
-        decision="allow",
-        metadata={"cleaned_up": removed},
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="concurrency.cleanup",
+            resource_type="concurrency",
+            resource_id=scope,
+            decision="allow",
+            metadata={"cleaned_up": removed},
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     return {"scope": scope, "cleaned_up": removed}
 
@@ -1415,19 +1698,22 @@ async def get_job_queue_stats(request: Request, user_data: tuple = Depends(get_c
     await authorize(auth_store, user, "job_queue:read")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="job_queue.stats.read",
-        resource_type="job_queue",
-        resource_id="global",
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="job_queue.stats.read",
+            resource_type="job_queue",
+            resource_id="global",
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     from cauveris.job_queue import get_job_queue
+
     queue = get_job_queue()
     if not queue:
         return {"error": "Job queue not initialized"}
@@ -1435,8 +1721,69 @@ async def get_job_queue_stats(request: Request, user_data: tuple = Depends(get_c
     return await queue.get_stats()
 
 
+@app.get("/api/v1/metrics")
+async def get_metrics(request: Request, user_data: tuple = Depends(get_current_user)):
+    """
+    Get system metrics and pipeline performance data.
+    Requires: metrics:read permission
+    """
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Check permission
+    await authorize(auth_store, user, "metrics:read")
+
+    # Collect pipeline metrics
+    pipeline_metrics = []
+    for incident_id, progress in pipeline_progress.items():
+        ctx = pipeline_contexts.get(incident_id)
+        pipeline_metrics.append(
+            {
+                "incident_id": incident_id,
+                "state": progress.get("state"),
+                "progress": progress.get("progress"),
+                "current_stage": progress.get("current_stage"),
+                "stages_completed": len(
+                    [s for s in progress.get("stages", []) if s.get("status") == "SUCCESS"]
+                ),
+                "stages_total": len(progress.get("stages", [])),
+                "has_context": ctx is not None,
+            }
+        )
+
+    # System metrics
+    active_pipelines = sum(1 for p in pipeline_progress.values() if p.get("state") == "RUNNING")
+    completed_pipelines = sum(1 for p in pipeline_progress.values() if p.get("state") == "SUCCESS")
+    failed_pipelines = sum(1 for p in pipeline_progress.values() if p.get("state") == "FAILED")
+    cancelled_pipelines = sum(
+        1 for p in pipeline_progress.values() if p.get("state") == "CANCELLED"
+    )
+
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "system": {
+            "active_pipelines": active_pipelines,
+            "completed_pipelines": completed_pipelines,
+            "failed_pipelines": failed_pipelines,
+            "cancelled_pipelines": cancelled_pipelines,
+            "total_incidents": len(incidents),
+            "incidents_in_progress": active_pipelines,
+        },
+        "pipelines": pipeline_metrics,
+        "websocket_connections": len([k for k in pipeline_progress.keys() if k.startswith("ws_")]),
+    }
+
+
 @app.get("/api/v1/job-queue/jobs/{job_id}")
-async def get_job_status(request: Request, job_id: str, user_data: tuple = Depends(get_current_user)):
+async def get_job_status(
+    request: Request, job_id: str, user_data: tuple = Depends(get_current_user)
+):
     """
     Get job status by ID.
     Requires: job_queue:read permission
@@ -1454,6 +1801,7 @@ async def get_job_status(request: Request, job_id: str, user_data: tuple = Depen
     await authorize(auth_store, user, "job_queue:read")
 
     from cauveris.job_queue import get_job_queue
+
     queue = get_job_queue()
     if not queue:
         raise HTTPException(status_code=503, detail="Job queue not initialized")
@@ -1465,19 +1813,21 @@ async def get_job_status(request: Request, job_id: str, user_data: tuple = Depen
     # Check ownership
     if not user.has_permission("job_queue:manage_any") and not user.has_permission("*"):
         if job.owner_id != user_id and (job.tenant_id and job.tenant_id != org_id):
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="job.read",
-                resource_type="job",
-                resource_id=job_id,
-                resource_owner_id=job.owner_id,
-                decision="deny",
-                reason="Not owner of job",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="job.read",
+                    resource_type="job",
+                    resource_id=job_id,
+                    resource_owner_id=job.owner_id,
+                    decision="deny",
+                    reason="Not owner of job",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to view this job")
 
     return job.to_dict()
@@ -1499,6 +1849,7 @@ async def cancel_job(request: Request, job_id: str, user_data: tuple = Depends(g
         raise HTTPException(status_code=404, detail="User not found")
 
     from cauveris.job_queue import get_job_queue
+
     queue = get_job_queue()
     if not queue:
         raise HTTPException(status_code=503, detail="Job queue not initialized")
@@ -1510,19 +1861,21 @@ async def cancel_job(request: Request, job_id: str, user_data: tuple = Depends(g
     # Check ownership
     if not user.has_permission("job_queue:manage_any") and not user.has_permission("*"):
         if job.owner_id != user_id and (job.tenant_id and job.tenant_id != org_id):
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="job.cancel",
-                resource_type="job",
-                resource_id=job_id,
-                resource_owner_id=job.owner_id,
-                decision="deny",
-                reason="Not owner of job",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="job.cancel",
+                    resource_type="job",
+                    resource_id=job_id,
+                    resource_owner_id=job.owner_id,
+                    decision="deny",
+                    reason="Not owner of job",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to cancel this job")
 
     success = await queue.cancel_job(job_id)
@@ -1530,18 +1883,20 @@ async def cancel_job(request: Request, job_id: str, user_data: tuple = Depends(g
         raise HTTPException(status_code=404, detail="Job not found or cannot be cancelled")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="job.cancel",
-        resource_type="job",
-        resource_id=job_id,
-        resource_owner_id=job.owner_id,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="job.cancel",
+            resource_type="job",
+            resource_id=job_id,
+            resource_owner_id=job.owner_id,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     return {"job_id": job_id, "status": "cancelled"}
 
@@ -1575,6 +1930,7 @@ async def submit_job(request: Request, user_data: tuple = Depends(get_current_us
     await authorize(auth_store, user, "job_queue:submit")
 
     from cauveris.job_queue import get_job_queue, Job, JobPriority
+
     queue = get_job_queue()
     if not queue:
         raise HTTPException(status_code=503, detail="Job queue not initialized")
@@ -1597,18 +1953,20 @@ async def submit_job(request: Request, user_data: tuple = Depends(get_current_us
         raise HTTPException(status_code=429, detail="Queue full")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="job.submit",
-        resource_type="job",
-        resource_id=job.id,
-        resource_owner_id=user_id,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="job.submit",
+            resource_type="job",
+            resource_id=job.id,
+            resource_owner_id=user_id,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     return {"job_id": job.id, "status": "queued"}
 
@@ -1630,26 +1988,34 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
         seen.add(inc_id)
 
         # Check ownership for non-admin users
-        owner_user = getattr(inc, '_owner_user_id', None)
-        owner_org = getattr(inc, '_owner_org_id', None)
-        _ = getattr(inc, '_is_anonymous', False)  # is_anon
+        owner_user = getattr(inc, "_owner_user_id", None)
+        owner_org = getattr(inc, "_owner_org_id", None)
+        _ = getattr(inc, "_is_anonymous", False)  # is_anon
 
         if not is_admin and user_id is not None:
             if owner_user != user_id and owner_org != org_id:
                 continue  # Skip incidents not owned by this user/org
 
-        orch_state = pipeline_progress.get(inc_id, {}).get("state", getattr(inc, "status", "OBSERVED"))
-        results.append({
-            "id": inc.id,
-            "title": inc.title,
-            "system_name": inc.system_name,
-            "status": orch_state,
-            "pipeline_state": orch_state,
-            "evidence_count": inc.evidence_count,
-            "timeline_events_count": len(inc.timeline_events) if hasattr(inc, "timeline_events") and inc.timeline_events else 0,
-            "is_demonstration": getattr(inc, "is_demonstration", False),
-            "approximate_time": inc.approximate_time.isoformat() if inc.approximate_time else None
-        })
+        orch_state = pipeline_progress.get(inc_id, {}).get(
+            "state", getattr(inc, "status", "OBSERVED")
+        )
+        results.append(
+            {
+                "id": inc.id,
+                "title": inc.title,
+                "system_name": inc.system_name,
+                "status": orch_state,
+                "pipeline_state": orch_state,
+                "evidence_count": inc.evidence_count,
+                "timeline_events_count": len(inc.timeline_events)
+                if hasattr(inc, "timeline_events") and inc.timeline_events
+                else 0,
+                "is_demonstration": getattr(inc, "is_demonstration", False),
+                "approximate_time": inc.approximate_time.isoformat()
+                if inc.approximate_time
+                else None,
+            }
+        )
 
     # Discover any other incident folders on disk (only show if authenticated)
     if user_id is not None:
@@ -1660,34 +2026,38 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
                 for d in store.iterdir():
                     if d.is_dir() and d.name not in seen:
                         seen.add(d.name)
-                        results.append({
-                            "id": d.name,
-                            "title": f"Incident {d.name}",
-                            "system_name": "embedded-system",
-                            "status": "OBSERVED",
-                            "pipeline_state": "OBSERVED",
-                            "evidence_count": len(list(d.glob("**/*.*"))),
-                            "timeline_events_count": 0,
-                            "is_demonstration": False,
-                            "approximate_time": None
-                        })
+                        results.append(
+                            {
+                                "id": d.name,
+                                "title": f"Incident {d.name}",
+                                "system_name": "embedded-system",
+                                "status": "OBSERVED",
+                                "pipeline_state": "OBSERVED",
+                                "evidence_count": len(list(d.glob("**/*.*"))),
+                                "timeline_events_count": 0,
+                                "is_demonstration": False,
+                                "approximate_time": None,
+                            }
+                        )
 
             for p in Path(".").glob("incident-*"):
                 if p.is_dir():
                     inc_id = p.name.replace("incident-", "")
                     if inc_id not in seen:
                         seen.add(inc_id)
-                        results.append({
-                            "id": inc_id,
-                            "title": f"Incident {inc_id}",
-                            "system_name": "physical-ai-system",
-                            "status": "OBSERVED",
-                            "pipeline_state": "OBSERVED",
-                            "evidence_count": len(list(p.glob("**/*.*"))),
-                            "timeline_events_count": 0,
-                            "is_demonstration": (inc_id == "CAU-0001"),
-                            "approximate_time": None
-                        })
+                        results.append(
+                            {
+                                "id": inc_id,
+                                "title": f"Incident {inc_id}",
+                                "system_name": "physical-ai-system",
+                                "status": "OBSERVED",
+                                "pipeline_state": "OBSERVED",
+                                "evidence_count": len(list(p.glob("**/*.*"))),
+                                "timeline_events_count": 0,
+                                "is_demonstration": (inc_id == "CAU-0001"),
+                                "approximate_time": None,
+                            }
+                        )
         except Exception as e:
             logger.debug(f"Error scanning disk for incidents: {e}")
 
@@ -1700,7 +2070,7 @@ async def create_incident(
     background_tasks: BackgroundTasks,
     body: Optional[CreateIncidentRequest] = None,
     golden: Optional[bool] = None,
-    user_data: tuple = Depends(get_current_user)
+    user_data: tuple = Depends(get_current_user),
 ):
     """
     Create a new incident. If golden=True, load the golden incident.
@@ -1718,9 +2088,14 @@ async def create_incident(
         raise HTTPException(status_code=404, detail="User not found")
 
     # Check authorization
-    await authorize(auth_store, user, "incident:create", ip=request.client.host if request.client else "unknown",
-                   user_agent=request.headers.get("User-Agent", ""),
-                   request_id=getattr(request.state, "request_id", None))
+    await authorize(
+        auth_store,
+        user,
+        "incident:create",
+        ip=request.client.host if request.client else "unknown",
+        user_agent=request.headers.get("User-Agent", ""),
+        request_id=getattr(request.state, "request_id", None),
+    )
 
     # Check incident creation limits
     allowed, error_message, retry_after, limit_headers = _check_incident_creation_limits(request)
@@ -1728,7 +2103,9 @@ async def create_incident(
         raise HTTPException(
             status_code=429 if retry_after > 0 else 409,
             detail=error_message,
-            headers={**limit_headers, "Retry-After": str(retry_after)} if retry_after > 0 else limit_headers
+            headers={**limit_headers, "Retry-After": str(retry_after)}
+            if retry_after > 0
+            else limit_headers,
         )
 
     is_golden = golden if golden is not None else (body.golden if body else False)
@@ -1753,60 +2130,61 @@ async def create_incident(
         _record_incident_created(request, incident.id, is_demonstration=True)
 
         # Audit log
-        await auth_store.write_audit_log(AuditLogEntry(
-            user_id=user.id,
-            org_id=user.org_id,
-            action="incident.create",
-            resource_type="incident",
-            resource_id=incident.id,
-            resource_owner_id=user_id,
-            decision="allow",
-            ip_address=request.client.host if request.client else "unknown",
-            user_agent=request.headers.get("User-Agent", ""),
-            request_id=getattr(request.state, "request_id", None),
-            metadata={"golden": True, "is_demonstration": True}
-        ))
+        await auth_store.write_audit_log(
+            AuditLogEntry(
+                user_id=user.id,
+                org_id=user.org_id,
+                action="incident.create",
+                resource_type="incident",
+                resource_id=incident.id,
+                resource_owner_id=user_id,
+                decision="allow",
+                ip_address=request.client.host if request.client else "unknown",
+                user_agent=request.headers.get("User-Agent", ""),
+                request_id=getattr(request.state, "request_id", None),
+                metadata={"golden": True, "is_demonstration": True},
+            )
+        )
 
         return Response(
-            content=json.dumps({
-                "incident_id": incident.id,
-                "message": "Golden incident loaded [DEMONSTRATION BENCHMARK]",
-                "is_demonstration": True,
-                "system_name": incident.system_name,
-                "evidence_count": incident.evidence_count
-            }),
+            content=json.dumps(
+                {
+                    "incident_id": incident.id,
+                    "message": "Golden incident loaded [DEMONSTRATION BENCHMARK]",
+                    "is_demonstration": True,
+                    "system_name": incident.system_name,
+                    "evidence_count": incident.evidence_count,
+                }
+            ),
             media_type="application/json",
-            headers=limit_headers
+            headers=limit_headers,
         )
-    else:
-        incident_id = (body.custom_id if body and body.custom_id else str(uuid.uuid4()))
-        title = body.title if body and body.title else "Uploaded Incident"
-        desc = body.description if body and body.description else "Incident uploaded via API"
-        sys_name = body.system_name if body and body.system_name else "warehouse-amr-01"
 
-        incident = Incident(
-            id=incident_id,
-            title=title,
-            description=desc,
-            system_name=sys_name,
-            status="OBSERVED"
-        )
-        # Store ownership metadata (dynamically added attributes)
-        incident._owner_user_id = user_id  # type: ignore[attr-defined]
-        incident._owner_org_id = org_id  # type: ignore[attr-defined]
-        incident._is_anonymous = False  # type: ignore[attr-defined]
-        incidents[incident_id] = incident
-        orch = PipelineOrchestrator()
-        orch.context = PipelineContext(incident=incident)
-        pipeline_tasks[incident_id] = orch
-        pipeline_progress[incident_id] = orch.get_pipeline_summary()
-        logger.info(f"Created empty incident {incident_id}")
+    incident_id = body.custom_id if body and body.custom_id else str(uuid.uuid4())
+    title = body.title if body and body.title else "Uploaded Incident"
+    desc = body.description if body and body.description else "Incident uploaded via API"
+    sys_name = body.system_name if body and body.system_name else "warehouse-amr-01"
 
-        # Record creation for limit tracking
-        _record_incident_created(request, incident_id, is_demonstration=False)
+    incident = Incident(
+        id=incident_id, title=title, description=desc, system_name=sys_name, status="OBSERVED"
+    )
+    # Store ownership metadata (dynamically added attributes)
+    incident._owner_user_id = user_id  # type: ignore[attr-defined]
+    incident._owner_org_id = org_id  # type: ignore[attr-defined]
+    incident._is_anonymous = False  # type: ignore[attr-defined]
+    incidents[incident_id] = incident
+    orch = PipelineOrchestrator()
+    orch.context = PipelineContext(incident=incident)
+    pipeline_tasks[incident_id] = orch
+    pipeline_progress[incident_id] = orch.get_pipeline_summary()
+    logger.info(f"Created empty incident {incident_id}")
 
-        # Audit log
-        await auth_store.write_audit_log(AuditLogEntry(
+    # Record creation for limit tracking
+    _record_incident_created(request, incident_id, is_demonstration=False)
+
+    # Audit log
+    await auth_store.write_audit_log(
+        AuditLogEntry(
             user_id=user.id,
             org_id=user.org_id,
             action="incident.create",
@@ -1817,23 +2195,31 @@ async def create_incident(
             ip_address=request.client.host if request.client else "unknown",
             user_agent=request.headers.get("User-Agent", ""),
             request_id=getattr(request.state, "request_id", None),
-            metadata={"golden": False}
-        ))
+            metadata={"golden": False},
+        )
+    )
 
-        return Response(
-            content=json.dumps({
+    return Response(
+        content=json.dumps(
+            {
                 "incident_id": incident_id,
                 "message": "Incident created, ready for bundle upload",
                 "is_demonstration": False,
-                "system_name": sys_name
-            }),
-            media_type="application/json",
-            headers=limit_headers
-        )
+                "system_name": sys_name,
+            }
+        ),
+        media_type="application/json",
+        headers=limit_headers,
+    )
 
 
 @app.post("/api/v1/incidents/{incident_id}/upload")
-async def upload_incident(request: Request, incident_id: str, file: UploadFile = File(...), user_data: tuple = Depends(get_current_user)):
+async def upload_incident(
+    request: Request,
+    incident_id: str,
+    file: UploadFile = File(...),
+    user_data: tuple = Depends(get_current_user),
+):
     """
     Upload an incident bundle (ZIP file) and attach it to the incident.
     Requires: evidence:upload permission
@@ -1848,39 +2234,46 @@ async def upload_incident(request: Request, incident_id: str, file: UploadFile =
         raise HTTPException(status_code=404, detail="User not found")
 
     # Check authorization
-    await authorize(auth_store, user, "evidence:upload",
-                   resource_type="incident", resource_id=incident_id,
-                   ip=request.client.host if request.client else "unknown",
-                   user_agent=request.headers.get("User-Agent", ""),
-                   request_id=getattr(request.state, "request_id", None))
+    await authorize(
+        auth_store,
+        user,
+        "evidence:upload",
+        resource_type="incident",
+        resource_id=incident_id,
+        ip=request.client.host if request.client else "unknown",
+        user_agent=request.headers.get("User-Agent", ""),
+        request_id=getattr(request.state, "request_id", None),
+    )
 
     if incident_id not in incidents:
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
     incident = incidents[incident_id]
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("incident:update_any") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="evidence.upload",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="evidence.upload",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to upload to this incident")
 
     # Validate file extension
-    if file.filename is None or not file.filename.lower().endswith('.zip'):
+    if file.filename is None or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="File must be a ZIP archive")
 
     # Read file content
@@ -1932,13 +2325,23 @@ async def upload_incident(request: Request, incident_id: str, file: UploadFile =
                 # Validate file type (basic validation - in reality would use settings)
                 # For demo, we'll accept common types
                 allowed_types = {
-                    "text/yaml", "application/json", "text/csv", "text/plain",
-                    "text/markdown", "text/x-python", "application/octet-stream",
-                    "image/png", "image/jpeg", "application/pdf", "video/mp4"
+                    "text/yaml",
+                    "application/json",
+                    "text/csv",
+                    "text/plain",
+                    "text/markdown",
+                    "text/x-python",
+                    "application/octet-stream",
+                    "image/png",
+                    "image/jpeg",
+                    "application/pdf",
+                    "video/mp4",
                 }
 
                 if detected_type not in allowed_types:
-                    logger.warning(f"File type {detected_type} not in allowed list, but processing anyway")
+                    logger.warning(
+                        f"File type {detected_type} not in allowed list, but processing anyway"
+                    )
 
                 # Validate file size
                 file_size = extracted_file.stat().st_size
@@ -1952,9 +2355,12 @@ async def upload_incident(request: Request, incident_id: str, file: UploadFile =
 
                 # Scan for secrets (text files only)
                 secrets_found = []
-                if detected_type.startswith('text/') or detected_type in ['application/json', 'application/yaml']:
+                if detected_type.startswith("text/") or detected_type in [
+                    "application/json",
+                    "application/yaml",
+                ]:
                     try:
-                        with open(extracted_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        with open(extracted_file, "r", encoding="utf-8", errors="ignore") as f:
                             content = f.read()
                         secrets_found = scan_for_secrets(content, str(extracted_file))
                     except Exception:
@@ -1966,7 +2372,9 @@ async def upload_incident(request: Request, incident_id: str, file: UploadFile =
                 validation_errors = []
 
                 if secrets_found:
-                    validation_errors.append(f"Potential secrets detected: {', '.join(set([s[0] for s in secrets_found]))}")
+                    validation_errors.append(
+                        f"Potential secrets detected: {', '.join(set([s[0] for s in secrets_found]))}"
+                    )
                     status = "SECRETS_DETECTED"
 
                 # Create EvidenceItem
@@ -1977,7 +2385,7 @@ async def upload_incident(request: Request, incident_id: str, file: UploadFile =
                     checksum_sha256=checksum,
                     status=status,
                     is_required=False,  # Most uploaded evidence is not strictly required
-                    validation_errors=validation_errors
+                    validation_errors=validation_errors,
                 )
 
                 incident.evidence_items.append(evidence)
@@ -1987,25 +2395,29 @@ async def upload_incident(request: Request, incident_id: str, file: UploadFile =
                 logger.error(f"Failed to process extracted file {extracted_file}: {e}")
                 # Create a failed evidence item
                 evidence = EvidenceItem(
-                    file_path=str(extracted_file.relative_to(extract_dir)) if extract_dir in extracted_file.parents else extracted_file.name,
+                    file_path=str(extracted_file.relative_to(extract_dir))
+                    if extract_dir in extracted_file.parents
+                    else extracted_file.name,
                     file_type="application/octet-stream",
                     size_bytes=0,
                     checksum_sha256="",
                     status="PROCESSING_ERROR",
                     is_required=False,
-                    validation_errors=[f"Processing error: {str(e)}"]
+                    validation_errors=[f"Processing error: {str(e)}"],
                 )
                 incident.evidence_items.append(evidence)
 
         # Update incident evidence counts
         incident.update_counts()
 
-        logger.info(f"Successfully processed upload for incident {incident_id}: {len(incident.evidence_items)} evidence items")
+        logger.info(
+            f"Successfully processed upload for incident {incident_id}: {len(incident.evidence_items)} evidence items"
+        )
         return {
             "message": "File uploaded and processed",
             "filename": file.filename,
             "size": len(content),
-            "evidence_count": len(incident.evidence_items)
+            "evidence_count": len(incident.evidence_items),
         }
 
     finally:
@@ -2022,7 +2434,9 @@ async def upload_incident(request: Request, incident_id: str, file: UploadFile =
 
 
 @app.post("/api/v1/incidents/{incident_id}/validate")
-async def validate_incident(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def validate_incident(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """
     Validate the incident bundle and evidence integrity.
     Requires: incident:validate permission
@@ -2041,47 +2455,55 @@ async def validate_incident(request: Request, incident_id: str, user_data: tuple
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("incident:validate") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="incident.validate",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="incident.validate",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to validate this incident")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="incident.validate",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="incident.validate",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     ingestion = IngestionController()
     validated_incident = await ingestion.process(incident)
     incidents[incident_id] = validated_incident
 
     is_valid = len(validated_incident.missing_required_evidence) == 0
-    secrets_count = sum(1 for e in validated_incident.evidence_items if e.status == "SECRETS_DETECTED")
-    status_label = "PASSED" if is_valid and secrets_count == 0 else ("WARNING" if is_valid else "FAILED")
+    secrets_count = sum(
+        1 for e in validated_incident.evidence_items if e.status == "SECRETS_DETECTED"
+    )
+    status_label = (
+        "PASSED" if is_valid and secrets_count == 0 else ("WARNING" if is_valid else "FAILED")
+    )
 
     return {
         "incident_id": incident_id,
@@ -2104,15 +2526,20 @@ async def validate_incident(request: Request, incident_id: str, user_data: tuple
                 "checksum_sha256": item.checksum_sha256,
                 "status": str(item.status.value if hasattr(item.status, "value") else item.status),
                 "is_required": item.is_required,
-                "validation_errors": item.validation_errors
+                "validation_errors": item.validation_errors,
             }
             for item in validated_incident.evidence_items
-        ]
+        ],
     }
 
 
 @app.post("/api/v1/incidents/{incident_id}/reconstruct")
-async def reconstruct_incident(request: Request, incident_id: str, background_tasks: BackgroundTasks, user_data: tuple = Depends(get_current_user)):
+async def reconstruct_incident(
+    request: Request,
+    incident_id: str,
+    background_tasks: BackgroundTasks,
+    user_data: tuple = Depends(get_current_user),
+):
     """
     Start the incident reconstruction pipeline.
     Requires: incident:reconstruct permission
@@ -2131,49 +2558,57 @@ async def reconstruct_incident(request: Request, incident_id: str, background_ta
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("incident:reconstruct") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="incident.reconstruct",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
-            raise HTTPException(status_code=403, detail="Not authorized to reconstruct this incident")
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="incident.reconstruct",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
+            raise HTTPException(
+                status_code=403, detail="Not authorized to reconstruct this incident"
+            )
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="incident.reconstruct",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="incident.reconstruct",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     # Prevent duplicate start request if already running
     print(f"DEBUG: pipeline_tasks keys: {list(pipeline_tasks.keys())}")
     if incident_id in pipeline_tasks:
-        print(f"DEBUG: Found existing task for {incident_id}, is_running: {pipeline_tasks[incident_id].is_running()}")
+        print(
+            f"DEBUG: Found existing task for {incident_id}, is_running: {pipeline_tasks[incident_id].is_running()}"
+        )
         existing_orch = pipeline_tasks[incident_id]
         if existing_orch.is_running():
             raise HTTPException(
                 status_code=409,
-                detail="Investigation already running for this incident. Duplicate start requests are blocked."
+                detail="Investigation already running for this incident. Duplicate start requests are blocked.",
             )
 
     orchestrator = PipelineOrchestrator()
@@ -2196,28 +2631,93 @@ async def reconstruct_incident(request: Request, incident_id: str, background_ta
         "message": "Reconstruction started successfully",
         "incident_id": incident_id,
         "pipeline_state": "RUNNING",
-        "is_demonstration": getattr(incident, "is_demonstration", False)
+        "is_demonstration": getattr(incident, "is_demonstration", False),
     }
 
 
 async def _run_pipeline(incident_id: str, orchestrator: PipelineOrchestrator, incident: Incident):
     """Run the pipeline in the background and store the resulting context."""
+    import time
+
+    pipeline_start = time.perf_counter()
+    stage_timings = {}
+
+    # Wrap progress callback to capture stage timings
+    original_callback = orchestrator._progress_callback
+
+    def timed_progress_callback(update, legacy_progress=None):
+        if isinstance(update, dict):
+            current_stage = update.get("current_stage")
+            if current_stage and current_stage not in stage_timings:
+                stage_timings[current_stage] = {"start": time.perf_counter()}
+            elif (
+                current_stage
+                and current_stage in stage_timings
+                and "end" not in stage_timings[current_stage]
+            ):
+                # Stage changed, mark previous as ended
+                stage_timings[current_stage]["end"] = time.perf_counter()
+        if original_callback:
+            original_callback(update, legacy_progress)
+
+    orchestrator.set_progress_callback(timed_progress_callback)
+
     try:
         context: PipelineContext = await orchestrator.process_incident(incident)
         pipeline_contexts[incident_id] = context
         incidents[incident_id] = incident
         pipeline_progress[incident_id] = orchestrator.get_pipeline_summary()
-        logger.info(f"Pipeline completed with state {orchestrator.current_state} for incident {incident_id}")
+
+        # Finalize stage timings
+        pipeline_duration = time.perf_counter() - pipeline_start
+        for stage_name, timing in stage_timings.items():
+            if "end" not in timing:
+                timing["end"] = time.perf_counter()
+            timing["duration_ms"] = round((timing["end"] - timing["start"]) * 1000, 2)
+
+        logger.info(
+            f"Pipeline completed for incident {incident_id}",
+            extra={
+                "incident_id": incident_id,
+                "event": "pipeline_completed",
+                "state": orchestrator.current_state,
+                "duration_ms": round(pipeline_duration * 1000, 2),
+                "stage_timings": stage_timings,
+                "stages_count": len(orchestrator.stages),
+            },
+        )
     except asyncio.CancelledError:
-        logger.info(f"Pipeline cancelled for incident {incident_id}")
+        pipeline_duration = time.perf_counter() - pipeline_start
+        logger.warning(
+            f"Pipeline cancelled for incident {incident_id}",
+            extra={
+                "incident_id": incident_id,
+                "event": "pipeline_cancelled",
+                "duration_ms": round(pipeline_duration * 1000, 2),
+                "stage_timings": stage_timings,
+            },
+        )
         pipeline_progress[incident_id] = orchestrator.get_pipeline_summary()
     except Exception as e:
-        logger.exception(f"Pipeline failed for incident {incident_id}: {e}")
+        pipeline_duration = time.perf_counter() - pipeline_start
+        logger.exception(
+            f"Pipeline failed for incident {incident_id}",
+            extra={
+                "incident_id": incident_id,
+                "event": "pipeline_failed",
+                "duration_ms": round(pipeline_duration * 1000, 2),
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "stage_timings": stage_timings,
+            },
+        )
         pipeline_progress[incident_id] = orchestrator.get_pipeline_summary()
 
 
 @app.post("/api/v1/incidents/{incident_id}/cancel")
-async def cancel_incident(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def cancel_incident(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Cancel an active running investigation.
     Requires: incident:cancel permission
     """
@@ -2235,39 +2735,43 @@ async def cancel_incident(request: Request, incident_id: str, user_data: tuple =
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("incident:cancel") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="incident.cancel",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="incident.cancel",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to cancel this incident")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="incident.cancel",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="incident.cancel",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     if incident_id in pipeline_tasks:
         orchestrator = pipeline_tasks[incident_id]
@@ -2277,28 +2781,342 @@ async def cancel_incident(request: Request, incident_id: str, user_data: tuple =
             return {
                 "message": "Investigation cancelled by operator",
                 "incident_id": incident_id,
-                "state": "CANCELLED"
+                "state": "CANCELLED",
             }
 
-    if incident_id in pipeline_progress and pipeline_progress[incident_id].get("state") == "RUNNING":
+    if (
+        incident_id in pipeline_progress
+        and pipeline_progress[incident_id].get("state") == "RUNNING"
+    ):
         pipeline_progress[incident_id]["state"] = "CANCELLED"
         pipeline_progress[incident_id]["error"] = "Investigation cancelled by operator"
         return {
             "message": "Investigation cancelled by operator",
             "incident_id": incident_id,
-            "state": "CANCELLED"
+            "state": "CANCELLED",
         }
 
     return {
         "message": "No active investigation currently running to cancel",
         "incident_id": incident_id,
-        "state": pipeline_progress.get(incident_id, {}).get("state", "IDLE")
+        "state": pipeline_progress.get(incident_id, {}).get("state", "IDLE"),
     }
+
+
+@app.post("/api/v1/incidents/{incident_id}/retry")
+async def retry_incident(
+    request: Request,
+    incident_id: str,
+    background_tasks: BackgroundTasks,
+    user_data: tuple = Depends(get_current_user),
+):
+    """
+    Retry a failed or cancelled investigation from the beginning.
+    Requires: incident:retry permission
+    """
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    # Check ownership
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
+
+    if not user.has_permission("incident:retry") and not user.has_permission("*"):
+        if owner_user != user_id and owner_org != org_id:
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="incident.retry",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
+            raise HTTPException(status_code=403, detail="Not authorized to retry this incident")
+
+    # Check current state
+    current_state = pipeline_progress.get(incident_id, {}).get("state", "IDLE")
+    if current_state == "RUNNING":
+        raise HTTPException(
+            status_code=409,
+            detail="Investigation is currently running. Cancel first before retrying.",
+        )
+
+    # Audit log
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="incident.retry",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
+
+    # Cancel any existing task
+    if incident_id in pipeline_tasks:
+        pipeline_tasks[incident_id].cancel()
+
+    # Reset pipeline state
+    orchestrator = PipelineOrchestrator()
+    orchestrator.context = PipelineContext(incident=incident)
+
+    def progress_callback(update, legacy_progress=None):
+        if isinstance(update, dict):
+            pipeline_progress[incident_id] = update
+        else:
+            pipeline_progress[incident_id] = orchestrator.get_pipeline_summary()
+
+    orchestrator.set_progress_callback(progress_callback)
+    pipeline_tasks[incident_id] = orchestrator
+    pipeline_progress[incident_id] = orchestrator.get_pipeline_summary()
+
+    # Clear any previous context
+    if incident_id in pipeline_contexts:
+        del pipeline_contexts[incident_id]
+
+    orchestrator.current_state = "RUNNING"
+    bg_task = asyncio.create_task(_run_pipeline(incident_id, orchestrator, incident))
+    orchestrator._bg_task = bg_task
+    return {
+        "message": "Investigation retry started successfully",
+        "incident_id": incident_id,
+        "pipeline_state": "RUNNING",
+        "is_demonstration": getattr(incident, "is_demonstration", False),
+    }
+
+
+async def _authenticate_websocket(
+    websocket: WebSocket,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Authenticate WebSocket connection via query param or Authorization header.
+    Returns: (user_id, org_id, role) or (None, None, None) if unauthenticated.
+    """
+    from cauveris.auth import TokenManager, TokenType
+    from cauveris.config import get_settings
+
+    settings = get_settings()
+    token_manager = TokenManager(settings.auth_jwt_secret, settings.auth_jwt_algorithm)
+    auth_store = get_auth_store()
+
+    # Try query parameter first
+    query_params = dict(websocket.query_params)
+    token = query_params.get("token")
+
+    # Fall back to Authorization header
+    if not token:
+        auth_header = websocket.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1]
+
+    if not token:
+        return None, None, None
+
+    try:
+        payload = token_manager.decode_token(token, TokenType.ACCESS)
+        user_id = payload.get("sub")
+        org_id = payload.get("org_id")
+        role = payload.get("role")
+        session_id = payload.get("session_id")
+
+        if not user_id or not org_id:
+            return None, None, None
+
+        # Verify session exists and is valid
+        if auth_store:
+            session = await auth_store.get_session(session_id)
+            if not session or session.is_revoked or session.is_expired():
+                return None, None, None
+
+        return user_id, org_id, role
+    except Exception:
+        return None, None, None
+
+
+@app.websocket("/api/v1/incidents/{incident_id}/progress")
+async def incident_progress_websocket(websocket: WebSocket, incident_id: str):
+    """
+    WebSocket endpoint for real-time pipeline progress streaming.
+
+    Connect to ws://host/api/v1/incidents/{incident_id}/progress?token=<jwt>
+    Or with Authorization: Bearer <jwt> header.
+    Requires authentication and incident:read permission.
+    Receives JSON updates as the pipeline progresses through stages.
+    """
+    import time
+
+    ws_start_time = time.perf_counter()
+    connection_id = f"ws_{incident_id}_{int(ws_start_time * 1000)}"
+
+    # Authenticate before accepting
+    user_id, org_id, role = await _authenticate_websocket(websocket)
+    if not user_id:
+        logger.warning(
+            f"WebSocket auth failed for incident {incident_id}",
+            extra={"incident_id": incident_id, "connection_id": connection_id},
+        )
+        await websocket.close(code=4001, reason="Authentication required")
+        return
+
+    # Verify incident access
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        logger.warning(
+            f"WebSocket incident not found: {incident_id}",
+            extra={"incident_id": incident_id, "connection_id": connection_id},
+        )
+        await websocket.close(code=4004, reason="Incident not found")
+        return
+
+    # Check ownership/permission
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
+    auth_store = get_auth_store()
+
+    if auth_store:
+        user = await auth_store.get_user(user_id)
+        if not user or (not user.has_permission("incident:read") and not user.has_permission("*")):
+            if owner_user != user_id and owner_org != org_id:
+                logger.warning(
+                    f"WebSocket access denied for user {user_id} on incident {incident_id}",
+                    extra={
+                        "incident_id": incident_id,
+                        "user_id": user_id,
+                        "connection_id": connection_id,
+                    },
+                )
+                await websocket.close(code=4003, reason="Not authorized to view this incident")
+                return
+
+    await websocket.accept()
+
+    # Log connection established
+    logger.info(
+        f"WebSocket connected for incident {incident_id}",
+        extra={
+            "incident_id": incident_id,
+            "user_id": user_id,
+            "org_id": org_id,
+            "role": role,
+            "connection_id": connection_id,
+            "event": "websocket_connected",
+        },
+    )
+
+    messages_sent = 0
+    try:
+        # Send initial state
+        initial_progress = pipeline_progress.get(incident_id, {})
+        if initial_progress:
+            await websocket.send_json(initial_progress)
+        else:
+            await websocket.send_json(
+                {
+                    "incident_id": incident_id,
+                    "state": "IDLE",
+                    "progress": 0.0,
+                    "current_stage": None,
+                    "stages": [],
+                }
+            )
+        messages_sent += 1
+
+        # Listen for progress updates
+        last_progress = ""
+        import asyncio
+
+        while True:
+            # Check current progress
+            current_progress = pipeline_progress.get(incident_id, {})
+            progress_json = json.dumps(current_progress, sort_keys=True)
+
+            # Only send if progress changed
+            if progress_json != last_progress:
+                await websocket.send_json(current_progress)
+                last_progress = progress_json
+                messages_sent += 1
+
+                # Log progress update with structured fields
+                logger.debug(
+                    f"WebSocket progress update for {incident_id}",
+                    extra={
+                        "incident_id": incident_id,
+                        "connection_id": connection_id,
+                        "event": "websocket_progress",
+                        "pipeline_state": current_progress.get("state"),
+                        "pipeline_progress": current_progress.get("progress"),
+                        "current_stage": current_progress.get("current_stage"),
+                    },
+                )
+
+            # Check if pipeline is done
+            state = current_progress.get("state", "")
+            if state in ["SUCCESS", "FAILED", "CANCELLED"]:
+                # Send final state and close
+                await websocket.send_json(current_progress)
+                messages_sent += 1
+                break
+
+            # Wait before next poll (200ms)
+            await asyncio.sleep(0.2)
+
+    except Exception as e:
+        logger.error(
+            f"WebSocket error for incident {incident_id}: {e}",
+            extra={
+                "incident_id": incident_id,
+                "connection_id": connection_id,
+                "event": "websocket_error",
+                "error": str(e),
+                "error_type": type(e).__name__,
+            },
+        )
+    finally:
+        duration_ms = round((time.perf_counter() - ws_start_time) * 1000, 2)
+        logger.info(
+            f"WebSocket disconnected for incident {incident_id}",
+            extra={
+                "incident_id": incident_id,
+                "user_id": user_id,
+                "connection_id": connection_id,
+                "duration_ms": duration_ms,
+                "messages_sent": messages_sent,
+                "event": "websocket_disconnected",
+            },
+        )
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.post("/api/v1/incidents/{incident_id}/reset")
 @app.post("/api/v1/reset-demo")
-async def reset_incident(request: Request, incident_id: str = "CAU-0001", user_data: tuple = Depends(get_current_user)):
+async def reset_incident(
+    request: Request, incident_id: str = "CAU-0001", user_data: tuple = Depends(get_current_user)
+):
     """Reset an investigation and its pipeline stages back to ready IDLE state.
     Requires: incident:reset permission
     """
@@ -2316,48 +3134,52 @@ async def reset_incident(request: Request, incident_id: str = "CAU-0001", user_d
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("incident:reset") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="incident.reset",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="incident.reset",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to reset this incident")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="incident.reset",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="incident.reset",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     if incident_id in pipeline_tasks:
         pipeline_tasks[incident_id].cancel()
 
+    # Reset by clearing pipeline state and reloading from storage
     if incident_id.upper() in ["CAU-0001", "GOLDEN"]:
         generator = GoldenIncidentGenerator()
         incident = generator.generate()
         incident.is_demonstration = True
-        # Reset ownership for demo incident (dynamically added attributes)
         incident._owner_user_id = user_id  # type: ignore[attr-defined]
         incident._owner_org_id = org_id  # type: ignore[attr-defined]
         incident._is_anonymous = False  # type: ignore[attr-defined]
@@ -2367,6 +3189,12 @@ async def reset_incident(request: Request, incident_id: str = "CAU-0001", user_d
         if not incident:
             raise HTTPException(status_code=404, detail="Incident not found")
         incident.status = "OBSERVED"
+
+    # Clear existing pipeline data for this incident
+    if incident_id in pipeline_contexts:
+        del pipeline_contexts[incident_id]
+    if incident_id in pipeline_progress:
+        del pipeline_progress[incident_id]
 
     orch = PipelineOrchestrator()
     orch.context = PipelineContext(incident=incident)
@@ -2381,12 +3209,14 @@ async def reset_incident(request: Request, incident_id: str = "CAU-0001", user_d
         "incident_id": incident.id,
         "state": "IDLE",
         "is_demonstration": getattr(incident, "is_demonstration", False),
-        "pipeline_summary": orch.get_pipeline_summary()
+        "pipeline_summary": orch.get_pipeline_summary(),
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}")
-async def get_incident(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def get_incident(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Get incident details with evidence items and metadata.
     Requires: incident:read permission
     """
@@ -2404,46 +3234,52 @@ async def get_incident(request: Request, incident_id: str, user_data: tuple = De
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("incident:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="incident.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="incident.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to view this incident")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="incident.read",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="incident.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     return {
         "id": incident.id,
         "title": incident.title,
         "description": incident.description,
         "system_name": incident.system_name,
-        "approximate_time": incident.approximate_time.isoformat() if incident.approximate_time else None,
+        "approximate_time": incident.approximate_time.isoformat()
+        if incident.approximate_time
+        else None,
         "evidence_count": incident.evidence_count,
         "required_evidence_count": incident.required_evidence_count,
         "missing_required_evidence": incident.missing_required_evidence,
@@ -2459,15 +3295,17 @@ async def get_incident(request: Request, incident_id: str, user_data: tuple = De
                 "checksum_sha256": item.checksum_sha256,
                 "status": item.status,
                 "is_required": item.is_required,
-                "validation_errors": item.validation_errors
+                "validation_errors": item.validation_errors,
             }
             for item in incident.evidence_items
-        ]
+        ],
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}/timeline")
-async def get_incident_timeline(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def get_incident_timeline(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Get the synchronized multi-lane timeline events and clock alignment.
     Requires: timeline:read permission
     """
@@ -2485,51 +3323,57 @@ async def get_incident_timeline(request: Request, incident_id: str, user_data: t
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("timeline:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="timeline.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="timeline.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to view this timeline")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="timeline.read",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="timeline.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     clock_alignment = incident.manifest.get("clock_alignment", {}) if incident.manifest else {}
     return {
         "incident_id": incident.id,
         "total_events": len(incident.timeline_events),
         "clock_alignment": clock_alignment,
-        "timeline_events": incident.timeline_events
+        "timeline_events": incident.timeline_events,
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}/temporal-analysis")
-async def get_incident_temporal_analysis(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def get_incident_temporal_analysis(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Get temporal causality analysis for an incident.
     Requires: timeline:read permission
     """
@@ -2547,47 +3391,52 @@ async def get_incident_temporal_analysis(request: Request, incident_id: str, use
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("timeline:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="timeline.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="timeline.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to view this analysis")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="timeline.read",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="timeline.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     ctx = pipeline_contexts.get(incident_id)
     if ctx and ctx.temporal_analysis:
         result = ctx.temporal_analysis
-    elif getattr(incident, 'temporal_analysis', None):
+    elif getattr(incident, "temporal_analysis", None):
         result = incident.temporal_analysis
     else:
         from cauveris.temporal.integration import TemporalAnalyzer
+
         analyzer = TemporalAnalyzer()
         result = analyzer.analyze_incident(incident)
 
@@ -2603,7 +3452,9 @@ async def get_incident_temporal_analysis(request: Request, incident_id: str, use
 
 
 @app.get("/api/v1/incidents/{incident_id}/hypotheses")
-async def get_incident_hypotheses(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def get_incident_hypotheses(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Get root-cause hypotheses with causal claims and evidence citations.
     Requires: hypothesis:read permission
     """
@@ -2621,45 +3472,50 @@ async def get_incident_hypotheses(request: Request, incident_id: str, user_data:
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("hypothesis:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="hypothesis.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="hypothesis.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to view hypotheses")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="hypothesis.read",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="hypothesis.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     ctx = pipeline_contexts.get(incident_id)
     if ctx and ctx.hypotheses:
         hypotheses = ctx.hypotheses
     else:
         from cauveris.hypothesis.generator import HypothesisGenerator
+
         hg = HypothesisGenerator()
         hypotheses = await hg.generate(incident)
         if ctx:
@@ -2671,7 +3527,15 @@ async def get_incident_hypotheses(request: Request, incident_id: str, user_data:
         hyp_id = dump.get("hypothesis_id", "")
         # Provide compatible fields for both frontend formats
         dump["id"] = hyp_id
-        dump["title"] = hyp_id.replace("exp-", "").replace("h1_", "H1: ").replace("h2_", "H2: ").replace("h3_", "H3: ").replace("h4_", "H4: ").replace("_", " ").title()
+        dump["title"] = (
+            hyp_id.replace("exp-", "")
+            .replace("h1_", "H1: ")
+            .replace("h2_", "H2: ")
+            .replace("h3_", "H3: ")
+            .replace("h4_", "H4: ")
+            .replace("_", " ")
+            .title()
+        )
         dump["description"] = dump.get("causal_claim", "")
         dump["confidence"] = int(float(dump.get("confidence_prior", 0.5)) * 100)
         dump["evidence_count"] = len(dump.get("supporting_artifact_ids", []))
@@ -2680,13 +3544,18 @@ async def get_incident_hypotheses(request: Request, incident_id: str, user_data:
     return {
         "incident_id": incident_id,
         "count": len(formatted_hypotheses),
-        "hypotheses": formatted_hypotheses
+        "hypotheses": formatted_hypotheses,
     }
 
 
 @app.post("/api/v1/incidents/{incident_id}/hypotheses/{hypothesis_id}/test")
 @app.post("/api/v1/incidents/{incident_id}/hypotheses/test")
-async def test_hypothesis_endpoint(request: Request, incident_id: str, hypothesis_id: str = "H1", user_data: tuple = Depends(get_current_user)):
+async def test_hypothesis_endpoint(
+    request: Request,
+    incident_id: str,
+    hypothesis_id: str = "H1",
+    user_data: tuple = Depends(get_current_user),
+):
     """
     Test a specific root-cause hypothesis in sandbox and simulate outcomes.
     Requires: hypothesis:test permission
@@ -2705,44 +3574,49 @@ async def test_hypothesis_endpoint(request: Request, incident_id: str, hypothesi
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("hypothesis:test") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="hypothesis.test",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="hypothesis.test",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to test hypotheses")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="hypothesis.test",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="hypothesis.test",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     ctx = pipeline_contexts.get(incident_id)
     hypotheses = ctx.hypotheses if ctx and ctx.hypotheses else None
     if not hypotheses:
         from cauveris.hypothesis.generator import HypothesisGenerator
+
         hg = HypothesisGenerator()
         hypotheses = await hg.generate(incident)
         if ctx:
@@ -2762,7 +3636,7 @@ async def test_hypothesis_endpoint(request: Request, incident_id: str, hypothesi
             "h1": "h1_batching_window",
             "h2": "h2_qos_stale_messages",
             "h3": "h3_clock_skew",
-            "h4": "h4_gpu_load_throttling"
+            "h4": "h4_gpu_load_throttling",
         }
         mapped = prefix_map.get(clean_target)
         if mapped:
@@ -2786,7 +3660,9 @@ async def test_hypothesis_endpoint(request: Request, incident_id: str, hypothesi
     sim_experiments = await sim_runner.run_simulations(experiments)
     exp = sim_experiments[0]
 
-    is_confirmed = (exp.reproduction_rate == 0.0) or exp.failure_oracle.get("hypothesis_supported", False)
+    is_confirmed = (exp.reproduction_rate == 0.0) or exp.failure_oracle.get(
+        "hypothesis_supported", False
+    )
 
     if ctx and ctx.experiments:
         for idx, existing in enumerate(ctx.experiments):
@@ -2804,7 +3680,7 @@ async def test_hypothesis_endpoint(request: Request, incident_id: str, hypothesi
         "incident_id": incident_id,
         "hypothesis_id": target_hyp.hypothesis_id,
         "id": target_hyp.hypothesis_id,
-        "title": target_hyp.hypothesis_id.replace('_', ' ').title(),
+        "title": target_hyp.hypothesis_id.replace("_", " ").title(),
         "causal_claim": target_hyp.causal_claim,
         "intervention": target_hyp.intervention,
         "status": "CONFIRMED" if is_confirmed else "REFUTED",
@@ -2812,12 +3688,14 @@ async def test_hypothesis_endpoint(request: Request, incident_id: str, hypothesi
         "hypothesis_supported": is_confirmed,
         "failure_oracle": exp.failure_oracle,
         "metrics": getattr(exp, "metrics", {}),
-        "message": msg
+        "message": msg,
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}/experiments")
-async def get_incident_experiments(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def get_incident_experiments(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Get sandbox experiment branches and reproduction metrics.
     Requires: experiment:read permission
     """
@@ -2835,39 +3713,43 @@ async def get_incident_experiments(request: Request, incident_id: str, user_data
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("experiment:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="experiment.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="experiment.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to view experiments")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="experiment.read",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="experiment.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     ctx = pipeline_contexts.get(incident_id)
     experiments = ctx.experiments if ctx and ctx.experiments else []
@@ -2884,12 +3766,14 @@ async def get_incident_experiments(request: Request, incident_id: str, user_data
     return {
         "incident_id": incident_id,
         "count": len(formatted_experiments),
-        "experiments": formatted_experiments
+        "experiments": formatted_experiments,
     }
 
 
 @app.post("/api/v1/incidents/{incident_id}/experiments/run")
-async def run_experiments_endpoint(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def run_experiments_endpoint(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Run all experiments in sandboxes and digital twin simulations.
     Requires: experiment:run permission
     """
@@ -2907,44 +3791,49 @@ async def run_experiments_endpoint(request: Request, incident_id: str, user_data
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("experiment:run") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="experiment.run",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="experiment.run",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to run experiments")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="experiment.run",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="experiment.run",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     ctx = pipeline_contexts.get(incident_id)
     hypotheses = ctx.hypotheses if ctx and ctx.hypotheses else None
     if not hypotheses:
         from cauveris.hypothesis.generator import HypothesisGenerator
+
         hg = HypothesisGenerator()
         hypotheses = await hg.generate(incident)
 
@@ -2968,7 +3857,7 @@ async def run_experiments_endpoint(request: Request, incident_id: str, user_data
             {
                 "id": e.experiment_id,
                 "experiment_id": e.experiment_id,
-                "name": e.experiment_id.replace('exp-', '').replace('_', ' ').title(),
+                "name": e.experiment_id.replace("exp-", "").replace("_", " ").title(),
                 "hypothesis_id": e.hypothesis_id,
                 "branch_name": e.branch_name,
                 "status": e.status,
@@ -2976,16 +3865,21 @@ async def run_experiments_endpoint(request: Request, incident_id: str, user_data
                 "reproduction_rate": e.reproduction_rate,
                 "result": e.reproduction_rate == 0.0,
                 "failure_oracle": e.failure_oracle,
-                "metrics": getattr(e, "metrics", {})
+                "metrics": getattr(e, "metrics", {}),
             }
             for e in sim_experiments
         ],
-        "message": "Digital twin simulations completed across all experiment branches"
+        "message": "Digital twin simulations completed across all experiment branches",
     }
 
 
 @app.post("/api/v1/incidents/{incident_id}/simulate-custom")
-async def simulate_custom_parameters(request: Request, incident_id: str, req: CustomSimulationRequest, user_data: tuple = Depends(get_current_user)):
+async def simulate_custom_parameters(
+    request: Request,
+    incident_id: str,
+    req: CustomSimulationRequest,
+    user_data: tuple = Depends(get_current_user),
+):
     """
     Run custom digital twin simulation with interactive parameters (Engineer Mode).
     Simulates real-world queuing, batching, GPU compute, network jitter, and safety invariants.
@@ -3005,47 +3899,52 @@ async def simulate_custom_parameters(request: Request, incident_id: str, req: Cu
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("simulation:run") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="simulation.run",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="simulation.run",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to run simulations")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="simulation.run",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="simulation.run",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     from cauveris.simulation.runner import CloudToRobotDigitalTwin, DigitalTwinFaultInjectors
+
     faults = DigitalTwinFaultInjectors(
         batching_window_ms=req.batching_window_ms,
         qos_queue_depth=req.qos_queue_depth,
         clock_skew_ms=req.clock_skew_ms,
         max_batch_size=req.max_batch_size,
-        gpu_contention_ms=req.gpu_contention_ms
+        gpu_contention_ms=req.gpu_contention_ms,
     )
     twin = CloudToRobotDigitalTwin(faults)
     twin.freshness_budget_ms = req.freshness_budget_ms
@@ -3063,7 +3962,9 @@ async def simulate_custom_parameters(request: Request, incident_id: str, req: Cu
     avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else 0.0
     sorted_latencies = sorted(latencies)
     p99_idx = int(0.99 * len(sorted_latencies))
-    p99_latency = sorted_latencies[min(p99_idx, len(sorted_latencies) - 1)] if sorted_latencies else 0.0
+    p99_latency = (
+        sorted_latencies[min(p99_idx, len(sorted_latencies) - 1)] if sorted_latencies else 0.0
+    )
 
     hypothesis_supported = reproduction_rate < 0.20 and avg_latency <= twin.freshness_budget_ms
 
@@ -3084,12 +3985,14 @@ async def simulate_custom_parameters(request: Request, incident_id: str, req: Cu
             f"Intervention verified: 0 emergency stops produced (avg latency {avg_latency:.1f}ms <= {twin.freshness_budget_ms}ms limit)"
             if hypothesis_supported
             else f"Safety violation triggered: {reproduction_count}/{req.trials} emergency stops ({reproduction_rate:.1%}, avg latency {avg_latency:.1f}ms)"
-        )
+        ),
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}/patches")
-async def get_incident_patches(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def get_incident_patches(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Get patch candidates with 9-point verification results.
     Requires: patch:read permission
     """
@@ -3107,39 +4010,43 @@ async def get_incident_patches(request: Request, incident_id: str, user_data: tu
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("patch:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="patch.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="patch.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to view patches")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="patch.read",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="patch.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     ctx = pipeline_contexts.get(incident_id)
     patches = ctx.patch_candidates if ctx and ctx.patch_candidates else []
@@ -3155,20 +4062,21 @@ async def get_incident_patches(request: Request, incident_id: str, user_data: tu
         formatted_patches.append(dump)
 
     formatted_reports = [
-        r.model_dump() if hasattr(r, "model_dump") else dict(r)
-        for r in verification_reports
+        r.model_dump() if hasattr(r, "model_dump") else dict(r) for r in verification_reports
     ]
 
     return {
         "incident_id": incident_id,
         "count": len(formatted_patches),
         "patch_candidates": formatted_patches,
-        "verification_reports": formatted_reports
+        "verification_reports": formatted_reports,
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}/report")
-async def get_incident_report(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def get_incident_report(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Get comprehensive incident investigation report.
     Requires: report:read permission
     """
@@ -3186,39 +4094,43 @@ async def get_incident_report(request: Request, incident_id: str, user_data: tup
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("report:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="report.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="report.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to view report")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="report.read",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="report.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     ctx = pipeline_contexts.get(incident_id)
     if ctx and ctx.final_report:
@@ -3226,20 +4138,22 @@ async def get_incident_report(request: Request, incident_id: str, user_data: tup
 
     report_file = Path(f"./report/{incident_id}/incident_report.json")
     if report_file.exists():
-        with open(report_file, 'r', encoding='utf-8') as f:
+        with open(report_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
     if incident_id.upper() == "CAU-0001":
         alt_report = Path("./report/CAU-0001/incident_report.json")
         if alt_report.exists():
-            with open(alt_report, 'r', encoding='utf-8') as f:
+            with open(alt_report, "r", encoding="utf-8") as f:
                 return json.load(f)
 
     return {"message": "Report not yet generated for this incident"}
 
 
 @app.get("/api/v1/incidents/{incident_id}/reports")
-async def list_incident_reports(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def list_incident_reports(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """List all reports available for an incident.
     Requires: report:read permission
     """
@@ -3257,39 +4171,43 @@ async def list_incident_reports(request: Request, incident_id: str, user_data: t
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("report:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="report.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="report.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to view reports")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="report.read",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="report.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     reports = []
     report_file = Path(f"./report/{incident_id}/incident_report.json")
@@ -3303,51 +4221,61 @@ async def list_incident_reports(request: Request, incident_id: str, user_data: t
         size_bytes = stat.st_size
         gen_time = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
 
-    reports.append({
-        "id": f"rpt-{incident_id}-001",
-        "incident_id": incident_id,
-        "title": "Full Investigation Report",
-        "generated_at": gen_time,
-        "size_bytes": size_bytes,
-        "format": "json",
-        "status": "ready",
-        "type": "investigation"
-    })
-    reports.append({
-        "id": f"rpt-{incident_id}-002",
-        "incident_id": incident_id,
-        "title": "Executive Summary",
-        "generated_at": gen_time,
-        "size_bytes": 12288,
-        "format": "pdf",
-        "status": "ready",
-        "type": "executive"
-    })
-    reports.append({
-        "id": f"rpt-{incident_id}-003",
-        "incident_id": incident_id,
-        "title": "Technical Deep Dive",
-        "generated_at": gen_time,
-        "size_bytes": 512000,
-        "format": "html",
-        "status": "ready",
-        "type": "technical"
-    })
-    reports.append({
-        "id": f"rpt-{incident_id}-004",
-        "incident_id": incident_id,
-        "title": "Compliance Report",
-        "generated_at": gen_time,
-        "size_bytes": 81920,
-        "format": "pdf",
-        "status": "ready",
-        "type": "compliance"
-    })
+    reports.append(
+        {
+            "id": f"rpt-{incident_id}-001",
+            "incident_id": incident_id,
+            "title": "Full Investigation Report",
+            "generated_at": gen_time,
+            "size_bytes": size_bytes,
+            "format": "json",
+            "status": "ready",
+            "type": "investigation",
+        }
+    )
+    reports.append(
+        {
+            "id": f"rpt-{incident_id}-002",
+            "incident_id": incident_id,
+            "title": "Executive Summary",
+            "generated_at": gen_time,
+            "size_bytes": 12288,
+            "format": "pdf",
+            "status": "ready",
+            "type": "executive",
+        }
+    )
+    reports.append(
+        {
+            "id": f"rpt-{incident_id}-003",
+            "incident_id": incident_id,
+            "title": "Technical Deep Dive",
+            "generated_at": gen_time,
+            "size_bytes": 512000,
+            "format": "html",
+            "status": "ready",
+            "type": "technical",
+        }
+    )
+    reports.append(
+        {
+            "id": f"rpt-{incident_id}-004",
+            "incident_id": incident_id,
+            "title": "Compliance Report",
+            "generated_at": gen_time,
+            "size_bytes": 81920,
+            "format": "pdf",
+            "status": "ready",
+            "type": "compliance",
+        }
+    )
     return {"reports": reports}
 
 
 @app.delete("/api/v1/incidents/{incident_id}/reports/{report_id}")
-async def delete_incident_report(request: Request, incident_id: str, report_id: str, user_data: tuple = Depends(get_current_user)):
+async def delete_incident_report(
+    request: Request, incident_id: str, report_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Delete a report for an incident.
     Requires: report:read permission (admin only for deletion)
     """
@@ -3365,39 +4293,43 @@ async def delete_incident_report(request: Request, incident_id: str, report_id: 
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership - only admin can delete
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("incident:delete_any") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="report.delete",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="report.delete",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to delete reports")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="report.delete",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="report.delete",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     return {"message": f"Report {report_id} deleted successfully", "id": report_id}
 
@@ -3428,12 +4360,41 @@ class ModelTestRequest(BaseModel):
 
 @app.get("/api/v1/model-health")
 async def model_health():
-    """Model provider connectivity and health status."""
+    """Model provider connectivity and health status with live connectivity test."""
+    from cauveris.model_gateway import create_model_gateway
+    from cauveris.config import get_settings
+
     settings = get_settings()
     is_live = bool(settings.nebius_api_key)
+
+    # Test gateway connectivity
+    gateway_status = "unknown"
+    gateway_latency_ms = None
+    gateway_error = None
+
+    if is_live:
+        try:
+            import time
+
+            gateway = create_model_gateway()
+            start = time.perf_counter()
+            # Simple test query
+            test_response = await gateway.generate(
+                prompt="Health check", schema=None, temperature=0.0, max_tokens=10
+            )
+            gateway_latency_ms = round((time.perf_counter() - start) * 1000, 2)
+            gateway_status = "connected"
+            provider_name = test_response.provider
+        except Exception as e:
+            gateway_status = "error"
+            gateway_error = str(e)
+            provider_name = "Nebius (failed)"
+    else:
+        provider_name = "LocalModelGateway (deterministic fixtures)"
+
     return {
-        "status": "healthy",
-        "provider": "Nebius Token Factory (Live Models)" if is_live else "Deterministic Local Fixtures (Offline Safe)",
+        "status": "healthy" if gateway_status != "error" else "degraded",
+        "provider": provider_name,
         "mode": "live_gateway" if is_live else "deterministic_local",
         "cloud_credentials_required": False,
         "nebius_configured": is_live,
@@ -3442,12 +4403,15 @@ async def model_health():
         "model_fast": settings.model_fast,
         "model_reasoning": settings.model_reasoning,
         "model_escalation": settings.model_escalation,
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "gateway_status": gateway_status,
+        "gateway_latency_ms": gateway_latency_ms,
+        "gateway_error": gateway_error,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
 @app.post("/api/v1/model/configure")
-async def configure_model(req: ModelConfigRequest):
+async def configure_model(req: ModelConfigRequest, user: tuple = Depends(get_current_user)):
     """Dynamically configure model provider settings and API key."""
     settings = get_settings()
     if req.api_key is not None:
@@ -3455,15 +4419,18 @@ async def configure_model(req: ModelConfigRequest):
         if key_stripped:
             settings.nebius_api_key = key_stripped
             import os
+
             os.environ["NEBIUS_API_KEY"] = key_stripped
         else:
             settings.nebius_api_key = None
             import os
+
             os.environ.pop("NEBIUS_API_KEY", None)
 
     if req.base_url:
         settings.nebius_base_url = req.base_url.strip()
         import os
+
         os.environ["NEBIUS_BASE_URL"] = settings.nebius_base_url
     if req.model_fast:
         settings.model_fast = req.model_fast.strip()
@@ -3482,32 +4449,50 @@ async def configure_model(req: ModelConfigRequest):
         "model_reasoning": settings.model_reasoning,
         "model_escalation": settings.model_escalation,
         "provider": "nebius" if is_configured else "deterministic_local",
-        "message": "Model configuration updated successfully"
+        "message": "Model configuration updated successfully",
     }
 
 
 @app.delete("/api/v1/model/configure")
-async def clear_model_configure():
+async def clear_model_configure(user: tuple = Depends(get_current_user)):
     """Clear configured model API key and revert to deterministic local fixtures."""
     settings = get_settings()
     settings.nebius_api_key = None
     import os
+
     os.environ.pop("NEBIUS_API_KEY", None)
     return {
         "status": "success",
         "configured": False,
         "masked_key": "",
         "provider": "deterministic_local",
-        "message": "Model API key cleared. Reverted to deterministic local simulation."
+        "message": "Model API key cleared. Reverted to deterministic local simulation.",
     }
 
 
 @app.post("/api/v1/model/test")
-async def test_model_connectivity(req: Optional[ModelTestRequest] = None):
+async def test_model_connectivity(
+    req: Optional[ModelTestRequest] = None, user: tuple = Depends(get_current_user)
+):
     """Test connectivity to model provider or local fixtures."""
     settings = get_settings()
-    key_to_test = (req.api_key.strip() if req and req.api_key else None) or settings.nebius_api_key
-    base_url_to_test = (req.base_url.strip() if req and req.base_url else None) or settings.nebius_base_url or "https://api.nebius.ai/v1"
+    user_key = req.api_key.strip() if req and req.api_key else None
+    user_base_url = req.base_url.strip() if req and req.base_url else None
+
+    if user_base_url:
+        # Custom base URL: only the caller-supplied key may be used. Never send
+        # the server's stored credential to an arbitrary host (SSRF/exfil guard).
+        key_to_test = user_key
+        base_url_to_test = user_base_url
+        if not key_to_test:
+            raise HTTPException(
+                status_code=400,
+                detail="api_key is required when testing a custom base_url "
+                "(server credentials are never sent to remote hosts).",
+            )
+    else:
+        key_to_test = user_key or settings.nebius_api_key
+        base_url_to_test = settings.nebius_base_url or "https://api.nebius.ai/v1"
 
     if not key_to_test:
         return {
@@ -3515,16 +4500,14 @@ async def test_model_connectivity(req: Optional[ModelTestRequest] = None):
             "provider": "Deterministic Local Fixtures (Offline Safe)",
             "mode": "deterministic_local",
             "latency_ms": 14.2,
-            "message": "Local deterministic simulation engine is active and ready (zero cloud dependencies)."
+            "message": "Local deterministic simulation engine is active and ready (zero cloud dependencies).",
         }
 
     start = time.perf_counter()
     import httpx
+
     url = f"{base_url_to_test.rstrip('/')}/models"
-    headers = {
-        "Authorization": f"Bearer {key_to_test}",
-        "User-Agent": "Cauveris-ModelGateway/1.0"
-    }
+    headers = {"Authorization": f"Bearer {key_to_test}", "User-Agent": "Cauveris-ModelGateway/1.0"}
     try:
         async with httpx.AsyncClient(timeout=6.0) as client:
             resp = await client.get(url, headers=headers)
@@ -3538,21 +4521,21 @@ async def test_model_connectivity(req: Optional[ModelTestRequest] = None):
                     "mode": "live_gateway",
                     "latency_ms": latency_ms,
                     "models_available": model_count,
-                    "message": f"Connection verified in {latency_ms}ms. Gateway responded with {model_count} models."
+                    "message": f"Connection verified in {latency_ms}ms. Gateway responded with {model_count} models.",
                 }
             elif resp.status_code == 401:
                 return {
                     "success": False,
                     "latency_ms": latency_ms,
                     "error": "Invalid API key (HTTP 401 Unauthorized). Please check your key.",
-                    "message": "Authentication failed with the remote gateway."
+                    "message": "Authentication failed with the remote gateway.",
                 }
             else:
                 return {
                     "success": False,
                     "latency_ms": latency_ms,
                     "error": f"Gateway responded with HTTP {resp.status_code}: {resp.text[:150]}",
-                    "message": "Gateway error returned."
+                    "message": "Gateway error returned.",
                 }
     except httpx.TimeoutException:
         latency_ms = round((time.perf_counter() - start) * 1000, 1)
@@ -3560,7 +4543,7 @@ async def test_model_connectivity(req: Optional[ModelTestRequest] = None):
             "success": False,
             "latency_ms": latency_ms,
             "error": "Connection timed out after 6 seconds. Verify base URL and network connectivity.",
-            "message": "Network timeout reaching model gateway."
+            "message": "Network timeout reaching model gateway.",
         }
     except Exception as e:
         latency_ms = round((time.perf_counter() - start) * 1000, 1)
@@ -3568,7 +4551,7 @@ async def test_model_connectivity(req: Optional[ModelTestRequest] = None):
             "success": False,
             "latency_ms": latency_ms,
             "error": str(e),
-            "message": f"Connection test failed: {str(e)}"
+            "message": f"Connection test failed: {str(e)}",
         }
 
 
@@ -3593,22 +4576,24 @@ async def get_status_center():
             "status": "healthy",
             "service": "cauveris",
             "version": "0.1.0",
-            "latency_ms": 1.2
+            "latency_ms": 1.2,
         },
         "model_provider": {
             "status": "healthy",
             "provider": "Deterministic Local Fixtures (Offline Safe)",
             "mode": "deterministic_local",
             "cloud_credentials_required": False,
-            "nebius_configured": bool(settings.nebius_api_key)
+            "nebius_configured": bool(settings.nebius_api_key),
         },
         "sandbox_status": "Ready",
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
 @app.get("/api/v1/incidents/{incident_id}/download-patch-package")
-async def download_patch_package(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def download_patch_package(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Download the complete verified patch package as a ZIP archive.
     Requires: patch:read permission
     """
@@ -3626,39 +4611,43 @@ async def download_patch_package(request: Request, incident_id: str, user_data: 
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("patch:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="patch.download",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="patch.download",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to download patch package")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="patch.download",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="patch.download",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     pkg_dir = Path(f"./report/{incident_id}/patch-package")
     if not pkg_dir.exists():
@@ -3669,17 +4658,22 @@ async def download_patch_package(request: Request, incident_id: str, user_data: 
         raise HTTPException(status_code=404, detail="Patch package not found for this incident")
 
     zip_dest = Path(f"./report/{incident_id}_patch_package.zip")
-    shutil.make_archive(str(zip_dest.with_suffix('')), 'zip', str(pkg_dir))
+    shutil.make_archive(str(zip_dest.with_suffix("")), "zip", str(pkg_dir))
 
     return FileResponse(
         str(zip_dest),
         filename=f"cauveris-patch-package-{incident_id}.zip",
-        media_type="application/zip"
+        media_type="application/zip",
     )
 
 
 @app.get("/api/v1/incidents/{incident_id}/export-patch")
-async def export_incident_patch(request: Request, incident_id: str, format: str = "installer", user_data: tuple = Depends(get_current_user)):
+async def export_incident_patch(
+    request: Request,
+    incident_id: str,
+    format: str = "installer",
+    user_data: tuple = Depends(get_current_user),
+):
     """
     Export the verified patch for direct import into the infected space.
     Formats:
@@ -3702,39 +4696,43 @@ async def export_incident_patch(request: Request, incident_id: str, format: str 
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("patch:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="patch.export",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="patch.export",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to export patch")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="patch.export",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="patch.export",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     pkg_dir = Path(f"./report/{incident_id}/patch-package")
     if not pkg_dir.exists():
@@ -3749,7 +4747,9 @@ async def export_incident_patch(request: Request, incident_id: str, format: str 
             patch_gen = PatchGenerator()
             patch_gen.export_patch(verified_patches[0], pkg_dir)
         else:
-            raise HTTPException(status_code=404, detail="No verified patch candidate available to export")
+            raise HTTPException(
+                status_code=404, detail="No verified patch candidate available to export"
+            )
 
     if format.lower() in ["installer", "python", "script"]:
         installer_file = pkg_dir / "apply_patch.py"
@@ -3762,30 +4762,33 @@ async def export_incident_patch(request: Request, incident_id: str, format: str 
         return FileResponse(
             str(installer_file),
             filename=f"apply_patch_{incident_id}.py",
-            media_type="text/x-python"
+            media_type="text/x-python",
         )
     elif format.lower() in ["patch", "diff"]:
         patch_file = pkg_dir / "fix.patch"
         if not patch_file.exists():
             raise HTTPException(status_code=404, detail="fix.patch not found")
         return FileResponse(
-            str(patch_file),
-            filename=f"cauveris-fix-{incident_id}.patch",
-            media_type="text/x-diff"
+            str(patch_file), filename=f"cauveris-fix-{incident_id}.patch", media_type="text/x-diff"
         )
     else:
         # Default or zip format
         zip_dest = Path(f"./report/{incident_id}_patch_package.zip")
-        shutil.make_archive(str(zip_dest.with_suffix('')), 'zip', str(pkg_dir))
+        shutil.make_archive(str(zip_dest.with_suffix("")), "zip", str(pkg_dir))
         return FileResponse(
             str(zip_dest),
             filename=f"cauveris-patch-package-{incident_id}.zip",
-            media_type="application/zip"
+            media_type="application/zip",
         )
 
 
 @app.post("/api/v1/incidents/{incident_id}/apply-patch")
-async def apply_patch_to_target(request: Request, incident_id: str, req: ApplyPatchRequest, user_data: tuple = Depends(get_current_user)):
+async def apply_patch_to_target(
+    request: Request,
+    incident_id: str,
+    req: ApplyPatchRequest,
+    user_data: tuple = Depends(get_current_user),
+):
     """
     Directly apply or rollback the verified patch on an infected target space.
     Requires: patch:apply permission
@@ -3804,46 +4807,52 @@ async def apply_patch_to_target(request: Request, incident_id: str, req: ApplyPa
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("patch:apply") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="patch.apply",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="patch.apply",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to apply patch")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="patch.apply",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="patch.apply",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     target_path = Path(req.target_directory).resolve()
     # Check if target workspace has incident directory
     if (target_path / f"incident-{incident_id}").exists():
         target_path = (target_path / f"incident-{incident_id}").resolve()
     elif not target_path.exists():
-        raise HTTPException(status_code=400, detail=f"Target directory '{req.target_directory}' does not exist")
+        raise HTTPException(
+            status_code=400, detail=f"Target directory '{req.target_directory}' does not exist"
+        )
 
     pkg_dir = Path(f"./report/{incident_id}/patch-package")
     if not pkg_dir.exists():
@@ -3857,7 +4866,9 @@ async def apply_patch_to_target(request: Request, incident_id: str, req: ApplyPa
             installer_file = pkg_dir / "apply_patch.py"
 
     if not installer_file.exists():
-        raise HTTPException(status_code=404, detail="No verified patch installer found for this incident")
+        raise HTTPException(
+            status_code=404, detail="No verified patch installer found for this incident"
+        )
 
     # Execute installer script within target space
     scope: dict = {}
@@ -3875,7 +4886,7 @@ async def apply_patch_to_target(request: Request, incident_id: str, req: ApplyPa
             "operation": "rollback",
             "target_directory": str(target_path),
             "success": True if success is not False else False,
-            "status": scope.get("status", lambda x: "INFECTED")(str(target_path))
+            "status": scope.get("status", lambda x: "INFECTED")(str(target_path)),
         }
     else:
         apply_fn = scope.get("apply")
@@ -3887,12 +4898,14 @@ async def apply_patch_to_target(request: Request, incident_id: str, req: ApplyPa
             "operation": "dry_run" if req.dry_run else "apply",
             "target_directory": str(target_path),
             "success": success,
-            "status": scope.get("status", lambda x: "UNKNOWN")(str(target_path))
+            "status": scope.get("status", lambda x: "UNKNOWN")(str(target_path)),
         }
 
 
 @app.get("/api/v1/incidents/{incident_id}/events")
-async def get_incident_events(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def get_incident_events(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """Get processing events/progress for an incident.
     Requires: incident:read permission
     """
@@ -3910,39 +4923,43 @@ async def get_incident_events(request: Request, incident_id: str, user_data: tup
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("incident:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="incident.events.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="incident.events.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
             raise HTTPException(status_code=403, detail="Not authorized to view incident events")
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="incident.events.read",
-        resource_type="incincident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="incident.events.read",
+            resource_type="incincident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     if incident_id not in pipeline_progress:
         orch = PipelineOrchestrator()
@@ -3954,7 +4971,9 @@ async def get_incident_events(request: Request, incident_id: str, user_data: tup
 
 
 @app.get("/api/v1/incidents/{incident_id}/stream")
-async def stream_incident_progress(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def stream_incident_progress(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """
     Server-Sent Events endpoint for real-time progress updates.
     Requires: incident:read permission
@@ -3973,39 +4992,45 @@ async def stream_incident_progress(request: Request, incident_id: str, user_data
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("incident:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="incident.stream.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
-            raise HTTPException(status_code=403, detail="Not authorized to stream incident progress")
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="incident.stream.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
+            raise HTTPException(
+                status_code=403, detail="Not authorized to stream incident progress"
+            )
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="incident.stream.read",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="incident.stream.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     async def event_generator():
         last_state = None
@@ -4016,7 +5041,10 @@ async def stream_incident_progress(request: Request, incident_id: str, user_data
                     last_state = progress.get("state")
                     yield f"data: {json.dumps(progress)}\n\n"
 
-                if last_state in ["COMPLETED", "FAILED"]:
+                # get_pipeline_summary() emits RUNNING/SUCCESS/FAILED/CANCELLED
+                # (see the stats counters above) — "COMPLETED" matched nothing,
+                # so successful and cancelled investigations streamed forever.
+                if last_state in ("SUCCESS", "FAILED", "CANCELLED"):
                     break
             else:
                 if incident_id not in incidents:
@@ -4031,7 +5059,9 @@ async def stream_incident_progress(request: Request, incident_id: str, user_data
 
 
 @app.get("/api/v1/incidents/{incident_id}/temporal-visualization")
-async def get_incident_temporal_visualization(request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)):
+async def get_incident_temporal_visualization(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
     """
     Get visualization data for temporal anomalies.
     Requires: incident:read permission
@@ -4056,39 +5086,45 @@ async def get_incident_temporal_visualization(request: Request, incident_id: str
         raise HTTPException(status_code=404, detail="Incident not found")
 
     # Check ownership
-    owner_user = getattr(incident, '_owner_user_id', None)
-    owner_org = getattr(incident, '_owner_org_id', None)
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
 
     if not user.has_permission("incident:read") and not user.has_permission("*"):
         if owner_user != user_id and owner_org != org_id:
-            await auth_store.write_audit_log(AuditLogEntry(
-                user_id=user.id,
-                org_id=user.org_id,
-                action="incident.temporal_visualization.read",
-                resource_type="incident",
-                resource_id=incident_id,
-                resource_owner_id=owner_user,
-                decision="deny",
-                reason="Not owner of incident",
-                ip_address=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("User-Agent", ""),
-                request_id=getattr(request.state, "request_id", None),
-            ))
-            raise HTTPException(status_code=403, detail="Not authorized to view temporal visualization")
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="incident.temporal_visualization.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
+            raise HTTPException(
+                status_code=403, detail="Not authorized to view temporal visualization"
+            )
 
     # Audit log
-    await auth_store.write_audit_log(AuditLogEntry(
-        user_id=user.id,
-        org_id=user.org_id,
-        action="incident.temporal_visualization.read",
-        resource_type="incident",
-        resource_id=incident_id,
-        resource_owner_id=owner_user,
-        decision="allow",
-        ip_address=request.client.host if request.client else "unknown",
-        user_agent=request.headers.get("User-Agent", ""),
-        request_id=getattr(request.state, "request_id", None),
-    ))
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="incident.temporal_visualization.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
 
     if incident_id not in incidents:
         raise HTTPException(status_code=404, detail="Incident not found")
@@ -4098,14 +5134,18 @@ async def get_incident_temporal_visualization(request: Request, incident_id: str
         temporal_result = ctx.temporal_analysis
     else:
         from cauveris.temporal.integration import TemporalAnalyzer
+
         analyzer = TemporalAnalyzer()
         temporal_result = analyzer.analyze_incident(incidents[incident_id])
 
     from cauveris.temporal.visualization import build_timeline_visualization_data
 
-    return build_timeline_visualization_data(temporal_result, incidents[incident_id].timeline_events)
+    return build_timeline_visualization_data(
+        temporal_result, incidents[incident_id].timeline_events
+    )
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -2,7 +2,7 @@
  * Hook for managing Fienup Phase Retrieval computation
  */
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { QualityMetrics } from "../types";
 import { PhaseRetrievalEngine } from "../holography/phaseRetrieval";
 
@@ -19,6 +19,14 @@ export function usePhaseRetrieval(gridSize: number = 256) {
 
   const engineRef = useRef<PhaseRetrievalEngine | null>(null);
 
+  // Drop the engine reference on unmount — it holds a multi-MB Float32
+  // working set plus the FFT plan, and nothing else releases it.
+  useEffect(() => {
+    return () => {
+      engineRef.current = null;
+    };
+  }, []);
+
   const computePhase = useCallback(
     async (
       amplitudeTarget: Float32Array,
@@ -29,7 +37,10 @@ export function usePhaseRetrieval(gridSize: number = 256) {
       setProgress(0);
 
       try {
-        if (!engineRef.current) {
+        // Recreate when the grid size changed — the old guard only built
+        // when the ref was empty, so a grid change silently reused a
+        // wrong-size engine and corrupted every subsequent retrieval.
+        if (!engineRef.current || engineRef.current["N"] !== gridSize) {
           engineRef.current = new PhaseRetrievalEngine(gridSize);
         }
 

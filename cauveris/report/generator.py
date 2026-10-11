@@ -1,6 +1,7 @@
 """
 Report generator for creating final incident reports and patch packages.
 """
+
 import os
 import json
 from pathlib import Path
@@ -27,7 +28,7 @@ class ReportGenerator:
         hypotheses: List[Hypothesis],
         experiments: List[Experiment],
         patch_candidates: List[PatchCandidate],
-        verification_reports: List[VerificationReport]
+        verification_reports: List[VerificationReport],
     ) -> Dict[str, Any]:
         """
         generate a comprehensive incident report.
@@ -54,14 +55,16 @@ class ReportGenerator:
             "title": incident.title,
             "description": incident.description,
             "system_name": incident.system_name,
-            "approximate_time": incident.approximate_time.isoformat() if incident.approximate_time else None,
+            "approximate_time": incident.approximate_time.isoformat()
+            if incident.approximate_time
+            else None,
             "evidence_summary": {
                 "total_evidence_items": incident.evidence_count,
                 "required_evidence_items": incident.required_evidence_count,
                 "missing_required_evidence": incident.missing_required_evidence,
             },
-            "timeline": getattr(incident, 'timeline_events', []),
-            "temporal_analysis": getattr(incident, 'temporal_analysis', None),
+            "timeline": getattr(incident, "timeline_events", []),
+            "temporal_analysis": getattr(incident, "temporal_analysis", None),
             "hypotheses": [self._hypothesis_to_dict(h) for h in hypotheses],
             "experiments": [self._experiment_to_dict(e) for e in experiments],
             "patch_candidates": [self._patch_to_dict(p) for p in patch_candidates],
@@ -72,7 +75,7 @@ class ReportGenerator:
 
         # Write incident report
         report_path = report_dir / "incident_report.json"
-        with open(report_path, 'w', encoding='utf-8') as f:
+        with open(report_path, "w", encoding="utf-8") as f:
             json.dump(incident_report, f, indent=2, default=str)
 
         # Generate patch package if we have verified patches
@@ -81,7 +84,7 @@ class ReportGenerator:
             patch_package_dir = await self._generate_patch_package(
                 incident.id,
                 verified_patches[0],  # Take the first verified patch for simplicity
-                report_dir
+                report_dir,
             )
             incident_report["patch_package_path"] = str(patch_package_dir)
 
@@ -172,10 +175,7 @@ class ReportGenerator:
         }
 
     async def _generate_patch_package(
-        self,
-        incident_id: str,
-        patch: PatchCandidate,
-        report_dir: Path
+        self, incident_id: str, patch: PatchCandidate, report_dir: Path
     ) -> Path:
         """
         Generate a patch package directory with all required artifacts.
@@ -193,39 +193,44 @@ class ReportGenerator:
 
         # Write fix.patch
         fix_path = package_dir / "fix.patch"
-        with open(fix_path, 'w', encoding='utf-8') as f:
+        with open(fix_path, "w", encoding="utf-8") as f:
             f.write(patch.unified_diff)
 
         # Write standalone self-applying installer apply_patch.py
         from cauveris.patch.generator import PatchGenerator
+
         patch_gen = PatchGenerator()
         installer_code = patch_gen.generate_standalone_installer(patch)
         installer_path = package_dir / "apply_patch.py"
-        with open(installer_path, 'w', encoding='utf-8') as f:
+        with open(installer_path, "w", encoding="utf-8") as f:
             f.write(installer_code)
 
         # Write regression_test.patch (if available)
         if patch.regression_test_patch:
             regression_test_path = package_dir / "regression_test.patch"
-            with open(regression_test_path, 'w', encoding='utf-8') as f:
+            with open(regression_test_path, "w", encoding="utf-8") as f:
                 f.write(patch.regression_test_patch)
 
         # Write verification.json
         verification_path = package_dir / "verification.json"
-        with open(verification_path, 'w', encoding='utf-8') as f:
-            json.dump({
-                "patch_candidate_id": patch.candidate_id,
-                "applies_cleanly": patch.applied_cleanly,
-                "regression_test_fails_before": patch.regression_test_fails_before,
-                "regression_test_passes_after": patch.regression_test_passes_after,
-                "original_failure_not_reproduced": patch.original_failure_not_reproduced,
-                "existing_tests_pass": patch.existing_tests_pass,
-                "safety_invariants_pass": patch.safety_invariants_pass,
-                "performance_within_budget": patch.performance_within_budget,
-                "forbidden_change_scan_passes": patch.forbidden_change_scan_passes,
-                "rollback_test_passes": patch.rollback_test_passes,
-                "verified": patch.verified,
-            }, f, indent=2)
+        with open(verification_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "patch_candidate_id": patch.candidate_id,
+                    "applies_cleanly": patch.applied_cleanly,
+                    "regression_test_fails_before": patch.regression_test_fails_before,
+                    "regression_test_passes_after": patch.regression_test_passes_after,
+                    "original_failure_not_reproduced": patch.original_failure_not_reproduced,
+                    "existing_tests_pass": patch.existing_tests_pass,
+                    "safety_invariants_pass": patch.safety_invariants_pass,
+                    "performance_within_budget": patch.performance_within_budget,
+                    "forbidden_change_scan_passes": patch.forbidden_change_scan_passes,
+                    "rollback_test_passes": patch.rollback_test_passes,
+                    "verified": patch.verified,
+                },
+                f,
+                indent=2,
+            )
 
         # Create before_after directory structure with real data
         before_after_dir = package_dir / "before_after"
@@ -243,29 +248,47 @@ class ReportGenerator:
                 {
                     "name": "inference_request",
                     "duration_ms": 155.0,
-                    "attributes": {"batch_window_ms": 200, "queue_wait_ms": 115, "gpu_exec_ms": 40, "model": "objdet:v42"}
+                    "attributes": {
+                        "batch_window_ms": 200,
+                        "queue_wait_ms": 115,
+                        "gpu_exec_ms": 40,
+                        "model": "objdet:v42",
+                    },
                 },
                 {
                     "name": "ros_perception_subscriber",
                     "duration_ms": 5.2,
-                    "attributes": {"detection_age_ms": 155.0, "freshness_budget_ms": 120.0, "status": "STALE_DETECTION"}
+                    "attributes": {
+                        "detection_age_ms": 155.0,
+                        "freshness_budget_ms": 120.0,
+                        "status": "STALE_DETECTION",
+                    },
                 },
                 {
                     "name": "tf_lookup",
                     "duration_ms": 100.0,
-                    "status": {"code": 2, "message": "ExtrapolationException: Transform lookup failed: detection age 155ms exceeds buffer"}
+                    "status": {
+                        "code": 2,
+                        "message": "ExtrapolationException: Transform lookup failed: detection age 155ms exceeds buffer",
+                    },
                 },
                 {
                     "name": "robot_control_loop",
                     "duration_ms": 50.0,
-                    "status": {"code": 2, "message": "Control deadline missed due to stale perception latency"}
+                    "status": {
+                        "code": 2,
+                        "message": "Control deadline missed due to stale perception latency",
+                    },
                 },
                 {
                     "name": "safety_monitor",
                     "duration_ms": 2.0,
-                    "status": {"code": 2, "message": "EMERGENCY_STOP: safety relay tripped at aisle B"}
-                }
-            ]
+                    "status": {
+                        "code": 2,
+                        "message": "EMERGENCY_STOP: safety relay tripped at aisle B",
+                    },
+                },
+            ],
         }
         after_traces = {
             "traceID": "4bf92f3577b34da6a3ce929d0e0e4736",
@@ -273,37 +296,61 @@ class ReportGenerator:
                 {
                     "name": "inference_request",
                     "duration_ms": 78.0,
-                    "attributes": {"batch_window_ms": 100, "queue_wait_ms": 42, "gpu_exec_ms": 36, "model": "objdet:v42-patched"}
+                    "attributes": {
+                        "batch_window_ms": 100,
+                        "queue_wait_ms": 42,
+                        "gpu_exec_ms": 36,
+                        "model": "objdet:v42-patched",
+                    },
                 },
                 {
                     "name": "ros_perception_subscriber",
                     "duration_ms": 3.8,
-                    "attributes": {"detection_age_ms": 78.0, "freshness_budget_ms": 120.0, "status": "FRESH"}
+                    "attributes": {
+                        "detection_age_ms": 78.0,
+                        "freshness_budget_ms": 120.0,
+                        "status": "FRESH",
+                    },
                 },
                 {
                     "name": "tf_lookup",
                     "duration_ms": 1.2,
-                    "status": {"code": 0, "message": "Transform lookup succeeded (age 78ms within 120ms budget)"}
+                    "status": {
+                        "code": 0,
+                        "message": "Transform lookup succeeded (age 78ms within 120ms budget)",
+                    },
                 },
                 {
                     "name": "robot_control_loop",
                     "duration_ms": 42.0,
-                    "status": {"code": 0, "message": "Control deadline met: loop completed in 42ms <= 50ms"}
+                    "status": {
+                        "code": 0,
+                        "message": "Control deadline met: loop completed in 42ms <= 50ms",
+                    },
                 },
                 {
                     "name": "safety_monitor",
                     "duration_ms": 0.5,
-                    "status": {"code": 0, "message": "NORMAL_OPERATION: all safety invariants satisfied"}
-                }
-            ]
+                    "status": {
+                        "code": 0,
+                        "message": "NORMAL_OPERATION: all safety invariants satisfied",
+                    },
+                },
+            ],
         }
-        (traces_dir / "before_traces.json").write_text(json.dumps(before_traces, indent=2), encoding='utf-8')
-        (traces_dir / "after_traces.json").write_text(json.dumps(after_traces, indent=2), encoding='utf-8')
+        (traces_dir / "before_traces.json").write_text(
+            json.dumps(before_traces, indent=2), encoding="utf-8"
+        )
+        (traces_dir / "after_traces.json").write_text(
+            json.dumps(after_traces, indent=2), encoding="utf-8"
+        )
 
         # 2. Real Before & After Metrics CSVs
-        before_csv_lines = ["timestamp,inference_latency_ms,queue_depth,gpu_utilization_pct,detection_age_ms,control_loop_latency_ms,safety_tripped"]
+        before_csv_lines = [
+            "timestamp,inference_latency_ms,queue_depth,gpu_utilization_pct,detection_age_ms,control_loop_latency_ms,safety_tripped"
+        ]
         for i in range(20):
-            ts = f"2026-09-20T10:29:{50 + (i*0.1):04.1f}Z"
+            ts = f"2026-09-20T10:29:{50 + (i * 0.1):04.1f}Z"
             lat = round(135.0 + (i * 3.2), 1)
             q = 5 + (i * 2)
             gpu = min(95, 55 + (i * 2))
@@ -311,11 +358,15 @@ class ReportGenerator:
             ctrl = 45.0 if age <= 120.0 else 105.0
             stop = 1 if age > 120.0 else 0
             before_csv_lines.append(f"{ts},{lat},{q},{gpu},{age},{ctrl},{stop}")
-        (metrics_dir / "before_metrics.csv").write_text("\n".join(before_csv_lines) + "\n", encoding='utf-8')
+        (metrics_dir / "before_metrics.csv").write_text(
+            "\n".join(before_csv_lines) + "\n", encoding="utf-8"
+        )
 
-        after_csv_lines = ["timestamp,inference_latency_ms,queue_depth,gpu_utilization_pct,detection_age_ms,control_loop_latency_ms,safety_tripped"]
+        after_csv_lines = [
+            "timestamp,inference_latency_ms,queue_depth,gpu_utilization_pct,detection_age_ms,control_loop_latency_ms,safety_tripped"
+        ]
         for i in range(20):
-            ts = f"2026-09-20T10:35:{10 + (i*0.1):04.1f}Z"
+            ts = f"2026-09-20T10:35:{10 + (i * 0.1):04.1f}Z"
             lat = round(72.0 + ((i % 5) * 2.1), 1)
             q = 2 + (i % 3)
             gpu = 48 + (i % 4)
@@ -323,34 +374,52 @@ class ReportGenerator:
             ctrl = 42.0
             stop = 0
             after_csv_lines.append(f"{ts},{lat},{q},{gpu},{age},{ctrl},{stop}")
-        (metrics_dir / "after_metrics.csv").write_text("\n".join(after_csv_lines) + "\n", encoding='utf-8')
+        (metrics_dir / "after_metrics.csv").write_text(
+            "\n".join(after_csv_lines) + "\n", encoding="utf-8"
+        )
 
         # 3. Real Valid MCAP Excerpts
         try:
             from mcap.writer import Writer
+
             for name, is_before in [("before_excerpt.mcap", True), ("after_excerpt.mcap", False)]:
                 mcap_file = mcap_excerpts_dir / name
-                with open(mcap_file, 'wb') as f:
+                with open(mcap_file, "wb") as f:
                     w = Writer(f)
                     w.start()
                     s_id = w.register_schema(name="robot_state", encoding="jsonschema", data=b"{}")
-                    c_id = w.register_channel(topic="/robot/telemetry", message_encoding="json", schema_id=s_id)
+                    c_id = w.register_channel(
+                        topic="/robot/telemetry", message_encoding="json", schema_id=s_id
+                    )
                     t0 = 1789900190000000000
                     for step_idx in range(10):
                         t_msg = t0 + (step_idx * 50000000)
                         if is_before and step_idx >= 6:
-                            data_payload = {"speed_mps": 0.0, "safety_status": "EMERGENCY_STOP", "detection_age_ms": 155.0}
+                            data_payload = {
+                                "speed_mps": 0.0,
+                                "safety_status": "EMERGENCY_STOP",
+                                "detection_age_ms": 155.0,
+                            }
                         else:
-                            data_payload = {"speed_mps": 0.8, "safety_status": "NOMINAL", "detection_age_ms": 78.0}
-                        w.add_message(channel_id=c_id, log_time=t_msg, publish_time=t_msg, data=json.dumps(data_payload).encode('utf-8'))
+                            data_payload = {
+                                "speed_mps": 0.8,
+                                "safety_status": "NOMINAL",
+                                "detection_age_ms": 78.0,
+                            }
+                        w.add_message(
+                            channel_id=c_id,
+                            log_time=t_msg,
+                            publish_time=t_msg,
+                            data=json.dumps(data_payload).encode("utf-8"),
+                        )
                     w.finish()
         except Exception as e:
             logger.debug(f"Failed to generate MCAP excerpts: {e}")
 
         # 4. Valid WebM Video Replay Placeholders (Valid EBML container header)
-        webm_header = b'\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\xf7\x81\x01\x42\xf2\x81\x04\x42\xf3\x81\x08\x42\x82\x84webm\x42\x87\x81\x02\x42\x85\x81\x02'
-        (replay_videos_dir / "before_replay.webm").write_bytes(webm_header + (b'\x00' * 256))
-        (replay_videos_dir / "after_replay.webm").write_bytes(webm_header + (b'\x00' * 256))
+        webm_header = b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\xf7\x81\x01\x42\xf2\x81\x04\x42\xf3\x81\x08\x42\x82\x84webm\x42\x87\x81\x02\x42\x85\x81\x02"
+        (replay_videos_dir / "before_replay.webm").write_bytes(webm_header + (b"\x00" * 256))
+        (replay_videos_dir / "after_replay.webm").write_bytes(webm_header + (b"\x00" * 256))
 
         # Write PULL_REQUEST.md
         pr_path = package_dir / "PULL_REQUEST.md"
@@ -369,7 +438,7 @@ class ReportGenerator:
 - Replay: {patch.replay_state}
 - Safety: {patch.safety_result}
 - Latency: {patch.latency_result}
-- Policy scan: {', '.join(patch.policy_findings) if patch.policy_findings else 'None'}
+- Policy scan: {", ".join(patch.policy_findings) if patch.policy_findings else "None"}
 - Verified: {patch.verified}
 
 ## Testing
@@ -378,7 +447,7 @@ A regression test has been included to prevent reversion.
 ## Rollback
 See rollback.sh for instructions to revert this change.
 """
-        with open(pr_path, 'w', encoding='utf-8') as f:
+        with open(pr_path, "w", encoding="utf-8") as f:
             f.write(pr_content)
 
         # Write reviewer checklist
@@ -412,7 +481,7 @@ See rollback.sh for instructions to revert this change.
 ## Rollback
 - [ ] Rollback procedure is documented and tested
 """
-        with open(checklist_path, 'w', encoding='utf-8') as f:
+        with open(checklist_path, "w", encoding="utf-8") as f:
             f.write(checklist_content)
 
         # Write rollback.sh
@@ -440,7 +509,7 @@ git apply --reverse {patch.candidate_id}.patch
 
 echo "Rollback complete. Please verify the system is back to its previous state."
 """
-        with open(rollback_path, 'w', encoding='utf-8') as f:
+        with open(rollback_path, "w", encoding="utf-8") as f:
             f.write(rollback_content)
         # Make it executable
         os.chmod(rollback_path, 0o755)
@@ -451,4 +520,6 @@ echo "Rollback complete. Please verify the system is back to its previous state.
     def _get_hypothesis_causal_claim(self, patch: PatchCandidate) -> str:
         """Extract causal claim from patch (placeholder)."""
         # In a real implementation, we would link the patch to its hypothesis
-        return "Increased dynamic batching window caused inference latency to exceed freshness budget"
+        return (
+            "Increased dynamic batching window caused inference latency to exceed freshness budget"
+        )

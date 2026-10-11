@@ -19,13 +19,15 @@ from cauveris.holographic.compression import (
     CompressionMethod,
 )
 import sys
-sys.path.insert(0, 'tests/holographic')
+
+sys.path.insert(0, "tests/holographic")
 from synthetic import SyntheticIncidentGenerator, IncidentType
 
 
 @dataclass
 class CompressionBenchmarkResult:
     """Result of a single compression benchmark run."""
+
     incident_type: str
     method: str
     target_ratio: float
@@ -84,7 +86,11 @@ def run_compression_benchmark(
 
         # Reconstruct from compressed HEUs
         comp_system = build_measurement_system(
-            topology, comp_result.compressed_heus, 60_000_000_000, kernel_builder, MeasurementConfig()
+            topology,
+            comp_result.compressed_heus,
+            60_000_000_000,
+            kernel_builder,
+            MeasurementConfig(),
         )
         comp_solver = HolographicSolver(comp_system, topology, config)
         comp_result_solve = comp_solver.solve()
@@ -93,18 +99,20 @@ def run_compression_benchmark(
         # Compute fidelity: similarity between original and compressed reconstruction
         fidelity = _compute_reconstruction_fidelity(original_decode, comp_decode)
 
-        results.append(CompressionBenchmarkResult(
-            incident_type=incident.incident_id.split('_')[1],  # e.g., CPU_SPIKE
-            method=method.name,
-            target_ratio=ratio,
-            achieved_ratio=comp_result.compression_ratio,
-            fidelity_retention=fidelity,
-            num_heus_original=len(heus),
-            num_heus_compressed=len(comp_result.compressed_heus),
-            solve_time_ms=original_solve_time,
-            boundary_residual_original=original_result.boundary_residual,
-            boundary_residual_compressed=comp_result_solve.boundary_residual,
-        ))
+        results.append(
+            CompressionBenchmarkResult(
+                incident_type=incident.incident_id.split("_")[1],  # e.g., CPU_SPIKE
+                method=method.name,
+                target_ratio=ratio,
+                achieved_ratio=comp_result.compression_ratio,
+                fidelity_retention=fidelity,
+                num_heus_original=len(heus),
+                num_heus_compressed=len(comp_result.compressed_heus),
+                solve_time_ms=original_solve_time,
+                boundary_residual_original=original_result.boundary_residual,
+                boundary_residual_compressed=comp_result_solve.boundary_residual,
+            )
+        )
 
     return results
 
@@ -116,8 +124,16 @@ def _compute_reconstruction_fidelity(decode1: Dict, decode2: Dict) -> float:
     vec2 = []
 
     all_services = set(decode1.get("services", {}).keys()) | set(decode2.get("services", {}).keys())
-    all_dims = ["cpu_pressure", "memory_pressure", "network_latency", "error_rate",
-                "config_change", "deployment_activity", "resource_contention", "service_dependency"]
+    all_dims = [
+        "cpu_pressure",
+        "memory_pressure",
+        "network_latency",
+        "error_rate",
+        "config_change",
+        "deployment_activity",
+        "resource_contention",
+        "service_dependency",
+    ]
 
     for svc in sorted(all_services):
         s1 = decode1.get("services", {}).get(svc, {})
@@ -166,8 +182,10 @@ def run_full_benchmark() -> Dict[str, Any]:
                 results = run_compression_benchmark(incident, method, target_ratios)
                 all_results.extend(results)
                 for r in results:
-                    print(f"    {method.name}: ratio={r.target_ratio:.0f}x -> {r.achieved_ratio:.1f}x, "
-                          f"fidelity={r.fidelity_retention:.3f}, HEUs={r.num_heus_original}->{r.num_heus_compressed}")
+                    print(
+                        f"    {method.name}: ratio={r.target_ratio:.0f}x -> {r.achieved_ratio:.1f}x, "
+                        f"fidelity={r.fidelity_retention:.3f}, HEUs={r.num_heus_original}->{r.num_heus_compressed}"
+                    )
             except Exception as e:
                 print(f"    {method.name}: ERROR - {e}")
 
@@ -205,12 +223,10 @@ def _summarize_results(results: List[CompressionBenchmarkResult]) -> Dict[str, A
             "num_runs": len(res_list),
             # Find max ratio with fidelity > 0.9
             "max_ratio_fidelity_90": max(
-                [r.achieved_ratio for r in res_list if r.fidelity_retention >= 0.9],
-                default=0
+                [r.achieved_ratio for r in res_list if r.fidelity_retention >= 0.9], default=0
             ),
             "max_ratio_fidelity_80": max(
-                [r.achieved_ratio for r in res_list if r.fidelity_retention >= 0.8],
-                default=0
+                [r.achieved_ratio for r in res_list if r.fidelity_retention >= 0.8], default=0
             ),
         }
 
@@ -219,16 +235,16 @@ def _summarize_results(results: List[CompressionBenchmarkResult]) -> Dict[str, A
 
 def save_results(results: Dict[str, Any], output_path: str = "compression_benchmark_results.json"):
     """Save benchmark results to JSON."""
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults saved to {output_path}")
 
 
 def print_summary(results: Dict[str, Any]):
     """Print human-readable summary."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("COMPRESSION BENCHMARK SUMMARY")
-    print("="*70)
+    print("=" * 70)
 
     for method, stats in results["summary"].items():
         print(f"\n{method}:")

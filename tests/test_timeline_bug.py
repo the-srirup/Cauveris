@@ -2,14 +2,17 @@
 """
 Test script to reproduce the timeline builder bug.
 """
+
 import sys
 import os
 import asyncio
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from cauveris.schemas.incident import Incident
 from cauveris.timeline.builder import TimelineBuilder
 from pathlib import Path
+
 
 async def test_timeline_builder_with_missing_bundle():
     """Test timeline builder when bundle directory doesn't exist."""
@@ -36,6 +39,7 @@ async def test_timeline_builder_with_missing_bundle():
         temp_path = Path("./incident-CAU-0001.temp")
         if temp_path.exists():
             import shutil
+
             shutil.rmtree(temp_path)
         bundle_path.rename(temp_path)
         print(f"Renamed bundle directory to: {temp_path.absolute()}")
@@ -51,6 +55,7 @@ async def test_timeline_builder_with_missing_bundle():
     except Exception as e:
         print(f"ERROR during build: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         # Restore the bundle directory
@@ -59,9 +64,11 @@ async def test_timeline_builder_with_missing_bundle():
         if temp_path.exists():
             if bundle_path.exists():
                 import shutil
+
                 shutil.rmtree(bundle_path)
             temp_path.rename(bundle_path)
             print(f"Restored bundle directory to: {bundle_path.absolute()}")
+
 
 if __name__ == "__main__":
     asyncio.run(test_timeline_builder_with_missing_bundle())

@@ -1,6 +1,7 @@
 """
 Unit tests for Holographic Compression - Phase 2.
 """
+
 import pytest
 import numpy as np
 
@@ -12,7 +13,12 @@ from cauveris.holographic.compression import (
     compress_holographic,
     EvidenceSynthesizer,
 )
-from cauveris.holographic.topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
+from cauveris.holographic.topology import (
+    SystemTopology,
+    ComponentInfo,
+    ResourceCapacity,
+    CausalEdge,
+)
 from cauveris.holographic.heu import HolographicEvidenceUnit, BoundaryLayer
 
 
@@ -40,21 +46,21 @@ class TestHolographicCompressor:
 
     def setup_method(self):
         self.topo = SystemTopology()
-        self.topo.add_component(ComponentInfo(
-            name="svc_a",
-            capacity=ResourceCapacity(cpu_cores=4.0),
-            boundary_layers=["application_log", "metrics_export", "distributed_trace"]
-        ))
-        self.topo.add_component(ComponentInfo(
-            name="svc_b",
-            capacity=ResourceCapacity(cpu_cores=2.0),
-            boundary_layers=["application_log", "metrics_export"]
-        ))
-        self.topo.add_causal_edge(CausalEdge(
-            source="svc_a",
-            target="svc_b",
-            latency_ms=5.0
-        ))
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_a",
+                capacity=ResourceCapacity(cpu_cores=4.0),
+                boundary_layers=["application_log", "metrics_export", "distributed_trace"],
+            )
+        )
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_b",
+                capacity=ResourceCapacity(cpu_cores=2.0),
+                boundary_layers=["application_log", "metrics_export"],
+            )
+        )
+        self.topo.add_causal_edge(CausalEdge(source="svc_a", target="svc_b", latency_ms=5.0))
 
     def test_compress_small_set(self):
         """Test compression with small HEU set (should not compress)."""
@@ -65,15 +71,17 @@ class TestHolographicCompressor:
         # Less than 10 HEUs - should return as-is
         heus = []
         for i in range(5):
-            heus.append(HolographicEvidenceUnit(
-                heu_id=f"heu_{i}",
-                timestamp_ns=i * 10_000_000,
-                boundary_layer=BoundaryLayer.APPLICATION_LOG,
-                source_component="svc_a",
-                source_instance="a1",
-                payload={},
-                phase_vector=np.zeros(8),
-            ))
+            heus.append(
+                HolographicEvidenceUnit(
+                    heu_id=f"heu_{i}",
+                    timestamp_ns=i * 10_000_000,
+                    boundary_layer=BoundaryLayer.APPLICATION_LOG,
+                    source_component="svc_a",
+                    source_instance="a1",
+                    payload={},
+                    phase_vector=np.zeros(8),
+                )
+            )
 
         result = compressor.compress(heus, 1_000_000_000)
         assert result.compression_ratio == 1.0
@@ -94,15 +102,17 @@ class TestHolographicCompressor:
         for i in range(50):
             phase = np.zeros(8)
             phase[i % 8] = 1.0  # Each HEU activates different dimension
-            heus.append(HolographicEvidenceUnit(
-                heu_id=f"heu_{i}",
-                timestamp_ns=i * 10_000_000,
-                boundary_layer=BoundaryLayer.APPLICATION_LOG,
-                source_component="svc_a",
-                source_instance="a1",
-                payload={},
-                phase_vector=phase.astype(np.float32),
-            ))
+            heus.append(
+                HolographicEvidenceUnit(
+                    heu_id=f"heu_{i}",
+                    timestamp_ns=i * 10_000_000,
+                    boundary_layer=BoundaryLayer.APPLICATION_LOG,
+                    source_component="svc_a",
+                    source_instance="a1",
+                    payload={},
+                    phase_vector=phase.astype(np.float32),
+                )
+            )
 
         result = compressor.compress(heus, 1_000_00_000_000)
 
@@ -123,15 +133,19 @@ class TestHolographicCompressor:
 
         heus = []
         for i in range(50):
-            heus.append(HolographicEvidenceUnit(
-                heu_id=f"heu_{i}",
-                timestamp_ns=i * 10_000_000,
-                boundary_layer=BoundaryLayer.APPLICATION_LOG if i % 2 == 0 else BoundaryLayer.METRICS_EXPORT,
-                source_component="svc_a" if i % 2 == 0 else "svc_b",
-                source_instance="a1" if i % 2 == 0 else "b1",
-                payload={},
-                phase_vector=np.zeros(8),
-            ))
+            heus.append(
+                HolographicEvidenceUnit(
+                    heu_id=f"heu_{i}",
+                    timestamp_ns=i * 10_000_000,
+                    boundary_layer=BoundaryLayer.APPLICATION_LOG
+                    if i % 2 == 0
+                    else BoundaryLayer.METRICS_EXPORT,
+                    source_component="svc_a" if i % 2 == 0 else "svc_b",
+                    source_instance="a1" if i % 2 == 0 else "b1",
+                    payload={},
+                    phase_vector=np.zeros(8),
+                )
+            )
 
         result = compressor.compress(heus, 1_000_000_000)
 
@@ -151,16 +165,18 @@ class TestHolographicCompressor:
         heus = []
         for i in range(30):
             # Give different reconstruction weights
-            heus.append(HolographicEvidenceUnit(
-                heu_id=f"heu_{i}",
-                timestamp_ns=i * 10_000_000,
-                boundary_layer=BoundaryLayer.APPLICATION_LOG,
-                source_component="svc_a",
-                source_instance="a1",
-                payload={"cpu_usage": 0.5 + 0.1 * (i % 5)},
-                phase_vector=np.zeros(8),
-                reconstruction_weight=0.5 + 0.05 * (i % 10),
-            ))
+            heus.append(
+                HolographicEvidenceUnit(
+                    heu_id=f"heu_{i}",
+                    timestamp_ns=i * 10_000_000,
+                    boundary_layer=BoundaryLayer.APPLICATION_LOG,
+                    source_component="svc_a",
+                    source_instance="a1",
+                    payload={"cpu_usage": 0.5 + 0.1 * (i % 5)},
+                    phase_vector=np.zeros(8),
+                    reconstruction_weight=0.5 + 0.05 * (i % 10),
+                )
+            )
 
         result = compressor.compress(heus, 1_000_000_000)
 
@@ -179,15 +195,19 @@ class TestHolographicCompressor:
 
         heus = []
         for i in range(50):
-            heus.append(HolographicEvidenceUnit(
-                heu_id=f"heu_{i}",
-                timestamp_ns=i * 10_000_000,
-                boundary_layer=BoundaryLayer.APPLICATION_LOG if i % 2 == 0 else BoundaryLayer.METRICS_EXPORT,
-                source_component="svc_a" if i % 2 == 0 else "svc_b",
-                source_instance="a1" if i % 2 == 0 else "b1",
-                payload={},
-                phase_vector=np.zeros(8),
-            ))
+            heus.append(
+                HolographicEvidenceUnit(
+                    heu_id=f"heu_{i}",
+                    timestamp_ns=i * 10_000_000,
+                    boundary_layer=BoundaryLayer.APPLICATION_LOG
+                    if i % 2 == 0
+                    else BoundaryLayer.METRICS_EXPORT,
+                    source_component="svc_a" if i % 2 == 0 else "svc_b",
+                    source_instance="a1" if i % 2 == 0 else "b1",
+                    payload={},
+                    phase_vector=np.zeros(8),
+                )
+            )
 
         result = compressor.compress(heus, 1_000_000_000)
 
@@ -206,16 +226,18 @@ class TestHolographicCompressor:
 
         heus = []
         for i in range(40):
-            heus.append(HolographicEvidenceUnit(
-                heu_id=f"heu_{i}",
-                timestamp_ns=i * 10_000_000,
-                boundary_layer=BoundaryLayer.APPLICATION_LOG,
-                source_component="svc_a",
-                source_instance="a1",
-                payload={},
-                phase_vector=np.zeros(8),
-                reconstruction_weight=0.9 if i < 5 else 0.3,  # First 5 are high weight
-            ))
+            heus.append(
+                HolographicEvidenceUnit(
+                    heu_id=f"heu_{i}",
+                    timestamp_ns=i * 10_000_000,
+                    boundary_layer=BoundaryLayer.APPLICATION_LOG,
+                    source_component="svc_a",
+                    source_instance="a1",
+                    payload={},
+                    phase_vector=np.zeros(8),
+                    reconstruction_weight=0.9 if i < 5 else 0.3,  # First 5 are high weight
+                )
+            )
 
         result = compressor.compress(heus, 1_000_000_000)
 
@@ -230,19 +252,25 @@ class TestCompressHolographic:
 
     def test_compress_function(self):
         topo = SystemTopology()
-        topo.add_component(ComponentInfo(name="svc_a", capacity=ResourceCapacity(), boundary_layers=["application_log"]))
+        topo.add_component(
+            ComponentInfo(
+                name="svc_a", capacity=ResourceCapacity(), boundary_layers=["application_log"]
+            )
+        )
 
         heus = []
         for i in range(20):
-            heus.append(HolographicEvidenceUnit(
-                heu_id=f"heu_{i}",
-                timestamp_ns=i * 10_000_000,
-                boundary_layer=BoundaryLayer.APPLICATION_LOG,
-                source_component="svc_a",
-                source_instance="a1",
-                payload={},
-                phase_vector=np.zeros(8),
-            ))
+            heus.append(
+                HolographicEvidenceUnit(
+                    heu_id=f"heu_{i}",
+                    timestamp_ns=i * 10_000_000,
+                    boundary_layer=BoundaryLayer.APPLICATION_LOG,
+                    source_component="svc_a",
+                    source_instance="a1",
+                    payload={},
+                    phase_vector=np.zeros(8),
+                )
+            )
 
         result = compress_holographic(topo, heus, 1_000_000_000)
         assert isinstance(result, CompressionResult)
@@ -254,15 +282,20 @@ class TestEvidenceSynthesizer:
 
     def setup_method(self):
         self.topo = SystemTopology()
-        self.topo.add_component(ComponentInfo(
-            name="svc_a",
-            capacity=ResourceCapacity(cpu_cores=4.0),
-            boundary_layers=["application_log", "metrics_export", "distributed_trace"]
-        ))
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_a",
+                capacity=ResourceCapacity(cpu_cores=4.0),
+                boundary_layers=["application_log", "metrics_export", "distributed_trace"],
+            )
+        )
 
     def test_synthesize_missing_layers(self):
         """Test synthesizing missing boundary layers."""
-        from cauveris.holographic.reconstruction import HolographicReconstruction, ReconstructedServiceState
+        from cauveris.holographic.reconstruction import (
+            HolographicReconstruction,
+            ReconstructedServiceState,
+        )
 
         synth = EvidenceSynthesizer(self.topo)
 
@@ -281,11 +314,7 @@ class TestEvidenceSynthesizer:
         )
 
         observed = {"svc_a": [BoundaryLayer.APPLICATION_LOG]}  # Missing metrics and trace
-        missing_heus = synth.synthesize_missing_layers(
-            recon,
-            observed,
-            (0, 1_000_000_000)
-        )
+        missing_heus = synth.synthesize_missing_layers(recon, observed, (0, 1_000_000_000))
 
         assert len(missing_heus) > 0
         # Should create HEUs for missing layers
@@ -301,7 +330,10 @@ class TestEvidenceSynthesizer:
 
     def test_synthesize_payload_estimation(self):
         """Test payload estimation for different layers."""
-        from cauveris.holographic.reconstruction import HolographicReconstruction, ReconstructedServiceState
+        from cauveris.holographic.reconstruction import (
+            HolographicReconstruction,
+            ReconstructedServiceState,
+        )
 
         synth = EvidenceSynthesizer(self.topo)
 
@@ -320,16 +352,14 @@ class TestEvidenceSynthesizer:
         )
 
         observed = {"svc_a": []}  # All layers missing
-        missing_heus = synth.synthesize_missing_layers(
-            recon,
-            observed,
-            (0, 1_000_000_000)
-        )
+        missing_heus = synth.synthesize_missing_layers(recon, observed, (0, 1_000_000_000))
 
         # Check specific payload content per layer
         log_heus = [h for h in missing_heus if h.boundary_layer == BoundaryLayer.APPLICATION_LOG]
         metric_heus = [h for h in missing_heus if h.boundary_layer == BoundaryLayer.METRICS_EXPORT]
-        trace_heus = [h for h in missing_heus if h.boundary_layer == BoundaryLayer.DISTRIBUTED_TRACE]
+        trace_heus = [
+            h for h in missing_heus if h.boundary_layer == BoundaryLayer.DISTRIBUTED_TRACE
+        ]
 
         assert len(log_heus) > 0
         assert len(metric_heus) > 0

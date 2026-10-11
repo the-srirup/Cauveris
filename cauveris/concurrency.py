@@ -5,6 +5,7 @@ Semaphore-based capacity acquisition for expensive operations with:
 - Heartbeats and stale-job recovery
 - Automatic release on success/failure/timeout/cancellation
 """
+
 import asyncio
 import time
 from abc import ABC, abstractmethod
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ConcurrencySlot:
     """A reserved concurrency slot."""
+
     key: str
     owner_id: str
     acquired_at: float
@@ -32,7 +34,9 @@ class ConcurrencyStore(ABC):
     """Abstract backend for concurrency tracking."""
 
     @abstractmethod
-    async def acquire(self, key: str, owner_id: str, limit: int, timeout: float) -> Optional[ConcurrencySlot]:
+    async def acquire(
+        self, key: str, owner_id: str, limit: int, timeout: float
+    ) -> Optional[ConcurrencySlot]:
         """Try to acquire a slot. Returns slot if acquired, None if timeout."""
         pass
 
@@ -86,7 +90,9 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
             self._locks[key] = asyncio.Lock()
         return self._locks[key]
 
-    async def acquire(self, key: str, owner_id: str, limit: int, timeout: float) -> Optional[ConcurrencySlot]:
+    async def acquire(
+        self, key: str, owner_id: str, limit: int, timeout: float
+    ) -> Optional[ConcurrencySlot]:
         lock = self._get_lock(key)
         start_time = time.time()
 
@@ -111,7 +117,9 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
                     )
                     slots[owner_id] = slot
                     self._slots[key] = slots
-                    logger.debug(f"Acquired concurrency slot: {key} for {owner_id} ({len(slots)}/{limit})")
+                    logger.debug(
+                        f"Acquired concurrency slot: {key} for {owner_id} ({len(slots)}/{limit})"
+                    )
                     return slot
 
                 # Need to wait - create event if not exists
@@ -127,9 +135,7 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
                 wait_task = asyncio.create_task(wait_event.wait())
                 remaining = timeout - (time.time() - start_time)
                 done, pending = await asyncio.wait(
-                    [wait_task],
-                    timeout=min(remaining, 0.5),
-                    return_when=asyncio.FIRST_COMPLETED
+                    [wait_task], timeout=min(remaining, 0.5), return_when=asyncio.FIRST_COMPLETED
                 )
                 for p in pending:
                     p.cancel()
@@ -148,7 +154,9 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
             slots = self._slots.get(key, {})
             if owner_id in slots:
                 del slots[owner_id]
-                logger.debug(f"Released concurrency slot: {key} for {owner_id} ({len(slots)} slots)")
+                logger.debug(
+                    f"Released concurrency slot: {key} for {owner_id} ({len(slots)} slots)"
+                )
 
                 # Notify waiting owners
                 if key in self._waiting:
@@ -190,7 +198,8 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
                     continue
                 slots = self._slots[key]
                 stale_owners = [
-                    owner_id for owner_id, slot in slots.items()
+                    owner_id
+                    for owner_id, slot in slots.items()
                     if slot.heartbeat_at < stale_threshold
                 ]
                 for owner_id in stale_owners:
@@ -229,7 +238,13 @@ class ConcurrencyManager:
         return self._limits.get(scope, 1)
 
     @asynccontextmanager
-    async def acquire(self, scope: str, owner_id: str, timeout: Optional[float] = None, metadata: Optional[Dict] = None):
+    async def acquire(
+        self,
+        scope: str,
+        owner_id: str,
+        timeout: Optional[float] = None,
+        metadata: Optional[Dict] = None,
+    ):
         """
         Acquire a concurrency slot.
 
@@ -246,8 +261,7 @@ class ConcurrencyManager:
         slot = await self._store.acquire(scope, owner_id, limit, timeout)
         if slot is None:
             raise ConcurrencyLimitExceeded(
-                f"Concurrency limit exceeded for {scope} (limit={limit}), "
-                f"timeout after {timeout}s"
+                f"Concurrency limit exceeded for {scope} (limit={limit}), timeout after {timeout}s"
             )
 
         if metadata:
@@ -333,12 +347,13 @@ class ConcurrencyManager:
                     "metadata": s.metadata,
                 }
                 for s in slots
-            ]
+            ],
         }
 
 
 class ConcurrencyLimitExceeded(Exception):
     """Raised when concurrency limit is exceeded."""
+
     pass
 
 

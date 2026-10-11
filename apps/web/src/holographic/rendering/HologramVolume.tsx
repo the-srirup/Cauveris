@@ -31,7 +31,13 @@ export function HologramVolume({
   useEffect(() => {
     if (!phaseTexture) return;
 
-    const mat = createHologramMaterial(phaseTexture, 512, modeInt);
+    // Resolution must match the actual texture (gridSize is 256 by default).
+    // The shader's fringe-alarm gradient steps by 1/u_resolution texels, so
+    // the hardcoded 512 sampled 2 texels out and skewed the aliasing
+    // thresholds. DataTexture.image carries the true N x N dimensions.
+    const resolution = phaseTexture.image?.width ?? 512;
+
+    const mat = createHologramMaterial(phaseTexture, resolution, modeInt);
     materialRef.current = mat;
 
     if (meshRef.current) {

@@ -5,6 +5,7 @@ Implements the mathematical kernels that describe how internal system state
 propagates to the observable boundary (HEUs). These are the "holographic
 propagation kernels" analogous to Green's functions in AdS/CFT.
 """
+
 from __future__ import annotations
 
 import math
@@ -18,24 +19,26 @@ from .topology import SystemTopology, ComponentInfo, CausalEdge, ResourceCapacit
 @dataclass(slots=True)
 class KernelConfig:
     """Configuration for kernel construction."""
-    time_step_ns: int = 1_000_000          # 1ms resolution
+
+    time_step_ns: int = 1_000_000  # 1ms resolution
     max_kernel_time_ns: int = 10_000_000_000  # 10 second max propagation
-    self_latency_factor: float = 0.1       # Internal latency as fraction of capacity
-    queue_service_time_ms: float = 0.5     # Base service time for queueing
-    decay_type: str = "exponential"        # exponential, gamma, bi_exponential
-    normalization: str = "l1"              # l1, l2, max
+    self_latency_factor: float = 0.1  # Internal latency as fraction of capacity
+    queue_service_time_ms: float = 0.5  # Base service time for queueing
+    decay_type: str = "exponential"  # exponential, gamma, bi_exponential
+    normalization: str = "l1"  # l1, l2, max
 
 
 @dataclass(slots=True)
 class LocalPropagationKernel:
     """Kernel describing how component state propagates to its own boundary."""
+
     component_name: str
     boundary_layer: str
-    time_axis_ns: np.ndarray          # Time points [0, dt, 2dt, ...]
-    kernel_values: np.ndarray         # K(t) values
-    integral: float                   # ∫K(t)dt (should be 1.0 for conservation)
-    peak_time_ns: float              # Time of maximum response
-    half_life_ns: float              # Time for kernel to decay to 0.5
+    time_axis_ns: np.ndarray  # Time points [0, dt, 2dt, ...]
+    kernel_values: np.ndarray  # K(t) values
+    integral: float  # ∫K(t)dt (should be 1.0 for conservation)
+    peak_time_ns: float  # Time of maximum response
+    half_life_ns: float  # Time for kernel to decay to 0.5
 
     def evaluate_at(self, t_ns: float) -> float:
         """Evaluate kernel at specific time."""
@@ -46,18 +49,19 @@ class LocalPropagationKernel:
 
     def convolve(self, signal: np.ndarray, dt_ns: int) -> np.ndarray:
         """Convolve signal with kernel."""
-        return np.convolve(signal, self.kernel_values, mode='full')[:len(signal)] * (dt_ns / 1e9)
+        return np.convolve(signal, self.kernel_values, mode="full")[: len(signal)] * (dt_ns / 1e9)
 
 
 @dataclass(slots=True)
 class CrossPropagationKernel:
     """Kernel describing cross-component propagation (service-to-service)."""
+
     source: str
     target: str
     edge_type: str
     time_axis_ns: np.ndarray
     kernel_values: np.ndarray
-    total_latency_ns: float        # Sum of: src_internal + network + queue + dst_internal
+    total_latency_ns: float  # Sum of: src_internal + network + queue + dst_internal
     network_latency_ns: float
     queueing_latency_ns: float
 
@@ -104,12 +108,13 @@ class CausalKernelBuilder:
                 # Build cross kernels for each boundary layer pair
                 for src_layer in src_comp.boundary_layers:
                     for dst_layer in dst_comp.boundary_layers:
-                        self._cross_kernels[(edge.source, edge.target, src_layer, dst_layer)] = \
+                        self._cross_kernels[(edge.source, edge.target, src_layer, dst_layer)] = (
                             self._build_cross_kernel(src_comp, dst_comp, edge, src_layer, dst_layer)
+                        )
 
         return {
-            'local': self._local_kernels,
-            'cross': self._cross_kernels,
+            "local": self._local_kernels,
+            "cross": self._cross_kernels,
         }
 
     def _build_local_kernel(
@@ -137,14 +142,17 @@ class CausalKernelBuilder:
             # Gamma distribution with shape=2 (more realistic for queuing)
             shape = 2.0
             scale = tau_ns / shape
-            kernel = (time_axis ** (shape - 1) * np.exp(-time_axis / scale)) / \
-                     (scale ** shape * math.gamma(shape))
+            kernel = (time_axis ** (shape - 1) * np.exp(-time_axis / scale)) / (
+                scale**shape * math.gamma(shape)
+            )
         elif self.config.decay_type == "bi_exponential":
             # Fast + slow components (e.g., log buffer flush + metric scrape)
             tau_fast = tau_ns * 0.1
             tau_slow = tau_ns
-            kernel = 0.7 * np.exp(-time_axis / tau_fast) / tau_fast + \
-                     0.3 * np.exp(-time_axis / tau_slow) / tau_slow
+            kernel = (
+                0.7 * np.exp(-time_axis / tau_fast) / tau_fast
+                + 0.3 * np.exp(-time_axis / tau_slow) / tau_slow
+            )
         else:
             kernel = np.exp(-time_axis / tau_ns) / tau_ns
 
@@ -154,7 +162,7 @@ class CausalKernelBuilder:
             if integral > 0:
                 kernel = kernel / integral
         elif self.config.normalization == "l2":
-            norm = np.sqrt(np.trapezoid(kernel ** 2, time_axis))
+            norm = np.sqrt(np.trapezoid(kernel**2, time_axis))
             if norm > 0:
                 kernel = kernel / norm
         elif self.config.normalization == "max":
@@ -192,22 +200,22 @@ class CausalKernelBuilder:
         # Adjust by component type
         type_factors = {
             "service": 1.0,
-            "database": 2.0,      # Databases have more internal buffering
-            "queue": 0.5,         # Queues are fast
-            "gateway": 0.8,       # Gateways are network-bound
-            "monitoring": 1.5,    # Monitoring aggregates
+            "database": 2.0,  # Databases have more internal buffering
+            "queue": 0.5,  # Queues are fast
+            "gateway": 0.8,  # Gateways are network-bound
+            "monitoring": 1.5,  # Monitoring aggregates
         }
         base_tau_ms *= type_factors.get(component.component_type, 1.0)
 
         # Adjust by boundary layer
         layer_factors = {
-            "application_log": 1.0,        # Logs: immediate
-            "infrastructure_log": 1.2,     # System logs: slight delay
-            "distributed_trace": 0.3,      # Traces: very fast (instrumented)
-            "metrics_export": 5.0,         # Metrics: scrape interval ~10-30s
-            "network_flow": 1.0,           # NetFlow: per-packet or per-flow
-            "config_state": 10.0,          # Config: propagation through reload
-            "deployment_event": 0.1,       # Deployment: instant marker
+            "application_log": 1.0,  # Logs: immediate
+            "infrastructure_log": 1.2,  # System logs: slight delay
+            "distributed_trace": 0.3,  # Traces: very fast (instrumented)
+            "metrics_export": 5.0,  # Metrics: scrape interval ~10-30s
+            "network_flow": 1.0,  # NetFlow: per-packet or per-flow
+            "config_state": 10.0,  # Config: propagation through reload
+            "deployment_event": 0.1,  # Deployment: instant marker
         }
         base_tau_ms *= layer_factors.get(layer, 1.0)
 
@@ -251,12 +259,20 @@ class CausalKernelBuilder:
         # Shift src kernel by network latency
         shift_idx = int(total_network_latency_ns / dt)
         shifted_src = np.zeros_like(src_kernel.kernel_values)
-        if shift_idx < len(shifted_src):
+        if shift_idx == 0:
+            # Zero-latency edges (no network delay, empty queue) are common in
+            # synthetic topologies. This case MUST come first: the branch
+            # below also matches shift_idx == 0, and kernel_values[:-0] is the
+            # EMPTY slice (not the whole array) — it would try to broadcast a
+            # 0-length array into the full buffer and raise.
+            shifted_src[:] = src_kernel.kernel_values
+        elif shift_idx < len(shifted_src):
             shifted_src[shift_idx:] = src_kernel.kernel_values[:-shift_idx]
+        # If shift_idx >= len(shifted_src), shifted_src remains all zeros (signal arrives after kernel window)
 
         # Convolve: shifted_src * dst_kernel
-        cross_kernel = np.convolve(shifted_src, dst_kernel.kernel_values, mode='full')
-        cross_kernel = cross_kernel[:len(time_axis)]
+        cross_kernel = np.convolve(shifted_src, dst_kernel.kernel_values, mode="full")
+        cross_kernel = cross_kernel[: len(time_axis)]
 
         # Normalize
         if self.config.normalization == "l1":
@@ -264,11 +280,7 @@ class CausalKernelBuilder:
             if integral > 0:
                 cross_kernel = cross_kernel / integral
 
-        total_latency = (
-            src_kernel.peak_time_ns +
-            total_network_latency_ns +
-            dst_kernel.peak_time_ns
-        )
+        total_latency = src_kernel.peak_time_ns + total_network_latency_ns + dst_kernel.peak_time_ns
 
         return CrossPropagationKernel(
             source=src.name,
@@ -327,7 +339,7 @@ class CausalKernelBuilder:
                     state_idx = i * n_layers + l_idx
                     # Pad/truncate kernel to n_time
                     k_vals = kernel.kernel_values[:n_time]
-                    K[state_idx, i, :len(k_vals)] = k_vals
+                    K[state_idx, i, : len(k_vals)] = k_vals
 
         # Off-diagonal blocks: cross propagation
         for edge in self.topology.causal_edges:
@@ -346,7 +358,7 @@ class CausalKernelBuilder:
                         if kernel:
                             dst_obs_idx = dst_i * n_layers + layer_to_idx.get(dst_layer, 0)
                             k_vals = kernel.kernel_values[:n_time]
-                            K[dst_obs_idx, src_i, :len(k_vals)] = k_vals
+                            K[dst_obs_idx, src_i, : len(k_vals)] = k_vals
 
         return K
 
@@ -408,9 +420,23 @@ if __name__ == "__main__":
     from .topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
 
     topo = SystemTopology()
-    topo.add_component(ComponentInfo(name="svc_a", capacity=ResourceCapacity(cpu_cores=4.0), boundary_layers=["application_log", "distributed_trace", "metrics_export"]))
-    topo.add_component(ComponentInfo(name="svc_b", capacity=ResourceCapacity(cpu_cores=2.0), boundary_layers=["application_log", "metrics_export"]))
-    topo.add_causal_edge(CausalEdge(source="svc_a", target="svc_b", latency_ms=5.0, edge_type="rpc"))
+    topo.add_component(
+        ComponentInfo(
+            name="svc_a",
+            capacity=ResourceCapacity(cpu_cores=4.0),
+            boundary_layers=["application_log", "distributed_trace", "metrics_export"],
+        )
+    )
+    topo.add_component(
+        ComponentInfo(
+            name="svc_b",
+            capacity=ResourceCapacity(cpu_cores=2.0),
+            boundary_layers=["application_log", "metrics_export"],
+        )
+    )
+    topo.add_causal_edge(
+        CausalEdge(source="svc_a", target="svc_b", latency_ms=5.0, edge_type="rpc")
+    )
 
     kernels = build_causal_kernels(topo)
     print(f"Local kernels: {len(kernels['local'])}")

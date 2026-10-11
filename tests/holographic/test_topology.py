@@ -8,6 +8,7 @@ Tests cover:
 - Loading from bundle configs
 - Building from timeline events
 """
+
 import pytest
 import yaml
 import json
@@ -243,27 +244,35 @@ class TestSystemTopologyFromBundle:
         # Create deployment
         deploy_dir = tmp_path / "deployments"
         deploy_dir.mkdir()
-        (deploy_dir / "test.json").write_text(json.dumps({
-            "service_name": "test_svc",
-            "instances": [{"instance_id": "test-1"}],
-        }))
+        (deploy_dir / "test.json").write_text(
+            json.dumps(
+                {
+                    "service_name": "test_svc",
+                    "instances": [{"instance_id": "test-1"}],
+                }
+            )
+        )
 
         # Robot params with custom resources
         config_dir = tmp_path / "config"
         config_dir.mkdir()
-        (config_dir / "robot_params.yaml").write_text(yaml.dump({
-            "resources": {
-                "test_svc": {
-                    "cpu_cores": 8.0,
-                    "memory_gb": 16.0,
-                    "network_gbps": 10.0,
-                },
-                "default": {
-                    "cpu_cores": 2.0,
-                    "memory_gb": 4.0,
+        (config_dir / "robot_params.yaml").write_text(
+            yaml.dump(
+                {
+                    "resources": {
+                        "test_svc": {
+                            "cpu_cores": 8.0,
+                            "memory_gb": 16.0,
+                            "network_gbps": 10.0,
+                        },
+                        "default": {
+                            "cpu_cores": 2.0,
+                            "memory_gb": 4.0,
+                        },
+                    }
                 }
-            }
-        }))
+            )
+        )
         (config_dir / "inference.yaml").write_text("service_mesh: {}")
 
         topology = SystemTopology.from_bundle(tmp_path)
@@ -275,24 +284,32 @@ class TestSystemTopologyFromBundle:
     def test_load_inference_config(self, tmp_path):
         deploy_dir = tmp_path / "deployments"
         deploy_dir.mkdir()
-        (deploy_dir / "test.json").write_text(json.dumps({
-            "service_name": "mesh_svc",
-            "instances": [{"instance_id": "mesh-1"}],
-        }))
+        (deploy_dir / "test.json").write_text(
+            json.dumps(
+                {
+                    "service_name": "mesh_svc",
+                    "instances": [{"instance_id": "mesh-1"}],
+                }
+            )
+        )
 
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         (config_dir / "robot_params.yaml").write_text("resources: {}")
-        (config_dir / "inference.yaml").write_text(yaml.dump({
-            "service_mesh": {
-                "mesh_svc": {
-                    "hostname": "mesh-host",
-                    "port": 50051,
-                    "protocol": "grpc",
-                    "exports": ["application_log", "metrics_export", "distributed_trace"],
+        (config_dir / "inference.yaml").write_text(
+            yaml.dump(
+                {
+                    "service_mesh": {
+                        "mesh_svc": {
+                            "hostname": "mesh-host",
+                            "port": 50051,
+                            "protocol": "grpc",
+                            "exports": ["application_log", "metrics_export", "distributed_trace"],
+                        }
+                    }
                 }
-            }
-        }))
+            )
+        )
 
         topology = SystemTopology.from_bundle(tmp_path)
 
@@ -334,8 +351,14 @@ class TestBuildTopologyFromTimeline:
 
     def test_infers_causal_edges_from_traces(self):
         timeline = [
-            {"source_type": "otel_trace", "attributes": {"service.name": "svc_a", "peer.service": "svc_b"}},
-            {"source_type": "otel_trace", "attributes": {"service.name": "svc_b", "peer.service": "svc_c"}},
+            {
+                "source_type": "otel_trace",
+                "attributes": {"service.name": "svc_a", "peer.service": "svc_b"},
+            },
+            {
+                "source_type": "otel_trace",
+                "attributes": {"service.name": "svc_b", "peer.service": "svc_c"},
+            },
         ]
 
         topology = build_topology_from_timeline(timeline)

@@ -1,6 +1,7 @@
 """
 Sandbox controller for managing experiment branches and interventions.
 """
+
 import logging
 import shutil
 import json
@@ -52,7 +53,9 @@ class SandboxController:
         Args:
             experiments: List of experiments to set up and run
         """
-        logger.info(f"Setting up sandboxes and applying interventions for {len(experiments)} experiments")
+        logger.info(
+            f"Setting up sandboxes and applying interventions for {len(experiments)} experiments"
+        )
 
         for exp in experiments:
             try:
@@ -85,8 +88,8 @@ class SandboxController:
                 "enabled": True,
                 "max_batch_size": 8,
                 "batching_window_ms": 200,
-                "timeout_ms": 500
-            }
+                "timeout_ms": 500,
+            },
         }
 
         # Baseline robot params
@@ -97,12 +100,12 @@ class SandboxController:
                 "control_loop_deadline_ms": 100,
                 "transform_timeout_ms": 100,
                 "emergency_stop_on_stale_data": True,
-                "emergency_stop_on_transform_fail": True
+                "emergency_stop_on_transform_fail": True,
             },
             "perception": {
                 "detection_topics": ["object_detections"],
-                "required_detection_frequency_hz": 10
-            }
+                "required_detection_frequency_hz": 10,
+            },
         }
 
         # Detection client code
@@ -112,7 +115,7 @@ class DetectionClient:
         self.qos_depth = qos_depth
         self.keep_last = keep_last
 """
-        (src_dir / "detection_client.py").write_text(detection_client_code, encoding='utf-8')
+        (src_dir / "detection_client.py").write_text(detection_client_code, encoding="utf-8")
 
         # Apply hypothesis intervention
         hyp_id = exp.hypothesis_id.lower()
@@ -122,7 +125,9 @@ class DetectionClient:
             # Reduce batching window from 200ms to 100ms
             inference_cfg["dynamic_batching"]["batching_window_ms"] = 100
             applied_changes["config/inference.yaml"] = "batching_window_ms: 200 -> 100"
-            logger.info(f"[{exp.experiment_id}] Applied H1 intervention: batching_window_ms set to 100")
+            logger.info(
+                f"[{exp.experiment_id}] Applied H1 intervention: batching_window_ms set to 100"
+            )
 
         elif "h2" in hyp_id or "qos" in hyp_id:
             # Reduce QoS depth to 1
@@ -132,7 +137,7 @@ class DetectionClient:
         self.qos_depth = 1  # Reduced depth to prevent stale buffer buildup
         self.keep_last = keep_last
 """
-            (src_dir / "detection_client.py").write_text(new_client_code, encoding='utf-8')
+            (src_dir / "detection_client.py").write_text(new_client_code, encoding="utf-8")
             applied_changes["src/detection_client.py"] = "qos_depth: 10 -> 1"
             logger.info(f"[{exp.experiment_id}] Applied H2 intervention: QoS depth set to 1")
 
@@ -140,7 +145,9 @@ class DetectionClient:
             # Add clock skew tolerance
             robot_params["safety"]["max_clock_skew_tolerance_ms"] = 25
             applied_changes["config/robot_params.yaml"] = "max_clock_skew_tolerance_ms added: 25"
-            logger.info(f"[{exp.experiment_id}] Applied H3 intervention: clock skew tolerance added")
+            logger.info(
+                f"[{exp.experiment_id}] Applied H3 intervention: clock skew tolerance added"
+            )
 
         elif "h4" in hyp_id or "gpu" in hyp_id:
             # Reduce max batch size and throttle power limit
@@ -150,9 +157,9 @@ class DetectionClient:
             logger.info(f"[{exp.experiment_id}] Applied H4 intervention: max batch size set to 4")
 
         # Write config files
-        with open(config_dir / "inference.yaml", 'w', encoding='utf-8') as f:
+        with open(config_dir / "inference.yaml", "w", encoding="utf-8") as f:
             yaml.dump(inference_cfg, f, default_flow_style=False)
-        with open(config_dir / "robot_params.yaml", 'w', encoding='utf-8') as f:
+        with open(config_dir / "robot_params.yaml", "w", encoding="utf-8") as f:
             yaml.dump(robot_params, f, default_flow_style=False)
 
         # Write branch info
@@ -161,7 +168,7 @@ class DetectionClient:
             "branch_name": exp.branch_name,
             "hypothesis_id": exp.hypothesis_id,
             "intervention": exp.intervention,
-            "applied_changes": applied_changes
+            "applied_changes": applied_changes,
         }
-        with open(exp_dir / "branch_info.json", 'w', encoding='utf-8') as f:
+        with open(exp_dir / "branch_info.json", "w", encoding="utf-8") as f:
             json.dump(branch_info, f, indent=2)

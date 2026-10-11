@@ -33,7 +33,7 @@ from cauveris_kernels_py import (
     DecayType,
     matmul,
     dot_product,
-    l2_norm
+    l2_norm,
 )
 
 # Configure

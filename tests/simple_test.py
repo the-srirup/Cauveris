@@ -2,11 +2,13 @@
 """
 Minimal test to verify basic Cauveris structure
 """
+
 import sys
 import os
 
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 
 def test_basic_structure():
     """Test that the basic directory structure and key files exist"""
@@ -14,21 +16,21 @@ def test_basic_structure():
 
     # Check backend structure
     required_dirs = [
-        'cauveris',
-        'cauveris/api',
-        'cauveris/schemas',
-        'cauveris/ingestion',
-        'cauveris/timeline',
-        'cauveris/hypothesis',
-        'cauveris/sandbox',
-        'cauveris/simulation',
-        'cauveris/patch',
-        'cauveris/verifier',
-        'cauveris/report',
-        'cauveris/model_gateway',
-        'cauveris/state_machine',
-        'cauveris/datasets',
-        'apps/web/app'
+        "cauveris",
+        "cauveris/api",
+        "cauveris/schemas",
+        "cauveris/ingestion",
+        "cauveris/timeline",
+        "cauveris/hypothesis",
+        "cauveris/sandbox",
+        "cauveris/simulation",
+        "cauveris/patch",
+        "cauveris/verifier",
+        "cauveris/report",
+        "cauveris/model_gateway",
+        "cauveris/state_machine",
+        "cauveris/datasets",
+        "apps/web/app",
     ]
 
     missing_dirs = []
@@ -45,26 +47,26 @@ def test_basic_structure():
 
     # Check key files
     required_files = [
-        'cauveris/config.py',
-        'cauveris/main.py',
-        'cauveris/api/main.py',
-        'cauveris/schemas/incident.py',
-        'cauveris/schemas/hypothesis.py',
-        'cauveris/schemas/patch.py',
-        'cauveris/model_gateway/local.py',
-        'cauveris/model_gateway/nebius.py',
-        'cauveris/state_machine/orchestrator.py',
-        'cauveris/datasets/golden_incident.py',
-        'pyproject.toml',
-        'README.md',
-        'apps/web/app/layout.tsx',
-        'apps/web/app/page.tsx',
-        'apps/web/app/reality-rewind/page.tsx',
-        'apps/web/app/causal-constellation/page.tsx',
-        'apps/web/app/ghost-lab/page.tsx',
-        'apps/web/app/patch-forge/page.tsx',
-        'apps/web/app/victory-replay/page.tsx',
-        'apps/web/app/evidence-vault/page.tsx'
+        "cauveris/config.py",
+        "cauveris/main.py",
+        "cauveris/api/main.py",
+        "cauveris/schemas/incident.py",
+        "cauveris/schemas/hypothesis.py",
+        "cauveris/schemas/patch.py",
+        "cauveris/model_gateway/local.py",
+        "cauveris/model_gateway/nebius.py",
+        "cauveris/state_machine/orchestrator.py",
+        "cauveris/datasets/golden_incident.py",
+        "pyproject.toml",
+        "README.md",
+        "apps/web/app/layout.tsx",
+        "apps/web/app/page.tsx",
+        "apps/web/app/reality-rewind/page.tsx",
+        "apps/web/app/causal-constellation/page.tsx",
+        "apps/web/app/ghost-lab/page.tsx",
+        "apps/web/app/patch-forge/page.tsx",
+        "apps/web/app/victory-replay/page.tsx",
+        "apps/web/app/evidence-vault/page.tsx",
     ]
 
     missing_files = []
@@ -93,6 +95,7 @@ def test_basic_structure():
 
     assert len(missing_dirs) == 0, f"Missing directories: {missing_dirs}"
     assert len(missing_files) == 0, f"Missing files: {missing_files}"
+
 
 if __name__ == "__main__":
     if test_basic_structure():

@@ -4,8 +4,8 @@
  */
 
 export * from "./types";
+export * from "./api";
 export * from "./utils/fft";
-export * from "./utils/webgpu";
 export * from "./utils/colorPalettes";
 export * from "./layout/dagLayout";
 export * from "./layout/forceLayout";
@@ -20,6 +20,9 @@ export * from "./hooks/useForceLayout";
 export * from "./hooks/usePhaseRetrieval";
 export * from "./hooks/useCounterfactual";
 export * from "./hooks/useHolographicReconstruction";
+export * from "./hooks/useHolographicData";
+export * from "./hooks/useHolographicStream";
+export * from "./components";
 export * from "./rendering/CausalGraph3D";
 export * from "./rendering/HologramVolume";
 export * from "./rendering/TemporalController";

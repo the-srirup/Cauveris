@@ -1,6 +1,7 @@
 """
 Comprehensive tests for patch export and direct execution/import in the infected space.
 """
+
 import py_compile
 import tempfile
 import pytest
@@ -25,7 +26,7 @@ def sample_h1_experiment():
         reproduction_rate=0.0,
         failure_oracle={"hypothesis_supported": True},
         status="COMPLETED",
-        conclusion="Hypothesis supported; batching window reduction resolves incident."
+        conclusion="Hypothesis supported; batching window reduction resolves incident.",
     )
 
 
@@ -76,7 +77,7 @@ async def test_direct_import_and_execution_in_infected_space(sample_h1_experimen
             "  max_batch_size: 8\n"
             "  batching_window_ms: 200\n"
             "  timeout_ms: 500\n",
-            encoding="utf-8"
+            encoding="utf-8",
         )
 
         # 2. Export patch to infected workspace (mimicking direct copy/import)
@@ -154,7 +155,9 @@ async def test_api_export_and_apply_patch_endpoints(test_user):
         pipeline_contexts[incident_id] = context
 
         # 1. Export installer format
-        res_inst = await client.get(f"/api/v1/incidents/{incident_id}/export-patch?format=installer")
+        res_inst = await client.get(
+            f"/api/v1/incidents/{incident_id}/export-patch?format=installer"
+        )
         assert res_inst.status_code == 200
         assert res_inst.headers["content-type"] == "text/x-python; charset=utf-8"
         assert b"apply_patch" in res_inst.content
@@ -177,13 +180,13 @@ async def test_api_export_and_apply_patch_endpoints(test_user):
                 "  max_batch_size: 8\n"
                 "  batching_window_ms: 200\n"
                 "  timeout_ms: 500\n",
-                encoding="utf-8"
+                encoding="utf-8",
             )
 
             # POST /apply-patch
             apply_res = await client.post(
                 f"/api/v1/incidents/{incident_id}/apply-patch",
-                json={"target_directory": str(target_ws), "dry_run": False}
+                json={"target_directory": str(target_ws), "dry_run": False},
             )
             assert apply_res.status_code == 200
             apply_data = apply_res.json()
@@ -194,7 +197,7 @@ async def test_api_export_and_apply_patch_endpoints(test_user):
             # POST /apply-patch with rollback
             rb_res = await client.post(
                 f"/api/v1/incidents/{incident_id}/apply-patch",
-                json={"target_directory": str(target_ws), "rollback": True}
+                json={"target_directory": str(target_ws), "rollback": True},
             )
             assert rb_res.status_code == 200
             rb_data = rb_res.json()

@@ -1,6 +1,7 @@
 """
 Abstract base classes for model gateways.
 """
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
@@ -10,8 +11,11 @@ import json
 
 class ModelResponse(BaseEntity):
     """Standardized response from model gateway."""
+
     content: str = Field(..., description="Raw model response content")
-    structured_data: Optional[Dict[str, Any]] = Field(None, description="Parsed structured data if applicable")
+    structured_data: Optional[Dict[str, Any]] = Field(
+        None, description="Parsed structured data if applicable"
+    )
     model_used: str = Field(..., description="Identifier of the model used")
     provider: str = Field(..., description="Provider name (local, nebius, etc.)")
     usage: Optional[Dict[str, Any]] = Field(None, description="Token usage statistics")
@@ -62,7 +66,7 @@ def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     import re
 
     # Look for JSON block in markdown
-    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if json_match:
         try:
             return json.loads(json_match.group(1))
@@ -70,7 +74,7 @@ def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
             pass
 
     # Look for raw JSON object
-    json_match = re.search(r'\{.*\}', text, re.DOTALL)
+    json_match = re.search(r"\{.*\}", text, re.DOTALL)
     if json_match:
         try:
             return json.loads(json_match.group(0))

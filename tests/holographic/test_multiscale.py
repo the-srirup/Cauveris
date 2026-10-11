@@ -1,6 +1,7 @@
 """
 Unit tests for Multi-Scale Holographic Reconstruction - Phase 2.
 """
+
 import pytest
 import numpy as np
 
@@ -11,7 +12,12 @@ from cauveris.holographic.multiscale import (
     ReconstructionScale,
     reconstruct_multiscale,
 )
-from cauveris.holographic.topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
+from cauveris.holographic.topology import (
+    SystemTopology,
+    ComponentInfo,
+    ResourceCapacity,
+    CausalEdge,
+)
 from cauveris.holographic.reconstruction import HolographicReconstruction
 from cauveris.holographic.heu import HolographicEvidenceUnit, BoundaryLayer
 
@@ -58,21 +64,21 @@ class TestMultiScaleReconstructor:
 
     def setup_method(self):
         self.topo = SystemTopology()
-        self.topo.add_component(ComponentInfo(
-            name="svc_a",
-            capacity=ResourceCapacity(cpu_cores=4.0),
-            boundary_layers=["application_log", "metrics_export", "distributed_trace"]
-        ))
-        self.topo.add_component(ComponentInfo(
-            name="svc_b",
-            capacity=ResourceCapacity(cpu_cores=2.0),
-            boundary_layers=["application_log", "metrics_export"]
-        ))
-        self.topo.add_causal_edge(CausalEdge(
-            source="svc_a",
-            target="svc_b",
-            latency_ms=5.0
-        ))
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_a",
+                capacity=ResourceCapacity(cpu_cores=4.0),
+                boundary_layers=["application_log", "metrics_export", "distributed_trace"],
+            )
+        )
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_b",
+                capacity=ResourceCapacity(cpu_cores=2.0),
+                boundary_layers=["application_log", "metrics_export"],
+            )
+        )
+        self.topo.add_causal_edge(CausalEdge(source="svc_a", target="svc_b", latency_ms=5.0))
 
         self.config = MultiScaleConfig(
             target_scales=[ReconstructionScale.INCIDENT, ReconstructionScale.TRANSACTION],
@@ -89,20 +95,18 @@ class TestMultiScaleReconstructor:
         # Simple timeline for incident
         timeline = []
         for i in range(20):
-            timeline.append({
-                "event_id": f"evt_{i}",
-                "timestamp_ns": i * 50_000_000,
-                "source_type": "jsonl_log" if i % 2 == 0 else "csv_metrics",
-                "message": "Test event",
-                "attributes": {"service": "svc_a" if i % 2 == 0 else "svc_b"},
-                "status": "ok",
-            })
+            timeline.append(
+                {
+                    "event_id": f"evt_{i}",
+                    "timestamp_ns": i * 50_000_000,
+                    "source_type": "jsonl_log" if i % 2 == 0 else "csv_metrics",
+                    "message": "Test event",
+                    "attributes": {"service": "svc_a" if i % 2 == 0 else "svc_b"},
+                    "status": "ok",
+                }
+            )
 
-        results = reconstructor.reconstruct(
-            timeline,
-            (0, 1_000_000_000),
-            {}
-        )
+        results = reconstructor.reconstruct(timeline, (0, 1_000_000_000), {})
 
         assert ReconstructionScale.INCIDENT in results
         assert ReconstructionScale.TRANSACTION in results
@@ -120,17 +124,22 @@ class TestMultiScaleReconstructor:
 
         # Create many HEUs
         from cauveris.holographic.heu import HolographicEvidenceUnit, BoundaryLayer
+
         heus = []
         for i in range(200):
-            heus.append(HolographicEvidenceUnit(
-                heu_id=f"heu_{i}",
-                timestamp_ns=i * 5_000_000,
-                boundary_layer=BoundaryLayer.APPLICATION_LOG if i % 2 == 0 else BoundaryLayer.METRICS_EXPORT,
-                source_component="svc_a" if i % 2 == 0 else "svc_b",
-                source_instance="a1" if i % 2 == 0 else "b1",
-                payload={},
-                phase_vector=np.zeros(8),
-            ))
+            heus.append(
+                HolographicEvidenceUnit(
+                    heu_id=f"heu_{i}",
+                    timestamp_ns=i * 5_000_000,
+                    boundary_layer=BoundaryLayer.APPLICATION_LOG
+                    if i % 2 == 0
+                    else BoundaryLayer.METRICS_EXPORT,
+                    source_component="svc_a" if i % 2 == 0 else "svc_b",
+                    source_instance="a1" if i % 2 == 0 else "b1",
+                    payload={},
+                    phase_vector=np.zeros(8),
+                )
+            )
 
         # Downsample for transaction scale (target 100)
         downsampled = reconstructor._downsample_heus(
@@ -151,15 +160,17 @@ class TestMultiScaleReconstructor:
         heus = []
         for i in range(100):
             layer = BoundaryLayer.APPLICATION_LOG if i % 3 != 0 else BoundaryLayer.METRICS_EXPORT
-            heus.append(HolographicEvidenceUnit(
-                heu_id=f"heu_{i}",
-                timestamp_ns=i * 10_000_000,
-                boundary_layer=layer,
-                source_component="svc_a",
-                source_instance="a1",
-                payload={},
-                phase_vector=np.zeros(8),
-            ))
+            heus.append(
+                HolographicEvidenceUnit(
+                    heu_id=f"heu_{i}",
+                    timestamp_ns=i * 10_000_000,
+                    boundary_layer=layer,
+                    source_component="svc_a",
+                    source_instance="a1",
+                    payload={},
+                    phase_vector=np.zeros(8),
+                )
+            )
 
         downsampled = reconstructor._downsample_heus(
             heus, ReconstructionScale.TRANSACTION, 0, 1_000_000_000
@@ -175,18 +186,24 @@ class TestReconstructMultiscale:
 
     def test_reconstruct(self):
         topo = SystemTopology()
-        topo.add_component(ComponentInfo(name="svc_a", capacity=ResourceCapacity(), boundary_layers=["application_log"]))
+        topo.add_component(
+            ComponentInfo(
+                name="svc_a", capacity=ResourceCapacity(), boundary_layers=["application_log"]
+            )
+        )
 
         timeline = []
         for i in range(15):
-            timeline.append({
-                "event_id": f"evt_{i}",
-                "timestamp_ns": i * 10_000_000,
-                "source_type": "jsonl_log",
-                "message": "Test",
-                "attributes": {"service": "svc_a"},
-                "status": "ok",
-            })
+            timeline.append(
+                {
+                    "event_id": f"evt_{i}",
+                    "timestamp_ns": i * 10_000_000,
+                    "source_type": "jsonl_log",
+                    "message": "Test",
+                    "attributes": {"service": "svc_a"},
+                    "status": "ok",
+                }
+            )
 
         results = reconstruct_multiscale(
             topo,
@@ -203,7 +220,13 @@ class TestScaleComparison:
 
     def test_compare_scales(self):
         topo = SystemTopology()
-        topo.add_component(ComponentInfo(name="svc_a", capacity=ResourceCapacity(cpu_cores=4.0), boundary_layers=["application_log"]))
+        topo.add_component(
+            ComponentInfo(
+                name="svc_a",
+                capacity=ResourceCapacity(cpu_cores=4.0),
+                boundary_layers=["application_log"],
+            )
+        )
 
         reconstructor = MultiScaleReconstructor(topo)
 
@@ -211,16 +234,40 @@ class TestScaleComparison:
         from cauveris.holographic.heu import HolographicEvidenceUnit, BoundaryLayer
         from cauveris.holographic.solver import SolverResult
 
-        heus = [HolographicEvidenceUnit(heu_id="h1", timestamp_ns=100, boundary_layer=BoundaryLayer.APPLICATION_LOG, source_component="svc_a", source_instance="a1", payload={}, phase_vector=np.zeros(8))]
+        heus = [
+            HolographicEvidenceUnit(
+                heu_id="h1",
+                timestamp_ns=100,
+                boundary_layer=BoundaryLayer.APPLICATION_LOG,
+                source_component="svc_a",
+                source_instance="a1",
+                payload={},
+                phase_vector=np.zeros(8),
+            )
+        ]
 
         mock_result = SolverResult(
-            x=np.array([0.5]), success=True, message="ok", iterations=10,
-            objective_value=0.1, data_term=0.05, entropy_term=0.02,
-            temporal_term=0.01, physics_term=0.01, sparsity_term=0.0,
-            gradient_norm=0.01, constraint_violation=0.0, boundary_residual=0.1
+            x=np.array([0.5]),
+            success=True,
+            message="ok",
+            iterations=10,
+            objective_value=0.1,
+            data_term=0.05,
+            entropy_term=0.02,
+            temporal_term=0.01,
+            physics_term=0.01,
+            sparsity_term=0.0,
+            gradient_norm=0.01,
+            constraint_violation=0.0,
+            boundary_residual=0.1,
         )
 
-        mock_recon = HolographicReconstruction(incident_id="test", reconstruction_timestamp_ns=0, time_window_ns=(0, 100), overall_fidelity=0.9)
+        mock_recon = HolographicReconstruction(
+            incident_id="test",
+            reconstruction_timestamp_ns=0,
+            time_window_ns=(0, 100),
+            overall_fidelity=0.9,
+        )
 
         scale_result = ScaleReconstruction(
             scale=ReconstructionScale.INCIDENT,

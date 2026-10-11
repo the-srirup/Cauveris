@@ -49,9 +49,15 @@ export class CausalForceSimulation {
     this.stop();
     this.nodes = nodes.map((n) => ({
       ...n,
-      x: n.position.x || (Math.random() - 0.5) * 100,
-      y: n.position.y || (Math.random() - 0.5) * 100,
-      z: n.position.z || 0,
+      // Deep-clone position: a shallow spread shares the same object with
+      // the caller's (React) state, so the tick handler below would mutate
+      // the caller's state in place.
+      position: { x: n.position.x, y: n.position.y, z: n.position.z },
+      // Number.isFinite, not truthiness — legitimate coordinates of 0 were
+      // re-randomized on every init.
+      x: Number.isFinite(n.position.x) ? n.position.x : (Math.random() - 0.5) * 100,
+      y: Number.isFinite(n.position.y) ? n.position.y : (Math.random() - 0.5) * 100,
+      z: Number.isFinite(n.position.z) ? n.position.z : 0,
     }));
 
     // Clone links to prevent mutations

@@ -1,6 +1,7 @@
 """
 Unit tests for Holographic Causal Kernels - Phase 2.
 """
+
 import pytest
 import numpy as np
 
@@ -11,7 +12,12 @@ from cauveris.holographic.heu_kernel import (
     CrossPropagationKernel,
     build_causal_kernels,
 )
-from cauveris.holographic.topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
+from cauveris.holographic.topology import (
+    SystemTopology,
+    ComponentInfo,
+    ResourceCapacity,
+    CausalEdge,
+)
 
 
 class TestKernelConfig:
@@ -25,11 +31,7 @@ class TestKernelConfig:
         assert config.normalization == "l1"
 
     def test_custom(self):
-        config = KernelConfig(
-            time_step_ns=500_000,
-            decay_type="gamma",
-            normalization="l2"
-        )
+        config = KernelConfig(time_step_ns=500_000, decay_type="gamma", normalization="l2")
         assert config.time_step_ns == 500_000
         assert config.decay_type == "gamma"
 
@@ -77,23 +79,25 @@ class TestCausalKernelBuilder:
 
     def setup_method(self):
         self.topo = SystemTopology()
-        self.topo.add_component(ComponentInfo(
-            name="svc_a",
-            capacity=ResourceCapacity(cpu_cores=4.0),
-            boundary_layers=["application_log", "distributed_trace", "metrics_export"]
-        ))
-        self.topo.add_component(ComponentInfo(
-            name="svc_b",
-            capacity=ResourceCapacity(cpu_cores=2.0),
-            boundary_layers=["application_log", "metrics_export"]
-        ))
-        self.topo.add_causal_edge(CausalEdge(
-            source="svc_a",
-            target="svc_b",
-            latency_ms=5.0,
-            edge_type="rpc",
-            queue_depth=2
-        ))
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_a",
+                capacity=ResourceCapacity(cpu_cores=4.0),
+                boundary_layers=["application_log", "distributed_trace", "metrics_export"],
+            )
+        )
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_b",
+                capacity=ResourceCapacity(cpu_cores=2.0),
+                boundary_layers=["application_log", "metrics_export"],
+            )
+        )
+        self.topo.add_causal_edge(
+            CausalEdge(
+                source="svc_a", target="svc_b", latency_ms=5.0, edge_type="rpc", queue_depth=2
+            )
+        )
 
     def test_build_all_kernels(self):
         config = KernelConfig(max_kernel_time_ns=1_000_000_000)  # 1s for faster test
@@ -145,7 +149,7 @@ class TestCausalKernelBuilder:
         K = builder.build_kernel_matrix(
             components=["svc_a", "svc_b"],
             layers=["application_log", "metrics_export"],
-            time_horizon_ns=100_000_000
+            time_horizon_ns=100_000_000,
         )
         # (n_components * n_layers, n_components, n_time_steps)
         expected_time = 100_000_000 // config.time_step_ns
@@ -171,7 +175,9 @@ class TestCausalKernelBuilder:
             builder = CausalKernelBuilder(self.topo, config)
             builder.build_all_kernels()
             kernel = builder.get_local_kernel("svc_a", "application_log")
-            assert np.allclose(np.trapezoid(kernel.kernel_values, kernel.time_axis_ns), 1.0, atol=0.1)
+            assert np.allclose(
+                np.trapezoid(kernel.kernel_values, kernel.time_axis_ns), 1.0, atol=0.1
+            )
 
 
 class TestBuildCausalKernels:
@@ -186,11 +192,19 @@ class TestBuildCausalKernels:
         kernels = build_causal_kernels(topo)
         assert "local" in kernels
         assert "cross" in kernels
-        assert len(kernels["local"]) == 2  # svc_a and svc_b (each has application_log layer by default)
+        assert (
+            len(kernels["local"]) == 2
+        )  # svc_a and svc_b (each has application_log layer by default)
 
     def test_with_config(self):
         topo = SystemTopology()
-        topo.add_component(ComponentInfo(name="svc_a", capacity=ResourceCapacity(cpu_cores=8.0), boundary_layers=["application_log"]))
+        topo.add_component(
+            ComponentInfo(
+                name="svc_a",
+                capacity=ResourceCapacity(cpu_cores=8.0),
+                boundary_layers=["application_log"],
+            )
+        )
 
         config = KernelConfig(decay_type="gamma")
         kernels = build_causal_kernels(topo, config)

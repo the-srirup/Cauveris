@@ -6,6 +6,7 @@ Thresholds are read from the incident bundle's real configuration files
 analyzer reasons against the same budgets the robot actually enforces rather
 than against hard-coded constants.
 """
+
 from __future__ import annotations
 
 import logging

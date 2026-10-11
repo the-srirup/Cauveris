@@ -26,8 +26,13 @@ export function useForceLayout(
     setIsConverged(false);
 
     sim.onTick((positions) => {
-      setNodes((prev) =>
-        prev.map((n) => {
+      // Build from the closure's initialNodes, NOT from `prev`: nodes usually
+      // arrive from a fetch AFTER mount, so the useState(initialNodes)
+      // snapshot is still [] and prev.map could never adopt the real nodes
+      // (the layout stayed empty forever). The closure matches the same
+      // effect run that seeded the simulation.
+      setNodes(
+        initialNodes.map((n) => {
           const pos = positions.get(n.id);
           if (!pos) return n;
           return {
@@ -49,6 +54,12 @@ export function useForceLayout(
 
     return () => {
       sim.stop();
+      // Drop the handle so `restart()` can't resurrect a torn-down
+      // simulation (after unmount it would keep ticking and firing
+      // setNodes on a dead component forever).
+      if (simRef.current === sim) {
+        simRef.current = null;
+      }
     };
   }, [initialNodes, initialLinks]);
 

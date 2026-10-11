@@ -147,10 +147,22 @@ export class PhaseRetrievalEngine {
         if (Math.abs(metrics.mse - prevLoss) < 1e-5) {
           stagnationCounter++;
           if (stagnationCounter > 4 && iter < totalIter - 30) {
-            // Slight phase shakeup to escape saddle point
+            // Saddle-point shakeup. The old version perturbed
+            // `this.currentPhase` outside the support — but the loop only
+            // reads currentPhase once at init and only writes it INSIDE the
+            // support, so that write was dead storage. Rotate the LIVE
+            // object-domain estimate outside the support instead (the HIO
+            // feedback keeps evolving out there); rotating its phase by a
+            // random ±0.25 rad is the escape kick.
             for (let i = 0; i < total; i++) {
               if (supportMask[i] < 0.5) {
-                this.currentPhase[i] += (Math.random() - 0.5) * 0.5;
+                const delta = (Math.random() - 0.5) * 0.5;
+                const cos = Math.cos(delta);
+                const sin = Math.sin(delta);
+                const re = objectReal[i];
+                const im = objectImag[i];
+                objectReal[i] = re * cos - im * sin;
+                objectImag[i] = re * sin + im * cos;
               }
             }
             stagnationCounter = 0;
@@ -166,6 +178,12 @@ export class PhaseRetrievalEngine {
             iterations: iter + 1,
           });
         }
+
+        // Cooperative yield: runRetrieval is async and each iteration runs
+        // three N x N FFTs, so without yielding the main-thread fallback
+        // blocks paint and input for the whole schedule. (The worker path
+        // is unaffected — this only breathes there between messages.)
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
     }
 

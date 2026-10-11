@@ -4,6 +4,7 @@ System Topology for Holographic Reconstruction.
 Builds the causal graph of services, dependencies, and capacities from
 incident bundle configuration files (deployment manifests, robot_params.yaml, etc.).
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 @dataclass(slots=True)
 class ResourceCapacity:
     """Resource capacity for a component."""
+
     cpu_cores: float = 4.0
     memory_gb: float = 8.0
     network_gbps: float = 1.0
@@ -39,6 +41,7 @@ class ComponentInfo:
     """
     Information about a service/component in the system.
     """
+
     name: str
     instance_ids: List[str] = field(default_factory=list)
     component_type: str = "service"  # service, database, queue, gateway, etc.
@@ -85,11 +88,12 @@ class CausalEdge:
     Represents a known or inferred causal relationship where state
     changes in source propagate to target.
     """
+
     source: str
     target: str
     edge_type: str = "rpc"  # rpc, topic, db, cache, filesystem
     latency_ms: float = 5.0  # Expected propagation latency
-    queue_depth: int = 0     # Typical queue depth
+    queue_depth: int = 0  # Typical queue depth
     confidence: float = 0.8  # Confidence in this edge (0-1)
     bidirectional: bool = False
 
@@ -131,7 +135,9 @@ class SystemTopology:
         self._capacities[component.name] = component.capacity
         for instance in component.instance_ids:
             self._component_by_instance[instance] = component.name
-        logger.debug(f"Added component: {component.name} with {len(component.instance_ids)} instances")
+        logger.debug(
+            f"Added component: {component.name} with {len(component.instance_ids)} instances"
+        )
 
     def add_causal_edge(self, edge: CausalEdge) -> None:
         """Add a causal edge to the topology."""
@@ -287,7 +293,9 @@ class SystemTopology:
         # 4. Infer causal edges from topology
         topology._infer_causal_edges()
 
-        logger.info(f"Built topology with {len(topology.components)} components, {len(topology.causal_edges)} causal edges")
+        logger.info(
+            f"Built topology with {len(topology.components)} components, {len(topology.causal_edges)} causal edges"
+        )
         return topology
 
     def _load_deployments(self, bundle_path: Path) -> None:
@@ -300,12 +308,16 @@ class SystemTopology:
         for deploy_file in deploy_dir.glob("*.json"):
             try:
                 import json
+
                 with open(deploy_file, "r") as f:
                     deploy = json.load(f)
 
                 component_name = deploy.get("service_name", deploy.get("name", deploy_file.stem))
                 instances = deploy.get("instances", [])
-                instance_ids = [inst.get("instance_id", f"{component_name}-{i}") for i, inst in enumerate(instances)]
+                instance_ids = [
+                    inst.get("instance_id", f"{component_name}-{i}")
+                    for i, inst in enumerate(instances)
+                ]
 
                 component = ComponentInfo(
                     name=component_name,
@@ -388,11 +400,14 @@ class SystemTopology:
                     self.components[service_name].protocol = svc_config.get("protocol", "grpc")
 
                     # Boundary layers this service exports
-                    self.components[service_name].boundary_layers = svc_config.get("exports", [
-                        "application_log",
-                        "metrics_export",
-                        "distributed_trace",
-                    ])
+                    self.components[service_name].boundary_layers = svc_config.get(
+                        "exports",
+                        [
+                            "application_log",
+                            "metrics_export",
+                            "distributed_trace",
+                        ],
+                    )
 
         except Exception as e:
             logger.error(f"Failed to load inference config: {e}")
@@ -420,13 +435,15 @@ class SystemTopology:
 
         for src, tgt, edge_type, latency in service_pairs:
             if src in self.components and tgt in self.components:
-                self.add_causal_edge(CausalEdge(
-                    source=src,
-                    target=tgt,
-                    edge_type=edge_type,
-                    latency_ms=latency,
-                    confidence=0.8,
-                ))
+                self.add_causal_edge(
+                    CausalEdge(
+                        source=src,
+                        target=tgt,
+                        edge_type=edge_type,
+                        latency_ms=latency,
+                        confidence=0.8,
+                    )
+                )
 
         # Add edges from observed deployments (deployment -> service)
         for comp_name, comp in self.components.items():
@@ -456,7 +473,11 @@ def build_topology_from_timeline(
         attributes = event.get("attributes", {})
 
         # Identify component from attributes (check OTel standard attributes)
-        component = attributes.get("service") or attributes.get("component") or attributes.get("service.name")
+        component = (
+            attributes.get("service")
+            or attributes.get("component")
+            or attributes.get("service.name")
+        )
         instance = attributes.get("instance") or attributes.get("host") or "unknown"
 
         if component:
@@ -489,13 +510,15 @@ def build_topology_from_timeline(
     # Add inferred edges
     for src, tgt in edges_found:
         if src in topology.components and tgt in topology.components:
-            topology.add_causal_edge(CausalEdge(
-                source=src,
-                target=tgt,
-                edge_type="rpc",
-                latency_ms=5.0,
-                confidence=0.6,  # Lower confidence for inferred edges
-            ))
+            topology.add_causal_edge(
+                CausalEdge(
+                    source=src,
+                    target=tgt,
+                    edge_type="rpc",
+                    latency_ms=5.0,
+                    confidence=0.6,  # Lower confidence for inferred edges
+                )
+            )
 
     return topology
 

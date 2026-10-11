@@ -78,9 +78,7 @@ class TestCounterfactualHolographer:
             target_component="svc_0",
             parameters={"scale_factor": 4.0},
         )
-        result = holographer.simulate(
-            analysis.reconstruction, iv, analysis.time_window_ns
-        )
+        result = holographer.simulate(analysis.reconstruction, iv, analysis.time_window_ns)
         assert isinstance(result, CounterfactualResult)
         assert result.intervention is iv
 
@@ -108,9 +106,7 @@ class TestCounterfactualHolographer:
             target_component="svc_0",
             parameters={"scale_factor": 4.0},
         )
-        result = holographer.simulate(
-            analysis.reconstruction, iv, analysis.time_window_ns
-        )
+        result = holographer.simulate(analysis.reconstruction, iv, analysis.time_window_ns)
         original = result.original_reconstruction.reconstructed_services["svc_0"]
         intervened = result.intervened_reconstruction.reconstructed_services["svc_0"]
         assert intervened.cpu_usage <= original.cpu_usage
@@ -121,9 +117,7 @@ class TestCounterfactualHolographer:
             target_component="svc_0",
             parameters={"scale_factor": 4.0},
         )
-        result = holographer.simulate(
-            analysis.reconstruction, iv, analysis.time_window_ns
-        )
+        result = holographer.simulate(analysis.reconstruction, iv, analysis.time_window_ns)
         assert result.fidelity_improvement > 0
 
     def test_restart_reduces_error_rate(self, holographer, analysis):
@@ -131,9 +125,7 @@ class TestCounterfactualHolographer:
             intervention_type=InterventionType.RESTART_SERVICE,
             target_component="svc_2",
         )
-        result = holographer.simulate(
-            analysis.reconstruction, iv, analysis.time_window_ns
-        )
+        result = holographer.simulate(analysis.reconstruction, iv, analysis.time_window_ns)
         intervened = result.intervened_reconstruction.reconstructed_services["svc_2"]
         assert intervened.error_rate <= 0.01
 
@@ -144,9 +136,7 @@ class TestCounterfactualHolographer:
             target_component=target,
             parameters={"reduction_factor": 0.5},
         )
-        result = holographer.simulate(
-            analysis.reconstruction, iv, analysis.time_window_ns
-        )
+        result = holographer.simulate(analysis.reconstruction, iv, analysis.time_window_ns)
         original = result.original_reconstruction.reconstructed_services[target]
         intervened = result.intervened_reconstruction.reconstructed_services[target]
         assert intervened.cpu_usage == pytest.approx(original.cpu_usage * 0.5)
@@ -156,9 +146,7 @@ class TestCounterfactualHolographer:
             intervention_type=InterventionType.RESTART_SERVICE,
             target_component="does_not_exist",
         )
-        result = holographer.simulate(
-            analysis.reconstruction, iv, analysis.time_window_ns
-        )
+        result = holographer.simulate(analysis.reconstruction, iv, analysis.time_window_ns)
         assert result.fidelity_improvement == 0.0
 
     def test_network_capacity_updates_edges(self, holographer, analysis):
@@ -168,15 +156,10 @@ class TestCounterfactualHolographer:
             target_component=target,
             parameters={"bandwidth_factor": 2.0},
         )
-        result = holographer.simulate(
-            analysis.reconstruction, iv, analysis.time_window_ns
-        )
+        result = holographer.simulate(analysis.reconstruction, iv, analysis.time_window_ns)
         net = result.intervened_reconstruction.reconstructed_network
         if net and net.edges:
-            touched = [
-                e for (s, d), e in net.edges.items()
-                if s == target or d == target
-            ]
+            touched = [e for (s, d), e in net.edges.items() if s == target or d == target]
             for edge in touched:
                 assert edge.bandwidth_mbps > 0
 
@@ -185,24 +168,18 @@ class TestCounterfactualHolographer:
             intervention_type=InterventionType.RESTART_SERVICE,
             target_component="svc_0",
         )
-        result = holographer.simulate(
-            analysis.reconstruction, iv, analysis.time_window_ns
-        )
+        result = holographer.simulate(analysis.reconstruction, iv, analysis.time_window_ns)
         pb = result.predicted_boundary
         assert "service_predictions" in pb
         assert "network_predictions" in pb
-        assert len(pb["service_predictions"]) == len(
-            analysis.reconstruction.reconstructed_services
-        )
+        assert len(pb["service_predictions"]) == len(analysis.reconstruction.reconstructed_services)
 
     def test_cost_and_risk_bounded(self, holographer, analysis):
         iv = Intervention(
             intervention_type=InterventionType.RESTART_SERVICE,
             target_component="svc_0",
         )
-        result = holographer.simulate(
-            analysis.reconstruction, iv, analysis.time_window_ns
-        )
+        result = holographer.simulate(analysis.reconstruction, iv, analysis.time_window_ns)
         assert 0.0 <= result.cost_estimate <= 100.0
         assert 0.0 <= result.risk_score <= 1.0
 
@@ -225,10 +202,7 @@ class TestCounterfactualHolographer:
         recs = holographer.get_recommendations(rollout, max_cost=100, max_risk=1.0)
         assert len(recs) > 0
         # Verify ordering is monotonically non-increasing by score
-        scores = [
-            r.fidelity_improvement / (r.cost_estimate * r.risk_score + 1e-6)
-            for _, r in recs
-        ]
+        scores = [r.fidelity_improvement / (r.cost_estimate * r.risk_score + 1e-6) for _, r in recs]
         assert scores == sorted(scores, reverse=True)
 
     def test_recommendations_respect_filters(self, holographer, analysis):

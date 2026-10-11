@@ -7,6 +7,7 @@ Production-grade job queue with:
 - Fairness policies (FIFO, priority lanes, per-tenant isolation)
 - Dead job detection and recovery
 """
+
 import asyncio
 import time
 import uuid
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class JobPriority(IntEnum):
     """Job priority levels (higher = more urgent)."""
+
     LOW = 0
     NORMAL = 50
     HIGH = 100
@@ -30,6 +32,7 @@ class JobPriority(IntEnum):
 
 class JobStatus(str, Enum):
     """Job lifecycle states."""
+
     QUEUED = "queued"
     PROCESSING = "processing"
     COMPLETED = "completed"
@@ -63,6 +66,7 @@ class Job:
         error: Error message on failure
         attempts: List of attempt timestamps
     """
+
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     type: str = ""
     payload: Dict[str, Any] = field(default_factory=dict)
@@ -229,10 +233,7 @@ class InMemoryQueueBackend(QueueBackend):
         if tenant_id:
             q = self._get_queue(tenant_id)
             return sum(len(jobs) for jobs in q.values())
-        return sum(
-            sum(len(jobs) for jobs in q.values())
-            for q in self._queues.values()
-        )
+        return sum(sum(len(jobs) for jobs in q.values()) for q in self._queues.values())
 
     async def enqueue(self, job: Job) -> bool:
         # Check expiration
@@ -250,7 +251,9 @@ class InMemoryQueueBackend(QueueBackend):
             # Check capacity
             if self._total_queued(tenant_id) >= self._max_size:
                 self._stats["rejected_full"] += 1
-                logger.warning(f"Queue full for tenant {tenant_id or 'default'}, rejecting job {job.id}")
+                logger.warning(
+                    f"Queue full for tenant {tenant_id or 'default'}, rejecting job {job.id}"
+                )
                 return False
 
             # Add to appropriate priority queue
@@ -366,7 +369,9 @@ class InMemoryQueueBackend(QueueBackend):
         if can_retry:
             job.status = JobStatus.FAILED
             await self.requeue(job)
-            logger.debug(f"Job {job_id} failed, requeued for retry ({job.retry_count}/{job.max_retries})")
+            logger.debug(
+                f"Job {job_id} failed, requeued for retry ({job.retry_count}/{job.max_retries})"
+            )
         else:
             job.status = JobStatus.DEAD_LETTER
             job.completed_at = time.time()
@@ -506,7 +511,12 @@ class JobQueue:
         start_time = time.time()
         while time.time() - start_time < timeout:
             current = await self._backend.get_job(job.id)
-            if current and current.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.DEAD_LETTER, JobStatus.CANCELLED):
+            if current and current.status in (
+                JobStatus.COMPLETED,
+                JobStatus.FAILED,
+                JobStatus.DEAD_LETTER,
+                JobStatus.CANCELLED,
+            ):
                 return current
             await asyncio.sleep(0.5)
 
@@ -553,11 +563,15 @@ class JobQueue:
 
         while not self._shutdown_event.is_set():
             try:
-                jobs = await self._backend.dequeue(self._worker_id, types, self._max_concurrent_jobs)
+                jobs = await self._backend.dequeue(
+                    self._worker_id, types, self._max_concurrent_jobs
+                )
                 if not jobs:
                     # No jobs, wait a bit
                     try:
-                        await asyncio.wait_for(self._shutdown_event.wait(), timeout=self._poll_interval)
+                        await asyncio.wait_for(
+                            self._shutdown_event.wait(), timeout=self._poll_interval
+                        )
                     except asyncio.TimeoutError:
                         pass  # Normal, continue loop
                     continue
@@ -586,6 +600,7 @@ class JobQueue:
 
 class QueueFullError(Exception):
     """Raised when queue is at capacity."""
+
     pass
 
 
@@ -598,7 +613,7 @@ def init_job_queue(
     backend: str = "memory",
     max_size: int = 10000,
     default_ttl: int = 3600,
-    worker_id: Optional[str] = None
+    worker_id: Optional[str] = None,
 ) -> JobQueue:
     """Initialize the global job queue."""
     global _job_queue_backend, _job_queue

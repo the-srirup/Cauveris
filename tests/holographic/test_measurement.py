@@ -1,6 +1,7 @@
 """
 Unit tests for Holographic Measurement System - Phase 2.
 """
+
 import pytest
 import numpy as np
 import scipy.sparse as sp
@@ -12,8 +13,17 @@ from cauveris.holographic.measurement import (
     StateDimension,
     MeasurementRow,
 )
-from cauveris.holographic.topology import SystemTopology, ComponentInfo, ResourceCapacity, CausalEdge
-from cauveris.holographic.heu import HolographicEvidenceUnit, BoundaryLayer, convert_timeline_to_heus
+from cauveris.holographic.topology import (
+    SystemTopology,
+    ComponentInfo,
+    ResourceCapacity,
+    CausalEdge,
+)
+from cauveris.holographic.heu import (
+    HolographicEvidenceUnit,
+    BoundaryLayer,
+    convert_timeline_to_heus,
+)
 from cauveris.holographic.heu_kernel import CausalKernelBuilder
 
 
@@ -98,16 +108,20 @@ class TestMeasurementSystemBuilder:
 
     def setup_method(self):
         self.topo = SystemTopology()
-        self.topo.add_component(ComponentInfo(
-            name="svc_a",
-            capacity=ResourceCapacity(cpu_cores=4.0),
-            boundary_layers=["application_log", "metrics_export"]
-        ))
-        self.topo.add_component(ComponentInfo(
-            name="svc_b",
-            capacity=ResourceCapacity(cpu_cores=2.0),
-            boundary_layers=["application_log"]
-        ))
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_a",
+                capacity=ResourceCapacity(cpu_cores=4.0),
+                boundary_layers=["application_log", "metrics_export"],
+            )
+        )
+        self.topo.add_component(
+            ComponentInfo(
+                name="svc_b",
+                capacity=ResourceCapacity(cpu_cores=2.0),
+                boundary_layers=["application_log"],
+            )
+        )
         self.topo.add_causal_edge(CausalEdge(source="svc_a", target="svc_b", latency_ms=5.0))
 
         self.kernel_builder = CausalKernelBuilder(self.topo)
@@ -175,13 +189,27 @@ class TestBuildMeasurementSystem:
 
     def test_build(self):
         topo = SystemTopology()
-        topo.add_component(ComponentInfo(name="svc_a", capacity=ResourceCapacity(), boundary_layers=["application_log"]))
-        topo.add_component(ComponentInfo(name="svc_b", capacity=ResourceCapacity(), boundary_layers=["application_log"]))
+        topo.add_component(
+            ComponentInfo(
+                name="svc_a", capacity=ResourceCapacity(), boundary_layers=["application_log"]
+            )
+        )
+        topo.add_component(
+            ComponentInfo(
+                name="svc_b", capacity=ResourceCapacity(), boundary_layers=["application_log"]
+            )
+        )
         topo.add_causal_edge(CausalEdge(source="svc_a", target="svc_b"))
 
         timeline = [
-            {"event_id": "1", "timestamp_ns": 100_000_000, "source_type": "jsonl_log", "message": "High cpu usage",
-             "attributes": {"service": "svc_a", "cpu_usage": 0.5}, "status": "ok"},
+            {
+                "event_id": "1",
+                "timestamp_ns": 100_000_000,
+                "source_type": "jsonl_log",
+                "message": "High cpu usage",
+                "attributes": {"service": "svc_a", "cpu_usage": 0.5},
+                "status": "ok",
+            },
         ]
         heus = convert_timeline_to_heus(timeline, {}, 1_000_000_000)
 

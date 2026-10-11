@@ -118,7 +118,9 @@ def get_correlation_id() -> str:
     """Get the current correlation ID, generating one if needed."""
     global _correlation_id
     if not _correlation_id:
-        _correlation_id = f"corr-{int(datetime.now(timezone.utc).timestamp())}-{uuid.uuid4().hex[:8]}"
+        _correlation_id = (
+            f"corr-{int(datetime.now(timezone.utc).timestamp())}-{uuid.uuid4().hex[:8]}"
+        )
     return _correlation_id
 
 
@@ -191,40 +193,51 @@ class ErrorCodes:
 
 # Factory functions for common errors
 
-def network_error(message: str = "Network request failed", cause: Optional[Exception] = None) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code=ErrorCodes.NETWORK_ERROR,
-        message=message,
-        severity=ErrorSeverity.HIGH,
-        retryable=True,
-        retry_after_ms=5000,
-        cause=cause,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, "Check your internet connection", "retry"),
-            TroubleshootingStep(2, "Verify the backend server is running on port 8000", "check_backend"),
-            TroubleshootingStep(3, "Try refreshing the page", "refresh"),
-            TroubleshootingStep(4, "Check browser console for detailed error", "check_console"),
-        ],
-    ))
+
+def network_error(
+    message: str = "Network request failed", cause: Optional[Exception] = None
+) -> CauverisError:
+    return CauverisError(
+        CauverisErrorConfig(
+            code=ErrorCodes.NETWORK_ERROR,
+            message=message,
+            severity=ErrorSeverity.HIGH,
+            retryable=True,
+            retry_after_ms=5000,
+            cause=cause,
+            troubleshooting_steps=[
+                TroubleshootingStep(1, "Check your internet connection", "retry"),
+                TroubleshootingStep(
+                    2, "Verify the backend server is running on port 8000", "check_backend"
+                ),
+                TroubleshootingStep(3, "Try refreshing the page", "refresh"),
+                TroubleshootingStep(4, "Check browser console for detailed error", "check_console"),
+            ],
+        )
+    )
 
 
 def timeout_error(endpoint: str, timeout_ms: int = 15000) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code=ErrorCodes.TIMEOUT,
-        message=f"Request to {endpoint} timed out after {timeout_ms}ms",
-        severity=ErrorSeverity.HIGH,
-        context={"endpoint": endpoint, "timeout_ms": timeout_ms},
-        retryable=True,
-        retry_after_ms=10000,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, "The backend may be under heavy load", "retry"),
-            TroubleshootingStep(2, "Try again in a few seconds", "retry"),
-            TroubleshootingStep(3, "If persistent, check backend performance", "check_backend"),
-        ],
-    ))
+    return CauverisError(
+        CauverisErrorConfig(
+            code=ErrorCodes.TIMEOUT,
+            message=f"Request to {endpoint} timed out after {timeout_ms}ms",
+            severity=ErrorSeverity.HIGH,
+            context={"endpoint": endpoint, "timeout_ms": timeout_ms},
+            retryable=True,
+            retry_after_ms=10000,
+            troubleshooting_steps=[
+                TroubleshootingStep(1, "The backend may be under heavy load", "retry"),
+                TroubleshootingStep(2, "Try again in a few seconds", "retry"),
+                TroubleshootingStep(3, "If persistent, check backend performance", "check_backend"),
+            ],
+        )
+    )
 
 
-def api_error(status_code: int, message: str, endpoint: str, cause: Optional[Exception] = None) -> CauverisError:
+def api_error(
+    status_code: int, message: str, endpoint: str, cause: Optional[Exception] = None
+) -> CauverisError:
     code_map = {
         400: ErrorCodes.API_VALIDATION_ERROR,
         401: ErrorCodes.API_UNAUTHORIZED,
@@ -243,180 +256,242 @@ def api_error(status_code: int, message: str, endpoint: str, cause: Optional[Exc
     troubleshooting = [TroubleshootingStep(1, f"API returned {status_code}: {message}")]
 
     if status_code == 401:
-        troubleshooting.append(TroubleshootingStep(2, "Authentication required - please log in again", "login"))
+        troubleshooting.append(
+            TroubleshootingStep(2, "Authentication required - please log in again", "login")
+        )
     elif status_code == 403:
-        troubleshooting.append(TroubleshootingStep(2, "Insufficient permissions for this operation", "contact_support"))
+        troubleshooting.append(
+            TroubleshootingStep(2, "Insufficient permissions for this operation", "contact_support")
+        )
     elif status_code == 404:
-        troubleshooting.append(TroubleshootingStep(2, "The requested resource was not found", "refresh"))
+        troubleshooting.append(
+            TroubleshootingStep(2, "The requested resource was not found", "refresh")
+        )
     elif status_code == 429:
-        troubleshooting.append(TroubleshootingStep(2, "Rate limited - wait before retrying", "wait_retry"))
-        troubleshooting.append(TroubleshootingStep(3, "Reduce request frequency", "reduce_frequency"))
+        troubleshooting.append(
+            TroubleshootingStep(2, "Rate limited - wait before retrying", "wait_retry")
+        )
+        troubleshooting.append(
+            TroubleshootingStep(3, "Reduce request frequency", "reduce_frequency")
+        )
     elif status_code >= 500:
-        troubleshooting.append(TroubleshootingStep(2, "Backend server error - try again later", "retry"))
-        troubleshooting.append(TroubleshootingStep(3, "Check backend logs for details", "check_backend"))
+        troubleshooting.append(
+            TroubleshootingStep(2, "Backend server error - try again later", "retry")
+        )
+        troubleshooting.append(
+            TroubleshootingStep(3, "Check backend logs for details", "check_backend")
+        )
 
-    return CauverisError(CauverisErrorConfig(
-        code=code,
-        message=message,
-        severity=ErrorSeverity.HIGH if status_code >= 500 else ErrorSeverity.MEDIUM,
-        context={"endpoint": endpoint, "status_code": status_code},
-        retryable=retryable,
-        retry_after_ms=30000 if status_code == 429 else 5000,
-        cause=cause,
-        status_code=status_code,
-        troubleshooting_steps=troubleshooting,
-    ))
+    return CauverisError(
+        CauverisErrorConfig(
+            code=code,
+            message=message,
+            severity=ErrorSeverity.HIGH if status_code >= 500 else ErrorSeverity.MEDIUM,
+            context={"endpoint": endpoint, "status_code": status_code},
+            retryable=retryable,
+            retry_after_ms=30000 if status_code == 429 else 5000,
+            cause=cause,
+            status_code=status_code,
+            troubleshooting_steps=troubleshooting,
+        )
+    )
 
 
 def incident_not_found(incident_id: str) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code=ErrorCodes.INCIDENT_NOT_FOUND,
-        message=f"Incident {incident_id} not found",
-        severity=ErrorSeverity.MEDIUM,
-        context={"incident_id": incident_id},
-        retryable=False,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, "Verify the incident ID is correct"),
-            TroubleshootingStep(2, "Check if the incident was deleted or expired"),
-            TroubleshootingStep(3, "Try loading a different incident", "navigate_incidents"),
-        ],
-    ))
+    return CauverisError(
+        CauverisErrorConfig(
+            code=ErrorCodes.INCIDENT_NOT_FOUND,
+            message=f"Incident {incident_id} not found",
+            severity=ErrorSeverity.MEDIUM,
+            context={"incident_id": incident_id},
+            retryable=False,
+            troubleshooting_steps=[
+                TroubleshootingStep(1, "Verify the incident ID is correct"),
+                TroubleshootingStep(2, "Check if the incident was deleted or expired"),
+                TroubleshootingStep(3, "Try loading a different incident", "navigate_incidents"),
+            ],
+        )
+    )
 
 
-def pipeline_failed(stage_name: str, incident_id: str, cause: Optional[Exception] = None) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code=ErrorCodes.PIPELINE_FAILED,
-        message=f"Pipeline failed at stage: {stage_name}",
-        severity=ErrorSeverity.HIGH,
-        context={"stage_name": stage_name, "incident_id": incident_id},
-        retryable=True,
-        retry_after_ms=30000,
-        cause=cause,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, f'Pipeline stage "{stage_name}" encountered an error'),
-            TroubleshootingStep(2, "Check the pipeline progress panel for details", "check_progress"),
-            TroubleshootingStep(3, "Try resetting the investigation and re-running", "reset_pipeline"),
-            TroubleshootingStep(4, "If persistent, check backend logs", "check_backend"),
-        ],
-    ))
+def pipeline_failed(
+    stage_name: str, incident_id: str, cause: Optional[Exception] = None
+) -> CauverisError:
+    return CauverisError(
+        CauverisErrorConfig(
+            code=ErrorCodes.PIPELINE_FAILED,
+            message=f"Pipeline failed at stage: {stage_name}",
+            severity=ErrorSeverity.HIGH,
+            context={"stage_name": stage_name, "incident_id": incident_id},
+            retryable=True,
+            retry_after_ms=30000,
+            cause=cause,
+            troubleshooting_steps=[
+                TroubleshootingStep(1, f'Pipeline stage "{stage_name}" encountered an error'),
+                TroubleshootingStep(
+                    2, "Check the pipeline progress panel for details", "check_progress"
+                ),
+                TroubleshootingStep(
+                    3, "Try resetting the investigation and re-running", "reset_pipeline"
+                ),
+                TroubleshootingStep(4, "If persistent, check backend logs", "check_backend"),
+            ],
+        )
+    )
 
 
-def evidence_upload_failed(filename: str, reason: str, cause: Optional[Exception] = None) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code=ErrorCodes.EVIDENCE_UPLOAD_FAILED,
-        message=f"Failed to upload {filename}: {reason}",
-        severity=ErrorSeverity.MEDIUM,
-        context={"filename": filename, "reason": reason},
-        retryable=True,
-        retry_after_ms=5000,
-        cause=cause,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, f'Upload failed for "{filename}"'),
-            TroubleshootingStep(2, f"Reason: {reason}"),
-            TroubleshootingStep(3, "Check file size and type are supported", "check_file"),
-            TroubleshootingStep(4, "Try uploading again", "retry"),
-        ],
-    ))
+def evidence_upload_failed(
+    filename: str, reason: str, cause: Optional[Exception] = None
+) -> CauverisError:
+    return CauverisError(
+        CauverisErrorConfig(
+            code=ErrorCodes.EVIDENCE_UPLOAD_FAILED,
+            message=f"Failed to upload {filename}: {reason}",
+            severity=ErrorSeverity.MEDIUM,
+            context={"filename": filename, "reason": reason},
+            retryable=True,
+            retry_after_ms=5000,
+            cause=cause,
+            troubleshooting_steps=[
+                TroubleshootingStep(1, f'Upload failed for "{filename}"'),
+                TroubleshootingStep(2, f"Reason: {reason}"),
+                TroubleshootingStep(3, "Check file size and type are supported", "check_file"),
+                TroubleshootingStep(4, "Try uploading again", "retry"),
+            ],
+        )
+    )
 
 
 def secrets_detected(incident_id: str, files: List[str]) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code=ErrorCodes.EVIDENCE_SECRETS_DETECTED,
-        message="Secrets detected in uploaded evidence - upload blocked",
-        severity=ErrorSeverity.CRITICAL,
-        context={"incident_id": incident_id, "files": files},
-        retryable=False,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, "Secrets (API keys, passwords, tokens) were detected in your evidence files"),
-            TroubleshootingStep(2, f"Affected files: {', '.join(files)}"),
-            TroubleshootingStep(3, "Remove secrets from files before re-uploading", "sanitize_files"),
-            TroubleshootingStep(4, "Use environment variables or secret managers instead", "best_practice"),
-        ],
-    ))
+    return CauverisError(
+        CauverisErrorConfig(
+            code=ErrorCodes.EVIDENCE_SECRETS_DETECTED,
+            message="Secrets detected in uploaded evidence - upload blocked",
+            severity=ErrorSeverity.CRITICAL,
+            context={"incident_id": incident_id, "files": files},
+            retryable=False,
+            troubleshooting_steps=[
+                TroubleshootingStep(
+                    1, "Secrets (API keys, passwords, tokens) were detected in your evidence files"
+                ),
+                TroubleshootingStep(2, f"Affected files: {', '.join(files)}"),
+                TroubleshootingStep(
+                    3, "Remove secrets from files before re-uploading", "sanitize_files"
+                ),
+                TroubleshootingStep(
+                    4, "Use environment variables or secret managers instead", "best_practice"
+                ),
+            ],
+        )
+    )
 
 
-def patch_apply_failed(patch_id: str, reason: str, cause: Optional[Exception] = None) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code=ErrorCodes.PATCH_APPLY_FAILED,
-        message=f"Failed to apply patch {patch_id}: {reason}",
-        severity=ErrorSeverity.HIGH,
-        context={"patch_id": patch_id, "reason": reason},
-        retryable=False,
-        cause=cause,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, f'Patch "{patch_id}" could not be applied'),
-            TroubleshootingStep(2, f"Reason: {reason}"),
-            TroubleshootingStep(3, "Check if target files have been modified", "check_files"),
-            TroubleshootingStep(4, "Try downloading the patch package and applying manually", "manual_apply"),
-        ],
-    ))
+def patch_apply_failed(
+    patch_id: str, reason: str, cause: Optional[Exception] = None
+) -> CauverisError:
+    return CauverisError(
+        CauverisErrorConfig(
+            code=ErrorCodes.PATCH_APPLY_FAILED,
+            message=f"Failed to apply patch {patch_id}: {reason}",
+            severity=ErrorSeverity.HIGH,
+            context={"patch_id": patch_id, "reason": reason},
+            retryable=False,
+            cause=cause,
+            troubleshooting_steps=[
+                TroubleshootingStep(1, f'Patch "{patch_id}" could not be applied'),
+                TroubleshootingStep(2, f"Reason: {reason}"),
+                TroubleshootingStep(3, "Check if target files have been modified", "check_files"),
+                TroubleshootingStep(
+                    4, "Try downloading the patch package and applying manually", "manual_apply"
+                ),
+            ],
+        )
+    )
 
 
 def patch_verification_failed(patch_id: str, failed_checks: List[str]) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code=ErrorCodes.PATCH_VERIFICATION_FAILED,
-        message=f"Patch {patch_id} failed verification checks",
-        severity=ErrorSeverity.HIGH,
-        context={"patch_id": patch_id, "failed_checks": failed_checks},
-        retryable=False,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, f'Patch "{patch_id}" did not pass all verification gates'),
-            TroubleshootingStep(2, f"Failed checks: {', '.join(failed_checks)}"),
-            TroubleshootingStep(3, "Review patch details in Patch Forge for more information", "view_patch"),
-            TroubleshootingStep(4, "Consider generating a new patch candidate", "generate_patch"),
-        ],
-    ))
+    return CauverisError(
+        CauverisErrorConfig(
+            code=ErrorCodes.PATCH_VERIFICATION_FAILED,
+            message=f"Patch {patch_id} failed verification checks",
+            severity=ErrorSeverity.HIGH,
+            context={"patch_id": patch_id, "failed_checks": failed_checks},
+            retryable=False,
+            troubleshooting_steps=[
+                TroubleshootingStep(1, f'Patch "{patch_id}" did not pass all verification gates'),
+                TroubleshootingStep(2, f"Failed checks: {', '.join(failed_checks)}"),
+                TroubleshootingStep(
+                    3, "Review patch details in Patch Forge for more information", "view_patch"
+                ),
+                TroubleshootingStep(
+                    4, "Consider generating a new patch candidate", "generate_patch"
+                ),
+            ],
+        )
+    )
 
 
 def model_unavailable(provider: str, cause: Optional[Exception] = None) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code=ErrorCodes.MODEL_UNAVAILABLE,
-        message=f"Model provider {provider} is unavailable",
-        severity=ErrorSeverity.HIGH,
-        context={"provider": provider},
-        retryable=True,
-        retry_after_ms=30000,
-        cause=cause,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, f'Model provider "{provider}" is not responding'),
-            TroubleshootingStep(2, "Check API credentials and network connectivity", "check_credentials"),
-            TroubleshootingStep(3, "Try switching to local fixture mode", "switch_mode"),
-            TroubleshootingStep(4, "Check provider status page for outages", "check_status"),
-        ],
-    ))
+    return CauverisError(
+        CauverisErrorConfig(
+            code=ErrorCodes.MODEL_UNAVAILABLE,
+            message=f"Model provider {provider} is unavailable",
+            severity=ErrorSeverity.HIGH,
+            context={"provider": provider},
+            retryable=True,
+            retry_after_ms=30000,
+            cause=cause,
+            troubleshooting_steps=[
+                TroubleshootingStep(1, f'Model provider "{provider}" is not responding'),
+                TroubleshootingStep(
+                    2, "Check API credentials and network connectivity", "check_credentials"
+                ),
+                TroubleshootingStep(3, "Try switching to local fixture mode", "switch_mode"),
+                TroubleshootingStep(4, "Check provider status page for outages", "check_status"),
+            ],
+        )
+    )
 
 
 def config_missing(key: str) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code=ErrorCodes.CONFIG_MISSING,
-        message=f"Required configuration missing: {key}",
-        severity=ErrorSeverity.HIGH,
-        context={"key": key},
-        retryable=False,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, f"Missing required configuration: {key}"),
-            TroubleshootingStep(2, "Check environment variables and .env files", "check_env"),
-            TroubleshootingStep(3, "Refer to documentation for required settings", "read_docs"),
-            TroubleshootingStep(4, "Restart application after fixing configuration", "restart"),
-        ],
-    ))
+    return CauverisError(
+        CauverisErrorConfig(
+            code=ErrorCodes.CONFIG_MISSING,
+            message=f"Required configuration missing: {key}",
+            severity=ErrorSeverity.HIGH,
+            context={"key": key},
+            retryable=False,
+            troubleshooting_steps=[
+                TroubleshootingStep(1, f"Missing required configuration: {key}"),
+                TroubleshootingStep(2, "Check environment variables and .env files", "check_env"),
+                TroubleshootingStep(3, "Refer to documentation for required settings", "read_docs"),
+                TroubleshootingStep(4, "Restart application after fixing configuration", "restart"),
+            ],
+        )
+    )
 
 
-def unknown_error(message: str, cause: Optional[Exception] = None, context: Optional[Dict[str, Any]] = None) -> CauverisError:
-    return CauverisError(CauverisErrorConfig(
-        code="UNKNOWN_ERROR",
-        message=message,
-        severity=ErrorSeverity.HIGH,
-        context=context or {},
-        retryable=False,
-        cause=cause,
-        troubleshooting_steps=[
-            TroubleshootingStep(1, "An unexpected error occurred"),
-            TroubleshootingStep(2, f"Details: {message}"),
-            TroubleshootingStep(3, "Try refreshing the page", "refresh"),
-            TroubleshootingStep(4, "If persistent, report this issue with the correlation ID", "report"),
-        ],
-    ))
+def unknown_error(
+    message: str, cause: Optional[Exception] = None, context: Optional[Dict[str, Any]] = None
+) -> CauverisError:
+    return CauverisError(
+        CauverisErrorConfig(
+            code="UNKNOWN_ERROR",
+            message=message,
+            severity=ErrorSeverity.HIGH,
+            context=context or {},
+            retryable=False,
+            cause=cause,
+            troubleshooting_steps=[
+                TroubleshootingStep(1, "An unexpected error occurred"),
+                TroubleshootingStep(2, f"Details: {message}"),
+                TroubleshootingStep(3, "Try refreshing the page", "refresh"),
+                TroubleshootingStep(
+                    4, "If persistent, report this issue with the correlation ID", "report"
+                ),
+            ],
+        )
+    )
 
 
 # Error handler utility for FastAPI
@@ -431,7 +506,7 @@ async def handle_api_error(_request, exc: Exception) -> JSONResponse:
             content={
                 "error": exc.to_dict(),
             },
-            headers={"X-Correlation-ID": correlation_id}
+            headers={"X-Correlation-ID": correlation_id},
         )
 
     if isinstance(exc, HTTPException):
@@ -442,7 +517,7 @@ async def handle_api_error(_request, exc: Exception) -> JSONResponse:
             content={
                 "error": cauveris_error.to_dict(),
             },
-            headers={"X-Correlation-ID": correlation_id}
+            headers={"X-Correlation-ID": correlation_id},
         )
 
     # Unknown error
@@ -452,7 +527,7 @@ async def handle_api_error(_request, exc: Exception) -> JSONResponse:
         content={
             "error": cauveris_error.to_dict(),
         },
-        headers={"X-Correlation-ID": correlation_id}
+        headers={"X-Correlation-ID": correlation_id},
     )
 
 
@@ -462,7 +537,7 @@ async def retry_with_backoff(
     max_retries: int = 3,
     base_delay_ms: int = 1000,
     max_delay_ms: int = 30000,
-    is_retryable: Callable = lambda e: isinstance(e, CauverisError) and e.retryable
+    is_retryable: Callable = lambda e: isinstance(e, CauverisError) and e.retryable,
 ):
     """Execute operation with exponential backoff retry logic."""
     last_error: Optional[Exception] = None
@@ -476,9 +551,7 @@ async def retry_with_backoff(
             if attempt == max_retries or not is_retryable(error):
                 raise
 
-            delay = min(base_delay_ms * (2 ** attempt), max_delay_ms)
+            delay = min(base_delay_ms * (2**attempt), max_delay_ms)
             await asyncio.sleep(delay / 1000.0)
 
     raise last_error if last_error else Exception("Unknown error in retry_with_backoff")
-
-

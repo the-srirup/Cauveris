@@ -1,6 +1,7 @@
 """
 State machine orchestrator for Cauveris incident processing pipeline.
 """
+
 import asyncio
 import logging
 from enum import Enum, auto
@@ -23,24 +24,26 @@ logger = logging.getLogger(__name__)
 
 class PipelineState(Enum):
     """States of the Cauveris processing pipeline."""
-    RECEIVED = auto()          # Incident bundle received
-    VALIDATING = auto()        # Validating evidence
-    NORMALIZING = auto()       # Normalizing timestamps and evidence
-    MAPPING = auto()           # Mapping evidence to source and runtime
-    HYPOTHESIZING = auto()     # Generating root-cause hypotheses
-    PLANNING = auto()          # Planning experiments
+
+    RECEIVED = auto()  # Incident bundle received
+    VALIDATING = auto()  # Validating evidence
+    NORMALIZING = auto()  # Normalizing timestamps and evidence
+    MAPPING = auto()  # Mapping evidence to source and runtime
+    HYPOTHESIZING = auto()  # Generating root-cause hypotheses
+    PLANNING = auto()  # Planning experiments
     RUNNING_BRANCHES = auto()  # Running experiment branches in sandboxes
-    SCORING = auto()           # Scoring experiments and ranking hypotheses
-    PATCH_FORGE = auto()       # Generating and verifying patch candidates
-    VERIFYING = auto()         # Running verification checks on patches
-    AWAITING_REVIEW = auto()   # Ready for human review
-    COMPLETED = auto()         # Processing complete
-    FAILED = auto()            # Processing failed
+    SCORING = auto()  # Scoring experiments and ranking hypotheses
+    PATCH_FORGE = auto()  # Generating and verifying patch candidates
+    VERIFYING = auto()  # Running verification checks on patches
+    AWAITING_REVIEW = auto()  # Ready for human review
+    COMPLETED = auto()  # Processing complete
+    FAILED = auto()  # Processing failed
 
 
 @dataclass
 class PipelineContext:
     """Context passed between pipeline stages."""
+
     incident: Optional[Incident] = None
     settings: Any = field(default_factory=get_settings)
     model_gateway: Optional[ModelGateway] = None
@@ -102,7 +105,9 @@ class PipelineOrchestrator:
             context.validated_incident = await self.timeline_builder.build(context.incident)
             await self._transition(context, PipelineState.NORMALIZING, 0.2)
 
-            context.hypotheses = await self.hypothesis_generator.generate(context.validated_incident)
+            context.hypotheses = await self.hypothesis_generator.generate(
+                context.validated_incident
+            )
             await self._transition(context, PipelineState.HYPOTHESIZING, 0.3)
 
             context.experiments = await self.sandbox_controller.plan_experiments(context.hypotheses)
@@ -117,7 +122,9 @@ class PipelineOrchestrator:
             context.patch_candidates = await self.patch_generator.generate(context.experiments)
             await self._transition(context, PipelineState.PATCH_FORGE, 0.7)
 
-            context.verification_reports = await self.verification_engine.verify(context.patch_candidates)
+            context.verification_reports = await self.verification_engine.verify(
+                context.patch_candidates
+            )
             await self._transition(context, PipelineState.VERIFYING, 0.8)
 
             context.final_report = await self.report_generator.generate(
@@ -125,7 +132,7 @@ class PipelineOrchestrator:
                 context.hypotheses,
                 context.experiments,
                 context.patch_candidates,
-                context.verification_reports
+                context.verification_reports,
             )
             await self._transition(context, PipelineState.AWAITING_REVIEW, 0.9)
 
@@ -144,7 +151,9 @@ class PipelineOrchestrator:
 
         return context
 
-    async def _transition(self, context: PipelineContext, state: PipelineState, progress: float, message: str = ""):
+    async def _transition(
+        self, context: PipelineContext, state: PipelineState, progress: float, message: str = ""
+    ):
         """Transition to a new state and report progress."""
         logger.info(f"Transitioning to {state.name}: {message}")
         if self._progress_callback:
