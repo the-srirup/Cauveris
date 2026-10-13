@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Card, Stat, Badge, KV, PageHeader } from "@/components/ui";
 import { api, Experiment } from "@/lib/api";
 import { notify } from "@/components/Notification";
@@ -9,13 +9,28 @@ import { useActiveIncident } from "@/lib/useIncident";
 import { useShell } from "@/lib/useShell";
 import type { InspectorData } from "@/lib/useShell";
 import { useAuthStore } from "@/lib/auth";
-import { Check, Download, Play } from "lucide-react";
+import { readDeepLink } from "@/holographic";
+import { Check, Download, Play, FlaskConical, ArrowLeft, Loader2 } from "lucide-react";
 
-export default function GhostLab() {
-  const { incidentId, judgeMode, engineerMode } = useActiveIncident();
+function GhostLabContent() {
+  // `useSearchParams` sits with the top-level hooks, above the auth early
+  // returns below: calling it after them would change the hook count between
+  // renders and throw "Rendered more hooks than during the previous render".
+  const searchParams = useSearchParams();
+  const deepLink = readDeepLink(searchParams);
+  const { incidentId, setIncidentId, judgeMode, engineerMode } = useActiveIncident();
   const { openInspector, setIncidentContext } = useShell();
   const { isAuthenticated, isLoading: authLoading } = useAuthStore();
   const router = useRouter();
+
+  // A link from the reconstruction view names the incident it belongs to.
+  // localStorage is same-tab only, so without this a pasted or bookmarked link
+  // would open on whatever incident this browser last viewed.
+  useEffect(() => {
+    if (deepLink.incidentId && deepLink.incidentId !== incidentId) {
+      setIncidentId(deepLink.incidentId);
+    }
+  }, [deepLink.incidentId, incidentId, setIncidentId]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -87,6 +102,20 @@ export default function GhostLab() {
       loadExperiments(incidentId);
     }
   }, [incidentId]);
+
+  // Select the deep-linked experiment once the list has loaded.
+  //
+  // Experiments carry hypothesis_id / branch_name / intervention — no
+  // component id — so a `?component=` cannot select one. `?experiment=` can,
+  // because the id it names is one this page already keys on.
+  useEffect(() => {
+    const wanted = deepLink.experimentId;
+    if (!wanted || experiments.length === 0) return;
+    const match = experiments.find(
+      (e) => (e.experiment_id || e.id) === wanted || e.branch_name === wanted
+    );
+    if (match) setSelectedBranch(match.experiment_id || match.id || wanted);
+  }, [deepLink.experimentId, experiments]);
 
   // Experiments from backend (no hardcoded fallback - use actual API data)
   const activeExperiments = experiments.length > 0 ? experiments : null;
@@ -192,6 +221,40 @@ export default function GhostLab() {
           </Badge>
         }
       />
+
+      {/*
+        Deep-link context from the reconstruction view. An experiment here
+        carries a hypothesis id, a branch name and an intervention — never a
+        component — so the component is context for whoever follows the link,
+        not something this page can select on. Saying otherwise would imply a
+        mapping that does not exist.
+      */}
+      {deepLink.componentId && (
+        <div
+          role="status"
+          className="mb-6 flex flex-wrap items-start gap-3 rounded-xl border border-sky-500/25 bg-sky-500/10 px-4 py-3 text-xs"
+        >
+          <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" />
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-sky-200">
+              Opened for component{" "}
+              <span className="font-mono">{deepLink.componentId}</span>
+            </p>
+            <p className="mt-0.5 leading-relaxed text-[var(--color-text-muted)]">
+              A reconstruction node does not map to an experiment, so no branch
+              has been preselected on its behalf. Pick or create the experiment
+              that intervenes on it.
+            </p>
+          </div>
+          <a
+            href="/holographic-reconstruction"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-950/40 px-2.5 py-1.5 font-semibold text-sky-200 transition hover:bg-sky-900/50"
+          >
+            <ArrowLeft className="h-3 w-3" />
+            Back to reconstruction
+          </a>
+        </div>
+      )}
 
       {/* Error Message */}
       {error && (
@@ -405,5 +468,22 @@ export default function GhostLab() {
         </Button>
       </div>
     </div>
+  );
+}
+
+export default function GhostLab() {
+  return (
+    // `useSearchParams` opts the tree into client-side rendering, which a
+    // statically prerendered route rejects at build time unless the nearest
+    // boundary is a Suspense.
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[var(--theme-background)] p-4">
+          <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand-primary)]" />
+        </div>
+      }
+    >
+      <GhostLabContent />
+    </Suspense>
   );
 }

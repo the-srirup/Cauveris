@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Card, Badge, PageHeader, Input, Select, Tooltip, Divider } from "@/components/ui";
 import { api, TimelineEvent, TemporalAnalysis } from "@/lib/api";
 import { notify } from "@/components/Notification";
@@ -9,10 +9,11 @@ import { useActiveIncident } from "@/lib/useIncident";
 import { useShell } from "@/lib/useShell";
 import { useAuthStore } from "@/lib/auth";
 import { DataErrorBoundary } from "@/components/ErrorBoundary";
+import { readDeepLink } from "@/holographic";
 import {
   ZoomIn, ZoomOut, ArrowLeft, ArrowRight, Maximize, RotateCcw,
   Play, SkipBack, SkipForward, AlertTriangle, Globe, Timer,
-  X, Check, Search, Download, Clock
+  X, Check, Search, Download, Clock, Loader2
 } from "lucide-react";
 
 // Safe Pause icon that doesn't crash when test environments fail to mock Pause in lucide-react
@@ -49,10 +50,24 @@ interface TimelineControls {
 }
 
 function RealityRewindContent() {
-  const { incidentId, judgeMode, engineerMode } = useActiveIncident();
+  // `useSearchParams` must sit with the top-level hooks, above the auth early
+  // returns below — calling it after them would change the hook count between
+  // renders and throw "Rendered more hooks than during the previous render".
+  const searchParams = useSearchParams();
+  const deepLink = readDeepLink(searchParams);
+  const { incidentId, setIncidentId, judgeMode, engineerMode } = useActiveIncident();
   const { openInspector, addActivity, setIncidentContext } = useShell();
   const { isAuthenticated, isLoading: authLoading } = useAuthStore();
   const router = useRouter();
+
+  // A link from the reconstruction view names the incident it belongs to.
+  // localStorage is same-tab only, so without this a pasted or bookmarked link
+  // would open on whatever incident this browser last viewed.
+  useEffect(() => {
+    if (deepLink.incidentId && deepLink.incidentId !== incidentId) {
+      setIncidentId(deepLink.incidentId);
+    }
+  }, [deepLink.incidentId, incidentId, setIncidentId]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -94,6 +109,10 @@ function RealityRewindContent() {
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  // How a deep-linked component was resolved — see the focus effect below.
+  const [deepLinkOutcome, setDeepLinkOutcome] = useState<
+    "idle" | "matched" | "text-only"
+  >("idle");
   const [sourceFilter, setSourceFilter] = useState<string[]>([]);
   const [evidenceStatusFilter, setEvidenceStatusFilter] = useState<string[]>([]);
   const [severityFilter, setSeverityFilter] = useState<string[]>([]);
@@ -141,6 +160,42 @@ function RealityRewindContent() {
       loadData(incidentId);
     }
   }, [incidentId]);
+
+  // Focus the deep-linked component once its incident's events have loaded.
+  //
+  // Nothing in this app keys evidence on a component id: a TimelineEvent
+  // carries source / source_type / lane / message, and a CausalNode id is a
+  // component name from the reconstruction's bulk graph. So there is no
+  // mapping to honour, and inventing one — highlighting a lane because its
+  // name looks close — would assert a correspondence that does not exist.
+  //
+  // What is honest: match the component string against the events themselves.
+  // On a hit, seek to the first event it names and select it. On a miss, put
+  // the string in the search box, whose filter also covers message and lane,
+  // and say in the banner that this was a text match rather than a mapped
+  // lane. `deepLinkOutcome` carries which of the two happened so the banner
+  // reports the truth instead of implying a precise jump.
+  useEffect(() => {
+    const component = deepLink.componentId;
+    if (!component || events.length === 0) return;
+
+    const q = component.toLowerCase();
+    const matches = (ev: TimelineEvent) =>
+      (ev.source?.toLowerCase().includes(q) ?? false) ||
+      (ev.source_type?.toLowerCase().includes(q) ?? false) ||
+      (ev.lane?.toLowerCase().includes(q) ?? false) ||
+      (ev.message?.toLowerCase().includes(q) ?? false);
+
+    const hit = events.find(matches);
+    if (hit) {
+      setCurrentTime(hit.relative_timestamp_s ?? 0);
+      setSelectedEventId(hit.event_id ?? null);
+      setDeepLinkOutcome("matched");
+    } else {
+      setSearchQuery(component);
+      setDeepLinkOutcome("text-only");
+    }
+  }, [deepLink.componentId, events]);
 
   // Build and set incident context for shell
   useEffect(() => {
@@ -564,6 +619,44 @@ function RealityRewindContent() {
           </Badge>
         }
       />
+
+      {/*
+        Deep-link context from the reconstruction view. The wording is
+        deliberately conditional: this page can only ever text-match a
+        component, so saying "showing events for X" when the match was on a
+        substring of a log message would be a claim the data does not support.
+      */}
+      {deepLink.componentId && (
+        <div
+          role="status"
+          className="mb-6 flex flex-wrap items-start gap-3 rounded-xl border border-sky-500/25 bg-sky-500/10 px-4 py-3 text-xs"
+        >
+          <Search className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" />
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-sky-200">
+              Opened for component{" "}
+              <span className="font-mono">{deepLink.componentId}</span>
+            </p>
+            <p className="mt-0.5 leading-relaxed text-[var(--color-text-muted)]">
+              {deepLinkOutcome === "matched"
+                ? "The timeline is positioned on the first event that names this component."
+                : deepLinkOutcome === "text-only"
+                  ? "No timeline event names this component directly. Its name has been loaded into the search box instead, so the events below are text matches rather than a mapped component lane."
+                  : "Matching this component against the incident's events…"}
+            </p>
+          </div>
+          {/* A plain link: this page has already adopted the linked incident
+              into the active-incident store, so same-tab navigation back
+              lands on the same incident without repeating the parameter. */}
+          <a
+            href="/holographic-reconstruction"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-950/40 px-2.5 py-1.5 font-semibold text-sky-200 transition hover:bg-sky-900/50"
+          >
+            <ArrowLeft className="h-3 w-3" />
+            Back to reconstruction
+          </a>
+        </div>
+      )}
 
       {/* Mode Indicators */}
       <div className="flex flex-wrap items-center gap-3 mb-6">
@@ -1375,8 +1468,20 @@ function RealityRewindContent() {
 
 export default function RealityRewind() {
   return (
-    <DataErrorBoundary>
-      <RealityRewindContent />
-    </DataErrorBoundary>
+    // `useSearchParams` opts the tree into client-side rendering, which a
+    // statically prerendered route rejects at build time unless the nearest
+    // boundary is a Suspense. The error boundary stays INSIDE it so a render
+    // failure is still caught rather than surfacing as the fallback.
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[var(--theme-background)] p-4">
+          <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand-primary)]" />
+        </div>
+      }
+    >
+      <DataErrorBoundary>
+        <RealityRewindContent />
+      </DataErrorBoundary>
+    </Suspense>
   );
 }

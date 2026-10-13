@@ -56,6 +56,10 @@ export function useHolographicReconstruction(
   const [phaseTexture, setPhaseTexture] = useState<THREE.DataTexture | null>(null);
   const [sliceTexture, setSliceTexture] = useState<THREE.DataTexture | null>(null);
   const [activeDepthIndex, setActiveDepthIndex] = useState(0);
+  // Actual number of built depth slices. The UI needs the real count to label
+  // and bound its scrubber; the requested `depthSlices` option is a target,
+  // and a rebuild can yield fewer.
+  const [depthSliceCount, setDepthSliceCount] = useState(depthSlices);
 
   // Every COMPLETE/slice-change allocates a fresh DataTexture; the replaced
   // one was dropped on the floor with no .dispose(), and unmount leaked the
@@ -149,6 +153,7 @@ export function useHolographicReconstruction(
             });
 
             // Set initial depth slice texture
+            setDepthSliceCount(slices.length);
             if (slices.length > 0) {
               const midSlice = Math.floor(slices.length / 2);
               setActiveDepthIndex(midSlice);
@@ -252,6 +257,7 @@ export function useHolographicReconstruction(
             pixelPitch,
           });
 
+          setDepthSliceCount(slices.length);
           if (slices.length > 0) {
             const midSlice = Math.floor(slices.length / 2);
             setActiveDepthIndex(midSlice);
@@ -308,6 +314,7 @@ export function useHolographicReconstruction(
     sliceTexture,
     depthStack: depthStackRef.current,
     activeDepthIndex,
+    depthSliceCount,
     reconstructHologram,
     setDepthSliceIndex,
   };

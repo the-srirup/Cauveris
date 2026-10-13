@@ -17,12 +17,15 @@ import numpy as np
 
 from cauveris.holographic.visualization import (
     generate_visualization_data,
+    build_provenance,
+    summarize_boundary_coverage,
+    scoped_boundary_layer_gaps,
 )
 from cauveris.holographic.integration import analyze_incident_holographically, HolographicConfig
 from cauveris.holographic.gpu_kernels import (
     GPUConfig,
-    DecayType as GPuDecayType,
-    NormalizationType as GpuNormalizationType,
+    DecayType as GPUDecayType,
+    NormalizationType as GPUNormalizationType,
 )
 from cauveris.holographic.counterfactual import (
     CounterfactualHolographer,
@@ -90,8 +93,8 @@ def _create_holographic_config(request: VisualizationRequest) -> HolographicConf
     gpu_config = GPUConfig(
         time_step_ns=request.gpu_time_step_ns,
         max_kernel_time_ns=request.gpu_max_kernel_time_ns,
-        decay_type=GPuDecayType[request.gpu_decay_type.upper()],
-        normalization=GpuNormalizationType[request.gpu_normalization.upper()],
+        decay_type=GPUDecayType[request.gpu_decay_type.upper()],
+        normalization=GPUNormalizationType[request.gpu_normalization.upper()],
         use_gpu=request.use_gpu,
     )
     return HolographicConfig(
@@ -132,7 +135,7 @@ async def get_holographic_reconstruction(
     """
     try:
         # Try to get real incident data
-        timeline, temporal_analysis, topology = await _get_incident_data(incident_id)
+        timeline, temporal_analysis, topology, bundle = await _get_incident_data(incident_id)
 
         # Create request object for config generation
         from pydantic import BaseModel
@@ -160,8 +163,16 @@ async def get_holographic_reconstruction(
         config = _create_holographic_config(temp_request)
 
         if timeline is None or topology is None:
-            # Fallback to synthetic data for demo
-            return await _generate_synthetic_visualization_with_config(incident_id, config)
+            # No bundle on disk. Synthesize a scenario so the view still
+            # renders, but label it as synthetic in the payload — the caller
+            # must not present a fabricated reconstruction as the real one.
+            return await _generate_synthetic_visualization_with_config(
+                incident_id,
+                config,
+                provenance=_synthetic_provenance(
+                    bundle, incident_type=IncidentType.CPU_SPIKE_CASCADE.name
+                ),
+            )
 
         # Run holographic analysis
         result = analyze_incident_holographically(
@@ -215,6 +226,9 @@ async def get_holographic_reconstruction(
             scale_results=result.scale_results if enable_multiscale else None,
             incident_id=incident_id,
             timestamp_ns=result.reconstruction.reconstruction_timestamp_ns,
+            provenance=_bundle_provenance(
+                bundle, timeline=timeline, reconstruction=result.reconstruction
+            ),
         )
 
         viz_dict = _convert_numpy_types(viz_data.__dict__)
@@ -262,13 +276,13 @@ async def simulate_counterfactual(
     try:
         from cauveris.holographic.gpu_kernels import (
             GPUConfig,
-            DecayType as GPuDecayType,
-            NormalizationType as GpuNormalizationType,
+            DecayType as GPUDecayType,
+            NormalizationType as GPUNormalizationType,
         )
         from cauveris.holographic.integration import HolographicConfig
         from cauveris.holographic.gpu_kernels import create_gpu_kernel_builder, is_gpu_available
 
-        timeline, temporal_analysis, topology = await _get_incident_data(incident_id)
+        timeline, temporal_analysis, topology, bundle = await _get_incident_data(incident_id)
 
         if timeline is None or topology is None:
             generator = SyntheticIncidentGenerator(seed=42)
@@ -282,8 +296,8 @@ async def simulate_counterfactual(
         gpu_config = GPUConfig(
             time_step_ns=gpu_time_step_ns,
             max_kernel_time_ns=gpu_max_kernel_time_ns,
-            decay_type=GPuDecayType[gpu_decay_type.upper()],
-            normalization=GpuNormalizationType[gpu_normalization.upper()],
+            decay_type=GPUDecayType[gpu_decay_type.upper()],
+            normalization=GPUNormalizationType[gpu_normalization.upper()],
             use_gpu=use_gpu,
         )
         config = HolographicConfig(
@@ -300,6 +314,17 @@ async def simulate_counterfactual(
             temporal_analysis=temporal_analysis,
         )
         reconstruction = result.reconstruction
+
+        # A counterfactual is only meaningful against real evidence: the
+        # response carries the same provenance record so the caller can see
+        # that a "what-if" here was computed on a fabricated system.
+        provenance = (
+            _bundle_provenance(bundle, timeline=timeline, reconstruction=reconstruction)
+            if bundle.get("found")
+            else _synthetic_provenance(
+                bundle, incident_type=IncidentType.CPU_SPIKE_CASCADE.name
+            )
+        )
 
         # Build kernels with GPU if configured
         if use_gpu and is_gpu_available():
@@ -333,6 +358,7 @@ async def simulate_counterfactual(
             "risk_score": cf_viz["risk_score"],
             "changes": cf_viz["changes"],
             "predicted_boundary": cf_viz["predicted_boundary"],
+            "provenance": provenance,
         }
 
     except KeyError:
@@ -358,12 +384,12 @@ async def get_anomalies(
     try:
         from cauveris.holographic.gpu_kernels import (
             GPUConfig,
-            DecayType as GPuDecayType,
-            NormalizationType as GpuNormalizationType,
+            DecayType as GPUDecayType,
+            NormalizationType as GPUNormalizationType,
         )
         from cauveris.holographic.integration import HolographicConfig
 
-        timeline, temporal_analysis, topology = await _get_incident_data(incident_id)
+        timeline, temporal_analysis, topology, bundle = await _get_incident_data(incident_id)
 
         if timeline is None or topology is None:
             generator = SyntheticIncidentGenerator(seed=42)
@@ -376,8 +402,8 @@ async def get_anomalies(
         gpu_config = GPUConfig(
             time_step_ns=gpu_time_step_ns,
             max_kernel_time_ns=gpu_max_kernel_time_ns,
-            decay_type=GPuDecayType[gpu_decay_type.upper()],
-            normalization=GpuNormalizationType[gpu_normalization.upper()],
+            decay_type=GPUDecayType[gpu_decay_type.upper()],
+            normalization=GPUNormalizationType[gpu_normalization.upper()],
             use_gpu=use_gpu,
         )
         config = HolographicConfig(
@@ -403,7 +429,20 @@ async def get_anomalies(
         # inherited from the reconstruction) — FastAPI's encoder cannot
         # serialize those, so every other route wraps with _convert_numpy_types;
         # this route must too.
-        return _convert_numpy_types({"anomalies": anomalies_viz})
+        return _convert_numpy_types(
+            {
+                "anomalies": anomalies_viz,
+                "provenance": (
+                    _bundle_provenance(
+                        bundle, timeline=timeline, reconstruction=reconstruction
+                    )
+                    if bundle.get("found")
+                    else _synthetic_provenance(
+                        bundle, incident_type=IncidentType.CPU_SPIKE_CASCADE.name
+                    )
+                ),
+            }
+        )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Anomaly detection failed: {str(e)}")
@@ -424,12 +463,12 @@ async def get_boundary_layers(
     try:
         from cauveris.holographic.gpu_kernels import (
             GPUConfig,
-            DecayType as GPuDecayType,
-            NormalizationType as GpuNormalizationType,
+            DecayType as GPUDecayType,
+            NormalizationType as GPUNormalizationType,
         )
         from cauveris.holographic.integration import HolographicConfig
 
-        timeline, temporal_analysis, topology = await _get_incident_data(incident_id)
+        timeline, temporal_analysis, topology, bundle = await _get_incident_data(incident_id)
 
         if timeline is None or topology is None:
             generator = SyntheticIncidentGenerator(seed=42)
@@ -442,8 +481,8 @@ async def get_boundary_layers(
         gpu_config = GPUConfig(
             time_step_ns=gpu_time_step_ns,
             max_kernel_time_ns=gpu_max_kernel_time_ns,
-            decay_type=GPuDecayType[gpu_decay_type.upper()],
-            normalization=GpuNormalizationType[gpu_normalization.upper()],
+            decay_type=GPUDecayType[gpu_decay_type.upper()],
+            normalization=GPUNormalizationType[gpu_normalization.upper()],
             use_gpu=use_gpu,
         )
         config = HolographicConfig(
@@ -466,40 +505,146 @@ async def get_boundary_layers(
         viz_generator = VisualizationDataGenerator(topology, incident_id)
         boundary_layers = viz_generator._generate_boundary_layers(reconstruction)
 
-        return {"boundary_layers": boundary_layers}
+        return {
+            "boundary_layers": boundary_layers,
+            "provenance": (
+                _bundle_provenance(bundle, timeline=timeline, reconstruction=reconstruction)
+                if bundle.get("found")
+                else _synthetic_provenance(
+                    bundle, incident_type=IncidentType.CPU_SPIKE_CASCADE.name
+                )
+            ),
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Boundary layer generation failed: {str(e)}")
 
 
+# Directories probed for an incident bundle, in priority order. Named because
+# the search paths are reported back to the client when nothing is found — the
+# message and the search itself must not drift apart.
+_BUNDLE_SEARCH_TEMPLATES = (
+    str(Path("evidence_store") / "{incident_id}"),
+    "./incident-{incident_id}",
+    "./{incident_id}",
+)
+
+
+def _bundle_search_paths(incident_id: str) -> List[str]:
+    return [t.format(incident_id=incident_id) for t in _BUNDLE_SEARCH_TEMPLATES]
+
+
+def _missing_bundle(incident_id: str) -> Dict[str, Any]:
+    """The evidence record for an incident whose bundle could not be resolved."""
+    return {"found": False, "path": None, "search_paths": _bundle_search_paths(incident_id)}
+
+
+def _bundle_provenance(
+    bundle: Dict[str, Any],
+    *,
+    timeline: Optional[List[Dict[str, Any]]],
+    reconstruction: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Provenance for a reconstruction built from a real bundle.
+
+    Boundary-layer coverage is read off the reconstruction itself (which
+    layers actually reached the inversion), so it reflects what was observed
+    rather than what the bundle declared.
+
+    The two layer gaps are reported separately and must not be merged. The
+    scoped list — layers a component's topology declares but the bundle
+    delivered nothing for — is a real deficiency. The undeclared list is the
+    complement of the modelled enum, which for any system that does not
+    instrument all seven dimensions is simply the shape of its telemetry
+    surface, not a defect in the bundle.
+    """
+    observed: List[str] = []
+    undeclared: List[str] = []
+    missing: List[str] = []
+    if reconstruction is not None:
+        observed, undeclared = summarize_boundary_coverage(reconstruction)
+        missing = scoped_boundary_layer_gaps(reconstruction)
+
+    return build_provenance(
+        bundle_found=bool(bundle.get("found")),
+        bundle_path=bundle.get("path"),
+        bundle_search_paths=bundle.get("search_paths") or [],
+        timeline_event_count=len(timeline or []),
+        observed_boundary_layers=observed,
+        missing_boundary_layers=missing,
+        undeclared_boundary_layers=undeclared,
+    )
+
+
+def _synthetic_provenance(
+    bundle: Dict[str, Any],
+    *,
+    incident_type: str,
+    seed: int = 42,
+    timeline: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Provenance for a reconstruction synthesized because no bundle existed.
+
+    Records the synthetic scenario's identity as well, so a reviewer can tell
+    *which* fabricated incident they are looking at instead of having to
+    recognise the shape of the graph.
+    """
+    return build_provenance(
+        bundle_found=False,
+        bundle_path=bundle.get("path"),
+        bundle_search_paths=bundle.get("search_paths") or [],
+        timeline_event_count=len(timeline or []),
+        synthetic_seed=seed,
+        synthetic_incident_type=incident_type,
+    )
+
+
 async def _get_incident_data(
     incident_id: str,
-) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], Optional[SystemTopology]]:
+) -> Tuple[
+    Optional[List[Dict[str, Any]]],
+    Optional[Dict[str, Any]],
+    Optional[SystemTopology],
+    Dict[str, Any],
+]:
     """
     Load real incident data from storage using the ingestion pipeline.
 
     Returns:
-        Tuple of (timeline_events, temporal_analysis, topology) or (None, None, None) if not found
+        Tuple of (timeline_events, temporal_analysis, topology, bundle).
+
+        ``bundle`` records where the evidence came from:
+        ``{"found": bool, "path": str | None, "search_paths": [str]}``. It is
+        returned on the failure path too — a caller that has to tell the user
+        "your incident could not be found" also needs to say *where* we looked.
     """
     import logging
 
     logger = logging.getLogger(__name__)
+    missing = _missing_bundle(incident_id)
     try:
         # Try to load incident from evidence store
         controller = IngestionController()
 
         # Look for incident bundle in standard locations
-        evidence_store = Path("evidence_store") / incident_id
+        evidence_store = Path(_BUNDLE_SEARCH_TEMPLATES[0].format(incident_id=incident_id))
         if not evidence_store.exists():
-            evidence_store = Path("./incident-" + incident_id)
+            evidence_store = Path(_BUNDLE_SEARCH_TEMPLATES[1].format(incident_id=incident_id))
         if not evidence_store.exists():
-            evidence_store = Path("./" + incident_id)
+            evidence_store = Path(_BUNDLE_SEARCH_TEMPLATES[2].format(incident_id=incident_id))
 
         if not evidence_store.exists():
             logger.warning(
-                f"Incident bundle not found for {incident_id}, falling back to synthetic data"
+                f"Incident bundle not found for {incident_id} in "
+                f"{missing['search_paths']}, falling back to synthetic data"
             )
-            return None, None, None
+            return None, None, None, missing
+
+        bundle = {
+            "found": True,
+            "path": str(evidence_store),
+            "search_paths": missing["search_paths"],
+        }
 
         # Create a minimal incident object to load the bundle
         incident = Incident(
@@ -531,13 +676,14 @@ async def _get_incident_data(
             topology = build_topology_from_timeline(timeline_events, bundle_config)
 
         logger.info(
-            f"Loaded real incident {incident_id}: {len(timeline_events)} timeline events, topology: {topology is not None}"
+            f"Loaded real incident {incident_id} from {evidence_store}: "
+            f"{len(timeline_events)} timeline events, topology: {topology is not None}"
         )
-        return timeline_events, temporal_analysis, topology
+        return timeline_events, temporal_analysis, topology, bundle
 
     except Exception as e:
         logger.error(f"Failed to load incident {incident_id}: {e}")
-        return None, None, None
+        return None, None, None, missing
 
 
 def _extract_timeline_from_evidence(incident: Incident, bundle_path: Path) -> List[Dict[str, Any]]:
@@ -916,6 +1062,10 @@ async def _generate_synthetic_visualization(
             enable_multiscale=enable_multiscale,
             enable_compression=False,
         ),
+        provenance=_synthetic_provenance(
+            _missing_bundle(incident_id),
+            incident_type=IncidentType.CPU_SPIKE_CASCADE.name,
+        ),
     )
 
 
@@ -957,8 +1107,11 @@ async def _load_incident_full(incident_id: str) -> Optional[VisualizationRespons
 
     logger = logging.getLogger(__name__)
     try:
-        timeline, temporal_analysis, topology = await _get_incident_data(incident_id)
+        timeline, temporal_analysis, topology, bundle = await _get_incident_data(incident_id)
         if timeline is None or topology is None:
+            # A comparison is a claim about two real incidents — unlike the
+            # single-incident view there is nothing meaningful to synthesize
+            # here, so the caller gets a 404 instead of a fabricated diff.
             return None
 
         config = HolographicConfig(
@@ -981,6 +1134,9 @@ async def _load_incident_full(incident_id: str) -> Optional[VisualizationRespons
             reconstruction=result.reconstruction,
             incident_id=incident_id,
             timestamp_ns=result.reconstruction.reconstruction_timestamp_ns,
+            provenance=_bundle_provenance(
+                bundle, timeline=timeline, reconstruction=result.reconstruction
+            ),
         )
 
         viz_dict = _convert_numpy_types(viz_data.__dict__)
@@ -1151,8 +1307,15 @@ async def compare_incidents(request: ComparisonRequest):
 async def _generate_synthetic_visualization_with_config(
     incident_id: str,
     config: HolographicConfig,
+    provenance: Optional[Dict[str, Any]] = None,
 ):
-    """Generate synthetic visualization data for demo purposes with config."""
+    """Generate synthetic visualization data for demo purposes with config.
+
+    ``provenance`` should describe the synthetic scenario (see
+    :func:`_synthetic_provenance`). It defaults to the pessimistic
+    "unverified synthetic" record so the payload is never silently presented
+    as bundle-backed.
+    """
     from cauveris.holographic.gpu_kernels import create_gpu_kernel_builder, is_gpu_available
     from cauveris.holographic.counterfactual import (
         CounterfactualHolographer,
@@ -1165,6 +1328,13 @@ async def _generate_synthetic_visualization_with_config(
 
     generator = SyntheticIncidentGenerator(seed=42)
     incident = generator.generate(IncidentType.CPU_SPIKE_CASCADE)
+
+    if provenance is None:
+        provenance = _synthetic_provenance(
+            _missing_bundle(incident_id),
+            incident_type=IncidentType.CPU_SPIKE_CASCADE.name,
+            timeline=incident.timeline,
+        )
 
     result = analyze_incident_holographically(
         incident_id=incident_id,
@@ -1208,6 +1378,7 @@ async def _generate_synthetic_visualization_with_config(
         scale_results=result.scale_results if config.enable_multiscale else None,
         incident_id=incident_id,
         timestamp_ns=result.reconstruction.reconstruction_timestamp_ns,
+        provenance=provenance,
     )
 
     from cauveris.api.holographic import VisualizationResponse
@@ -1272,15 +1443,25 @@ class ConnectionManager:
                 ):
                     await asyncio.sleep(interval_seconds)
 
-                    # Check for new evidence
-                    evidence_store = Path("evidence_store") / incident_id
-                    if not evidence_store.exists():
-                        evidence_store = Path("./incident-" + incident_id)
-                    if not evidence_store.exists():
-                        evidence_store = Path("./" + incident_id)
+                    # Check for new evidence. Resolves through the same
+                    # template list the request path uses, so a bundle the
+                    # API can serve is never invisible to live monitoring.
+                    evidence_store = Path(
+                        _BUNDLE_SEARCH_TEMPLATES[0].format(incident_id=incident_id)
+                    )
+                    for template in _BUNDLE_SEARCH_TEMPLATES[1:]:
+                        if evidence_store.exists():
+                            break
+                        evidence_store = Path(template.format(incident_id=incident_id))
 
                     if not evidence_store.exists():
                         continue
+
+                    bundle = {
+                        "found": True,
+                        "path": str(evidence_store),
+                        "search_paths": _bundle_search_paths(incident_id),
+                    }
 
                     # Create incident and process
                     incident = Incident(
@@ -1349,6 +1530,11 @@ class ConnectionManager:
                                     reconstruction=result.reconstruction,
                                     incident_id=incident_id,
                                     timestamp_ns=result.reconstruction.reconstruction_timestamp_ns,
+                                    provenance=_bundle_provenance(
+                                        bundle,
+                                        timeline=timeline_events,
+                                        reconstruction=result.reconstruction,
+                                    ),
                                 )
 
                                 viz_dict = _convert_numpy_types(viz_data.__dict__)

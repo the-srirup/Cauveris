@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Card, Stat, Badge, PageHeader } from "@/components/ui";
 import { api, PatchCandidate, VerificationReport } from "@/lib/api";
 import { notify } from "@/components/Notification";
@@ -9,13 +9,28 @@ import { useActiveIncident } from "@/lib/useIncident";
 import { useShell } from "@/lib/useShell";
 import type { InspectorData } from "@/lib/useShell";
 import { useAuthStore } from "@/lib/auth";
-import { Check, Wrench, Package, Download } from "lucide-react";
+import { readDeepLink } from "@/holographic";
+import { Check, Wrench, Package, Download, ArrowLeft, Loader2 } from "lucide-react";
 
-export default function PatchForge() {
-  const { incidentId, judgeMode, engineerMode } = useActiveIncident();
+function PatchForgeContent() {
+  // `useSearchParams` sits with the top-level hooks, above the auth early
+  // returns below: calling it after them would change the hook count between
+  // renders and throw "Rendered more hooks than during the previous render".
+  const searchParams = useSearchParams();
+  const deepLink = readDeepLink(searchParams);
+  const { incidentId, setIncidentId, judgeMode, engineerMode } = useActiveIncident();
   const { openInspector, setIncidentContext } = useShell();
   const { isAuthenticated, isLoading: authLoading } = useAuthStore();
   const router = useRouter();
+
+  // A link from the reconstruction view names the incident it belongs to.
+  // localStorage is same-tab only, so without this a pasted or bookmarked link
+  // would open on whatever incident this browser last viewed.
+  useEffect(() => {
+    if (deepLink.incidentId && deepLink.incidentId !== incidentId) {
+      setIncidentId(deepLink.incidentId);
+    }
+  }, [deepLink.incidentId, incidentId, setIncidentId]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -89,6 +104,23 @@ export default function PatchForge() {
       loadPatches(incidentId);
     }
   }, [incidentId]);
+
+  // Open the deep-linked patch once the list has loaded.
+  //
+  // `?patch=` names a PatchCandidate id, which is what this page keys on, so
+  // this is a real selection. `?component=` is not: a PatchCandidate carries
+  // `affected_files` — file paths — not component ids, so the component can
+  // only be context, and the banner below says as much.
+  useEffect(() => {
+    const wanted = deepLink.patchId;
+    if (!wanted || patches.length === 0) return;
+    const match = patches.find((p) => (p.candidate_id || p.id) === wanted);
+    if (match) handleOpenPatchInspector(match);
+    // `handleOpenPatchInspector` is redefined every render, so it is
+    // deliberately not a dependency — including it would re-open the
+    // inspector on every keystroke elsewhere on the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLink.patchId, patches]);
 
   // Fallback candidate patches if none returned
   const defaultPatches: PatchCandidate[] = [
@@ -233,6 +265,41 @@ export default function PatchForge() {
           </Badge>
         }
       />
+
+      {/*
+        Arriving from the reconstruction view. `?component=` is context only: a
+        PatchCandidate carries `affected_files` — file paths — and no component
+        id, so nothing here can be selected by it. `?patch=`, when present, is a
+        real selection and has already been opened by the effect above.
+      */}
+      {deepLink.componentId && (
+        <div
+          role="status"
+          className="mb-6 flex flex-wrap items-start gap-3 rounded-xl border border-sky-500/25 bg-sky-500/10 px-4 py-3 text-xs"
+        >
+          <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" />
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-sky-200">
+              Opened for component{" "}
+              <span className="font-mono">{deepLink.componentId}</span>
+            </p>
+            <p className="mt-0.5 leading-relaxed text-[var(--color-text-muted)]">
+              Patch candidates are keyed by the files they touch, not by
+              component id, so none has been preselected on this component&apos;s
+              behalf. Read it as the component the patches below are meant to
+              remediate and confirm that against{" "}
+              <span className="font-mono">affected_files</span>.
+            </p>
+          </div>
+          <a
+            href="/holographic-reconstruction"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-950/40 px-2.5 py-1.5 font-semibold text-sky-200 transition hover:bg-sky-900/50"
+          >
+            <ArrowLeft className="h-3 w-3" />
+            Back to reconstruction
+          </a>
+        </div>
+      )}
 
       {/* Error Message */}
       {error && (
@@ -384,5 +451,25 @@ export default function PatchForge() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * `useSearchParams` opts this tree into client-side rendering, which a
+ * statically prerendered route rejects at build time unless the nearest
+ * boundary above it is a Suspense. The inner component keeps the hook on the
+ * client side of that boundary.
+ */
+export default function PatchForge() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[var(--theme-background)] p-4">
+          <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand-primary)]" />
+        </div>
+      }
+    >
+      <PatchForgeContent />
+    </Suspense>
   );
 }

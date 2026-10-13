@@ -5,6 +5,8 @@
 
 export * from "./types";
 export * from "./api";
+export * from "./domain/terminology";
+export * from "./domain/provenance";
 export * from "./utils/fft";
 export * from "./utils/colorPalettes";
 export * from "./layout/dagLayout";

@@ -1,0 +1,898 @@
+/**
+ * API Client for Cauveris Backend
+ * Handles all communication with the FastAPI backend
+ */
+
+import {
+  CauverisError,
+  networkError,
+  timeoutError,
+  apiError,
+  incidentNotFound,
+  pipelineFailed,
+  evidenceUploadFailed,
+  secretsDetected,
+  patchApplyFailed,
+  patchVerificationFailed,
+  modelUnavailable,
+  clientStorageError,
+  configMissing,
+  unknownError,
+  handleApiError,
+  retryWithBackoff,
+  ErrorCodes,
+} from "./errors";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000/api/v1";
+
+export type IncidentStatus = "RECEIVED" | "VALIDATED" | "REJECTED" | "PROCESSING" | "COMPLETED" | "FAILED" | "IDLE" | "RUNNING" | "SUCCESS" | "DEGRADED" | "CANCELLED" | string;
+
+export type StageStatus = "PENDING" | "RUNNING" | "SUCCESS" | "DEGRADED" | "FAILED" | "SKIPPED" | "CANCELLED";
+
+// Re-export error types and functions for consumers
+export {
+  CauverisError,
+  networkError,
+  timeoutError,
+  apiError,
+  incidentNotFound,
+  pipelineFailed,
+  evidenceUploadFailed,
+  secretsDetected,
+  patchApplyFailed,
+  patchVerificationFailed,
+  modelUnavailable,
+  clientStorageError,
+  configMissing,
+  unknownError,
+  handleApiError,
+  retryWithBackoff,
+  ErrorCodes,
+};
+
+import { authenticatedFetch, useAuthStore, FetchRequestInit } from './auth';
+
+export interface PipelineStageInfo {
+  id: string;
+  name: string;
+  description: string;
+  required: boolean;
+  depends_on: string[];
+  status: StageStatus;
+  error?: string | null;
+  details?: Record<string, any>;
+  duration_ms?: number | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface PipelineEventsResponse {
+  state: "IDLE" | "PENDING" | "RUNNING" | "SUCCESS" | "DEGRADED" | "FAILED" | "CANCELLED" | string;
+  progress: number;
+  active_stage_id?: string | null;
+  stages?: PipelineStageInfo[];
+  error?: string | null;
+  is_demonstration?: boolean;
+  started_at?: string | null;
+  completed_at?: string | null;
+  timestamp?: string;
+}
+
+export interface EvidenceValidationSummary {
+  incident_id: string;
+  validation_status: "completed" | "PASSED" | "WARNING" | "FAILED" | string;
+  status?: "PASSED" | "WARNING" | "FAILED" | string;
+  summary_status?: "PASSED" | "WARNING" | "FAILED" | string;
+  is_valid: boolean;
+  evidence_count: number;
+  required_evidence_count: number;
+  missing_required_evidence: string[];
+  secrets_detected_count: number;
+  checksums_valid: boolean;
+  schema_valid: boolean;
+  is_demonstration?: boolean;
+  evidence_items?: EvidenceItem[];
+}
+
+export interface SystemHealthResponse {
+  status: string;
+  service: string;
+  version: string;
+  timestamp?: string;
+  latency_ms?: number;
+}
+
+export interface ModelProviderHealthResponse {
+  status: string;
+  provider: string;
+  mode: string;
+  cloud_credentials_required: boolean;
+  nebius_configured?: boolean;
+  timestamp?: string;
+}
+
+export interface StatusCenterResponse {
+  status: string;
+  incidents_count: number;
+  active_incident_id: string | null;
+  current_stage: string;
+  model_route: string;
+  processing_mode?: string;
+  backend_health?: SystemHealthResponse;
+  model_provider?: ModelProviderHealthResponse;
+  sandbox_status: string;
+  timestamp?: string;
+}
+
+export interface Incident {
+  id: string;
+  title: string;
+  status: IncidentStatus;
+  pipeline_state?: string;
+  evidence_count: number;
+  required_evidence_count?: number;
+  missing_required_evidence?: string[];
+  description?: string;
+  system_name?: string;
+  approximate_time?: string;
+  manifest?: Record<string, any>;
+  timeline_events?: TimelineEvent[];
+  timeline_events_count?: number;
+  evidence_items?: EvidenceItem[];
+  is_demonstration?: boolean;
+}
+
+export interface EvidenceItem {
+  file_path: string;
+  file_type: string;
+  size_bytes: number;
+  checksum_sha256: string;
+  status: string;
+  is_required: boolean;
+  validation_errors?: string[];
+}
+
+export interface TimelineEvent {
+  timestamp_ns: number;
+  original_timestamp?: string;
+  original_timestamp_s?: number;
+  event_type?: string;
+  source_type?: string;
+  lane?: string;
+  source?: string;
+  message?: string;
+  attributes?: Record<string, any>;
+  confidence?: number;
+  status?: string;
+  relative_timestamp_s?: number;
+  relative_timestamp_ns?: number;
+  temporal_trust?: number;
+  event_id?: string;
+  supporting_artifact_ids?: string[];
+  contradicting_artifact_ids?: string[];
+}
+
+export interface IncidentTimeline {
+  incident_id: string;
+  total_events: number;
+  timeline_events: TimelineEvent[];
+  clock_alignment?: any;
+}
+
+export interface TemporalAnalysis {
+  incident_id: string;
+  violations?: any[];
+  clock_alignment?: any;
+  temporal_analysis?: any;
+  anomalies?: any[];
+  confidence_score?: number;
+  is_time_anomalous?: boolean;
+}
+
+export interface Hypothesis {
+  id: string;
+  hypothesis_id?: string;
+  title: string;
+  description: string;
+  causal_claim?: string;
+  confidence: number;
+  confidence_prior?: number;
+  status: string;
+  intervention?: string;
+  evidence_count?: number;
+  supporting_artifact_ids?: string[];
+  contradicting_artifact_ids?: string[];
+  missing_evidence?: string[];
+  reproduction_rate?: number;
+  test_result?: string;
+}
+
+export interface Experiment {
+  id: string;
+  experiment_id?: string;
+  name: string;
+  hypothesis_id?: string;
+  branch_name?: string;
+  status: string;
+  intervention?: string;
+  reproduction_rate?: number;
+  result?: boolean;
+  failure_oracle?: any;
+  metrics?: Record<string, any>;
+}
+
+export interface PatchCandidate {
+  id: string;
+  candidate_id?: string;
+  title: string;
+  diff?: string;
+  score: number;
+  verified: boolean;
+  test_result?: string;
+  unified_diff?: string;
+  affected_files?: string[];
+  lines_changed?: number;
+  rationale?: string;
+  applied_cleanly?: boolean;
+  regression_test_passes_after?: boolean;
+  original_failure_not_reproduced?: boolean;
+  existing_tests_pass?: boolean;
+  safety_invariants_pass?: boolean;
+  performance_within_budget?: boolean;
+  forbidden_change_scan_passes?: boolean;
+  rollback_test_passes?: boolean;
+}
+
+export interface VerificationReport {
+  passed: boolean;
+  message: string;
+  details?: any;
+  patch_candidate_id?: string;
+  applies_cleanly?: boolean;
+  regression_test_fails_before?: boolean;
+  regression_test_passes_after?: boolean;
+  original_failure_not_reproduced?: boolean;
+  existing_tests_pass?: boolean;
+  safety_invariants_pass?: boolean;
+  performance_within_budget?: boolean;
+  forbidden_change_scan_passes?: boolean;
+  rollback_test_passes?: boolean;
+  verified?: boolean;
+}
+
+export interface ApplyPatchResult {
+  success: boolean;
+  message?: string;
+  details?: string;
+  applied?: boolean;
+  dry_run?: boolean;
+  status?: string;
+}
+
+export interface IncidentReport {
+  incident_id: string;
+  title?: string;
+  description?: string;
+  system_name?: string;
+  approximate_time?: string;
+  evidence_summary?: {
+    total_evidence_items: number;
+    required_evidence_items: number;
+    missing_required_evidence: string[];
+  };
+  timeline?: TimelineEvent[];
+  temporal_analysis?: any;
+  hypotheses?: Hypothesis[];
+  experiments?: Experiment[];
+  patch_candidates?: PatchCandidate[];
+  verification_reports?: VerificationReport[];
+  status?: string;
+  patch_package_path?: string;
+  [key: string]: any;
+}
+
+export interface TemporalVisualizationResponse {
+  bulk_nodes: Array<{
+    id: string;
+    name?: string;
+    type?: string;
+    health?: number;
+    confidence?: number;
+    metrics?: Record<string, any>;
+    config_changed?: boolean;
+    position?: number[];
+    size?: number;
+    color?: string;
+    [key: string]: any;
+  }>;
+  bulk_edges: Array<{
+    source: string;
+    target: string;
+    type?: string;
+    thickness?: number;
+    latency_ms?: number;
+    source_health?: number;
+    target_health?: number;
+    color?: string;
+    [key: string]: any;
+  }>;
+}
+
+export interface HolographicData {
+  incident_id: string;
+  bulk_nodes: Array<{
+    id: string;
+    name: string;
+    type: string;
+    position: [number, number, number];
+    size: number;
+    color: string;
+    health: number;
+    metrics: {
+      cpu_usage: number;
+      memory_usage: number;
+      network_usage: number;
+      error_rate: number;
+      latency_p99_ms: number;
+    };
+    confidence: number;
+    config_changed: boolean;
+  }>;
+  bulk_edges: Array<{
+    source: string;
+    target: string;
+    type: "causal" | "network";
+    thickness: number;
+    color: string;
+    latency_ms: number;
+    source_health: number;
+    target_health: number;
+    loss_rate?: number;
+    bandwidth_mbps?: number;
+  }>;
+  boundary_layers: Record<string, Record<string, any>>;
+  scale_hierarchy: any[];
+  ambiguity_regions: Array<{
+    component: string;
+    dimension: string;
+    affected_dimensions: string[];
+    time_range_ns: [number, number];
+    duration_ms: number;
+    ambiguity_score: number;
+    missing_layers: string[];
+    description: string;
+    severity: "low" | "medium" | "high";
+  }>;
+  counterfactual: any;
+  anomalies: any[];
+  metadata: Record<string, any>;
+}
+
+// Request deduplication cache
+interface PendingRequest<T> {
+  promise: Promise<T>;
+  abortController: AbortController;
+  timestamp: number;
+}
+
+// API Client
+class ApiClient {
+  private baseUrl: string;
+  private pendingRequests: Map<string, PendingRequest<any>> = new Map();
+  private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
+  private readonly REQUEST_CACHE_TTL = 5000; // 5 seconds
+  private readonly DEBOUNCE_MS = 150; // 150ms debounce for repeated calls
+
+  constructor(baseUrl: string = API_BASE_URL) {
+    this.baseUrl = baseUrl;
+  }
+
+  private getCacheKey(endpoint: string, options: FetchRequestInit = {}): string {
+    const method = options.method || "GET";
+    const body = options.body ? JSON.stringify(options.body) : "";
+    return `${method}:${endpoint}:${body}`;
+  }
+
+  private cleanupCache(): void {
+    const now = Date.now();
+    for (const [key, value] of this.pendingRequests.entries()) {
+      if (now - value.timestamp > this.REQUEST_CACHE_TTL) {
+        this.pendingRequests.delete(key);
+      }
+    }
+  }
+
+  private async request<T>(endpoint: string, options: FetchRequestInit = {}): Promise<T> {
+    // Use authenticated fetch which handles token refresh automatically
+    try {
+      return await authenticatedFetch<T>(endpoint, options);
+    } catch (err: any) {
+      if (err instanceof CauverisError) {
+        throw err;
+      }
+      // Convert generic errors to CauverisError
+      if (err.name === 'AbortError' || err.message?.includes('timeout')) {
+        throw timeoutError(endpoint, 15000);
+      }
+      if (err.message?.includes('Failed to fetch') || err.message?.includes('Cannot connect')) {
+        throw networkError(`Cannot connect to Cauveris API at ${this.baseUrl}. Please verify the backend is running.`);
+      }
+      throw unknownError(err.message || "Unknown API error", err, { endpoint });
+    }
+  }
+
+  // Deduplicated request - returns cached promise if identical request is in-flight
+  async requestDeduped<T>(endpoint: string, options: FetchRequestInit = {}): Promise<T> {
+    this.cleanupCache();
+
+    // Only deduplicate GET requests
+    const method = options.method || "GET";
+    if (method !== "GET") {
+      return this.request<T>(endpoint, options);
+    }
+
+    const cacheKey = this.getCacheKey(endpoint, options);
+    const existing = this.pendingRequests.get(cacheKey);
+
+    if (existing) {
+      // Return existing promise
+      return existing.promise as Promise<T>;
+    }
+
+    // Create new request
+    const abortController = new AbortController();
+    const promise = this.request<T>(endpoint, {
+      ...options,
+      signal: abortController.signal,
+    }).finally(() => {
+      // Clean up after completion
+      this.pendingRequests.delete(cacheKey);
+    });
+
+    this.pendingRequests.set(cacheKey, {
+      promise,
+      abortController,
+      timestamp: Date.now(),
+    });
+
+    return promise;
+  }
+
+  // Debounced request - delays execution and deduplicates rapid calls
+  async requestDebounced<T>(endpoint: string, options: FetchRequestInit = {}, debounceMs: number = this.DEBOUNCE_MS): Promise<T> {
+    const cacheKey = this.getCacheKey(endpoint, options);
+
+    return new Promise<T>((resolve, reject) => {
+      // Clear existing debounce timer
+      const existingTimer = this.debounceTimers.get(cacheKey);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+
+      const timer = setTimeout(() => {
+        this.debounceTimers.delete(cacheKey);
+        this.requestDeduped<T>(endpoint, options).then(resolve).catch(reject);
+      }, debounceMs);
+
+      this.debounceTimers.set(cacheKey, timer);
+    });
+  }
+
+  // Cancel a specific request by cache key
+  cancelRequest(endpoint: string, options: FetchRequestInit = {}): void {
+    const cacheKey = this.getCacheKey(endpoint, options);
+    const existing = this.pendingRequests.get(cacheKey);
+    if (existing) {
+      existing.abortController.abort();
+      this.pendingRequests.delete(cacheKey);
+    }
+  }
+
+  // Cancel all pending requests
+  cancelAllRequests(): void {
+    for (const [, value] of this.pendingRequests.entries()) {
+      value.abortController.abort();
+    }
+    this.pendingRequests.clear();
+
+    for (const [, timer] of this.debounceTimers.entries()) {
+      clearTimeout(timer);
+    }
+    this.debounceTimers.clear();
+  }
+
+  // Health check
+  async health(): Promise<SystemHealthResponse> {
+    return this.request<SystemHealthResponse>("/health");
+  }
+
+  // Model provider health
+  async modelHealth(): Promise<ModelProviderHealthResponse> {
+    return this.request<ModelProviderHealthResponse>("/model-health");
+  }
+
+  // Incident operations
+  async list(): Promise<{ incidents: Incident[]; count?: number }> {
+    return this.requestDeduped<{ incidents: Incident[]; count?: number }>("/incidents");
+  }
+
+  async get(incidentId: string): Promise<Incident> {
+    return this.requestDeduped<Incident>(`/incidents/${incidentId}`);
+  }
+
+  async create(golden: boolean = false, data?: { title?: string; description?: string; system_name?: string; custom_id?: string }): Promise<{ incident_id: string; message: string; is_demonstration?: boolean }> {
+    const url = `/incidents?golden=${golden}`;
+    if (data) {
+      return this.request<{ incident_id: string; message: string; is_demonstration?: boolean }>(url, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    }
+    return this.request<{ incident_id: string; message: string; is_demonstration?: boolean }>(url, {
+      method: "POST",
+    });
+  }
+
+  // Cancel investigation
+  async cancel(incidentId: string): Promise<{ message: string; incident_id: string; state: string }> {
+    return this.request<{ message: string; incident_id: string; state: string }>(`/incidents/${incidentId}/cancel`, {
+      method: "POST",
+    });
+  }
+
+  // Reset investigation
+  async reset(incidentId: string): Promise<{ message: string; incident_id: string; state: string; is_demonstration?: boolean; pipeline_summary?: any }> {
+    return this.request<{ message: string; incident_id: string; state: string; is_demonstration?: boolean; pipeline_summary?: any }>(`/incidents/${incidentId}/reset`, {
+      method: "POST",
+    });
+  }
+
+  // Reset demo
+  async resetDemo(): Promise<{ message: string; incident_id: string; state: string; is_demonstration?: boolean; pipeline_summary?: any }> {
+    return this.request<{ message: string; incident_id: string; state: string; is_demonstration?: boolean; pipeline_summary?: any }>("/reset-demo", {
+      method: "POST",
+    });
+  }
+
+  // Upload incident file
+  async uploadFile(incidentId: string, file: File): Promise<{ message: string; filename: string; size: number; evidence_count: number }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const { accessToken } = useAuthStore.getState();
+    const headers: Record<string, string> = {};
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+
+    const response = await fetch(`${this.baseUrl}/incidents/${incidentId}/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail;
+        } else if (Array.isArray(errorData.detail)) {
+          errorMessage = errorData.detail.map((d: any) => (d && typeof d === 'object' ? d.msg || d.message : String(d))).join(', ');
+        } else if (errorData.detail && typeof errorData.detail === 'object') {
+          errorMessage = errorData.detail.msg || errorData.detail.message || JSON.stringify(errorData.detail);
+        } else if (typeof errorData.error === 'string') {
+          errorMessage = errorData.error;
+        }
+      } catch {
+        // Ignore json parse errors
+      }
+      throw new Error(errorMessage);
+    }
+
+    return response.json();
+  }
+
+  // Timeline operations - debounced for polling scenarios
+  async getTimeline(incidentId: string): Promise<IncidentTimeline> {
+    return this.requestDebounced<IncidentTimeline>(`/incidents/${incidentId}/timeline`);
+  }
+
+  // Temporal analysis
+  async getTemporalAnalysis(incidentId: string): Promise<TemporalAnalysis> {
+    return this.requestDeduped<TemporalAnalysis>(`/incidents/${incidentId}/temporal-analysis`);
+  }
+
+  // Validation - POST, not deduplicated
+  async validate(incidentId: string): Promise<EvidenceValidationSummary> {
+    return this.request<EvidenceValidationSummary>(`/incidents/${incidentId}/validate`, { method: "POST" });
+  }
+
+  // Status checking - debounced for polling
+  async getEvents(incidentId: string): Promise<PipelineEventsResponse> {
+    return this.requestDebounced<PipelineEventsResponse>(`/incidents/${incidentId}/events`);
+  }
+
+  // Orchestration status center endpoint - debounced for polling
+  async getStatusCenter(): Promise<StatusCenterResponse> {
+    return this.requestDebounced<StatusCenterResponse>("/status-center");
+  }
+
+  // Get incident hypotheses
+  async getHypotheses(incidentId: string) {
+    return this.requestDeduped<{ incident_id: string; count: number; hypotheses: Hypothesis[] }>(`/incidents/${incidentId}/hypotheses`);
+  }
+
+  // Test a single hypothesis in sandbox
+  async testHypothesis(incidentId: string, hypothesisId: string) {
+    return this.request<{
+      incident_id: string;
+      hypothesis_id: string;
+      id: string;
+      title: string;
+      causal_claim: string;
+      intervention: string;
+      status: "CONFIRMED" | "REFUTED";
+      reproduction_rate: number;
+      hypothesis_supported: boolean;
+      failure_oracle: any;
+      metrics: any;
+      message: string;
+    }>(`/incidents/${incidentId}/hypotheses/${hypothesisId}/test`, { method: "POST" });
+  }
+
+  // Get incident experiments
+  async getExperiments(incidentId: string) {
+    return this.requestDeduped<{ incident_id: string; count: number; experiments: Experiment[] }>(`/incidents/${incidentId}/experiments`);
+  }
+
+  // Get incident patches
+  async getPatches(incidentId: string) {
+    return this.requestDeduped<{ incident_id: string; count: number; patch_candidates: PatchCandidate[]; verification_reports: VerificationReport[] }>(`/incidents/${incidentId}/patches`);
+  }
+
+  // Generate / export standalone installer script or diff
+  async exportPatch(incidentId: string, format: string = "installer"): Promise<string | Blob> {
+    const url = `${this.baseUrl}/incidents/${incidentId}/export-patch?format=${format}`;
+    const { accessToken } = useAuthStore.getState();
+    const headers: Record<string, string> = {};
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail;
+        } else if (Array.isArray(errorData.detail)) {
+          errorMessage = errorData.detail.map((d: any) => (d && typeof d === 'object' ? d.msg || d.message : String(d))).join(', ');
+        } else if (errorData.detail && typeof errorData.detail === 'object') {
+          errorMessage = errorData.detail.msg || errorData.detail.message || JSON.stringify(errorData.detail);
+        } else if (typeof errorData.error === 'string') {
+          errorMessage = errorData.error;
+        }
+      } catch {}
+      throw new Error(errorMessage);
+    }
+
+    if (format.toLowerCase() === "zip") {
+      return response.blob();
+    }
+    return response.text();
+  }
+
+  // Download patch package as blob for file download
+  async downloadPatchPackage(incidentId: string): Promise<Blob> {
+    const { accessToken } = useAuthStore.getState();
+    const headers: Record<string, string> = {};
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+
+    const response = await fetch(`${this.baseUrl}/incidents/${incidentId}/download-patch-package`, { headers });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to download patch package: ${response.status} ${errorText}`);
+    }
+
+    return response.blob();
+  }
+
+  // Run experiment (ghost-lab endpoint)
+  async runExperiment(incidentId: string) {
+    return this.request<{ incident_id: string; count: number; experiments: Experiment[]; message: string }>(`/incidents/${incidentId}/experiments/run`, { method: "POST" });
+  }
+
+  // Interactive custom simulation for Engineer Mode
+  async simulateCustom(
+    incidentId: string,
+    params: {
+      batching_window_ms?: number;
+      qos_queue_depth?: number;
+      clock_skew_ms?: number;
+      max_batch_size?: number;
+      gpu_contention_ms?: number;
+      freshness_budget_ms?: number;
+      trials?: number;
+    }
+  ) {
+    return this.request<{
+      incident_id: string;
+      trial_count: number;
+      reproduction_count: number;
+      reproduction_rate: number;
+      avg_latency_ms: number;
+      p99_latency_ms: number;
+      freshness_budget_ms: number;
+      emergency_stop_triggered: boolean;
+      hypothesis_supported: boolean;
+      status: "CONFIRMED" | "REFUTED";
+      parameters: any;
+      cycles: any[];
+      message: string;
+    }>(`/incidents/${incidentId}/simulate-custom`, {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  }
+
+  // Reconstruct incident pipeline
+  async reconstruct(incidentId: string) {
+    return this.request<{ message: string; incident_id: string }>(`/incidents/${incidentId}/reconstruct`, { method: "POST" });
+  }
+
+  // Get incident report
+  async getReport(incidentId: string): Promise<IncidentReport> {
+    return this.request<IncidentReport>(`/incidents/${incidentId}/report`);
+  }
+
+  // Export report as JSON
+  async exportReport(incidentId: string): Promise<IncidentReport> {
+    return this.request<IncidentReport>(`/incidents/${incidentId}/report`);
+  }
+
+  // List reports for an incident
+  async listReports(incidentId: string): Promise<{ reports: Array<{ id: string; incident_id: string; title: string; generated_at: string; size_bytes: number; format: string; status: string; type: string }> }> {
+    return this.request<{ reports: Array<{ id: string; incident_id: string; title: string; generated_at: string; size_bytes: number; format: string; status: string; type: string }> }>(`/incidents/${incidentId}/reports`);
+  }
+
+  // Delete an incident report
+  async deleteReport(incidentId: string, reportId: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/incidents/${incidentId}/reports/${reportId}`, {
+      method: "DELETE"
+    });
+  }
+
+  // Apply patch to target directory
+  async applyPatch(incidentId: string, targetDir: string = ".", dryRun: boolean = false, rollback: boolean = false): Promise<ApplyPatchResult> {
+    return this.request<ApplyPatchResult>(`/incidents/${incidentId}/apply-patch`, {
+      method: "POST",
+      body: JSON.stringify({ target_directory: targetDir, dry_run: dryRun, rollback })
+    });
+  }
+
+  // Get temporal visualization data
+  async getTemporalVisualization(incidentId: string): Promise<TemporalVisualizationResponse> {
+    return this.request(`/incidents/${incidentId}/temporal-visualization`);
+  }
+
+  // Get holographic reconstruction data
+  async getHolographicReconstruction(
+    incidentId: string,
+    options: {
+      enable_counterfactual?: boolean;
+      enable_anomalies?: boolean;
+      enable_multiscale?: boolean;
+      use_gpu?: boolean;
+      gpu_decay_type?: string;
+      gpu_normalization?: string;
+      gpu_time_step_ns?: number;
+      gpu_max_kernel_time_ns?: number;
+    } = {}
+  ): Promise<HolographicData> {
+    const params = new URLSearchParams();
+    // Backend declares `incident_id` (FastAPI Query), not `incidentId`.
+    params.append('incident_id', incidentId);
+    if (options.enable_counterfactual !== undefined) params.append('enable_counterfactual', options.enable_counterfactual.toString());
+    if (options.enable_anomalies !== undefined) params.append('enable_anomalies', options.enable_anomalies.toString());
+    if (options.enable_multiscale !== undefined) params.append('enable_multiscale', options.enable_multiscale.toString());
+    if (options.use_gpu !== undefined) params.append('use_gpu', options.use_gpu.toString());
+    if (options.gpu_decay_type) params.append('gpu_decay_type', options.gpu_decay_type);
+    if (options.gpu_normalization) params.append('gpu_normalization', options.gpu_normalization);
+    if (options.gpu_time_step_ns) params.append('gpu_time_step_ns', options.gpu_time_step_ns.toString());
+    if (options.gpu_max_kernel_time_ns) params.append('gpu_max_kernel_time_ns', options.gpu_max_kernel_time_ns.toString());
+
+    // The backend returns the VisualizationResponse object itself (no {data:...} envelope).
+    return this.requestDeduped<HolographicData>(`/holographic/reconstruction?${params.toString()}`);
+  }
+
+  // Model Gateway Management
+  async getModelHealth(): Promise<{
+    status: string;
+    provider: string;
+    mode: string;
+    cloud_credentials_required: boolean;
+    nebius_configured: boolean;
+    masked_key: string;
+    base_url?: string;
+    model_fast?: string;
+    model_reasoning?: string;
+    model_escalation?: string;
+    timestamp: string;
+  }> {
+    return this.request('/model-health');
+  }
+
+  async configureModel(config: {
+    apiKey?: string;
+    baseUrl?: string;
+    modelFast?: string;
+    modelReasoning?: string;
+    modelEscalation?: string;
+    provider?: string;
+  }): Promise<{
+    status: string;
+    configured: boolean;
+    masked_key: string;
+    base_url: string;
+    model_fast: string;
+    model_reasoning: string;
+    model_escalation: string;
+    provider: string;
+    message: string;
+  }> {
+    return this.request('/model/configure', {
+      method: 'POST',
+      body: JSON.stringify({
+        api_key: config.apiKey,
+        base_url: config.baseUrl,
+        model_fast: config.modelFast,
+        model_reasoning: config.modelReasoning,
+        model_escalation: config.modelEscalation,
+        provider: config.provider,
+      }),
+    });
+  }
+
+  async clearModelConfig(): Promise<{
+    status: string;
+    configured: boolean;
+    masked_key: string;
+    provider: string;
+    message: string;
+  }> {
+    return this.request('/model/configure', {
+      method: 'DELETE',
+    });
+  }
+
+  async testModelConnection(config?: {
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+  }): Promise<{
+    success: boolean;
+    provider?: string;
+    mode?: string;
+    latency_ms: number;
+    models_available?: number;
+    error?: string;
+    message: string;
+  }> {
+    return this.request('/model/test', {
+      method: 'POST',
+      body: config ? JSON.stringify({
+        api_key: config.apiKey,
+        base_url: config.baseUrl,
+        model: config.model,
+      }) : undefined,
+    });
+  }
+}
+
+export const api = new ApiClient();

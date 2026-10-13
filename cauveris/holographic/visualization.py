@@ -13,7 +13,7 @@ Produces structured data for:
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from enum import Enum
 import json
 
@@ -78,6 +78,338 @@ class VisualizationData:
             f.write(self.to_json())
 
 
+# ---------------------------------------------------------------------------
+# Evidence provenance
+#
+# A reconstruction is only as trustworthy as the telemetry it was inverted
+# from. Requests for an incident whose bundle was absent used to silently
+# produce a reconstructed *fictional* system, and the UI presented it with no
+# indication that nothing real had been read (production survey report §5,
+# "Sparse Bundle Resilience"). The provenance record below travels with every
+# visualization payload so that distinction is impossible to lose.
+# ---------------------------------------------------------------------------
+
+DATA_SOURCE_VERIFIED = "verified_bundle"
+DATA_SOURCE_SYNTHETIC = "synthetic_fallback"
+
+#: Below this many parsed timeline events a bundle is reported as sparse. It
+#: is a heuristic, not a physical constant: the point is that a bundle with a
+#: handful of events cannot constrain a causal ordering, and the engineer
+#: should be told that rather than shown a confident-looking graph.
+SPARSE_TIMELINE_EVENT_THRESHOLD = 50
+
+#: What goes unobserved when a given boundary layer is absent — used to turn a
+#: bare list of missing layer names into a statement of what the engineer
+#: cannot conclude.
+LAYER_BLIND_SPOTS: Dict[str, str] = {
+    BoundaryLayer.APPLICATION_LOG.value: "error semantics and failure mode",
+    BoundaryLayer.INFRASTRUCTURE_LOG.value: "host-level resource contention",
+    BoundaryLayer.DISTRIBUTED_TRACE.value: "causal ordering between components",
+    BoundaryLayer.METRICS_EXPORT.value: "resource saturation and latency spread",
+    BoundaryLayer.NETWORK_FLOW.value: "packet loss and bandwidth between components",
+    BoundaryLayer.CONFIG_STATE.value: "configuration drift from the deployment baseline",
+    BoundaryLayer.DEPLOYMENT_EVENT.value: "version transitions and rollback boundaries",
+}
+
+
+def default_provenance() -> Dict[str, Any]:
+    """Provenance of a reconstruction with no evidence record attached.
+
+    Deliberately pessimistic. Absent an explicit statement, a payload is
+    described as an unverified synthetic reconstruction rather than left
+    unlabelled, so a call site that forgets to pass provenance degrades into a
+    visible warning instead of a silent falsehood.
+
+    The warning is included rather than left empty on purpose. A mute
+    ``provenance_warnings: []`` paired with ``synthetic_fallback`` is honest
+    only for as long as every consumer branches on ``data_source``; any
+    consumer that renders warnings instead of the source would show a
+    fabricated graph with nothing to read. The code below states what actually
+    happened — that the record was never written — rather than claiming a
+    bundle search that never ran.
+    """
+    return {
+        "data_source": DATA_SOURCE_SYNTHETIC,
+        "bundle_found": False,
+        "bundle_path": None,
+        "bundle_search_paths": [],
+        "timeline_event_count": 0,
+        "observed_boundary_layers": [],
+        "missing_boundary_layers": [],
+        "undeclared_boundary_layers": sorted(layer.value for layer in BoundaryLayer),
+        "provenance_warnings": [
+            {
+                "code": "PROVENANCE_NOT_RECORDED",
+                "severity": "critical",
+                "message": (
+                    "This reconstruction was served without an evidence record, "
+                    "so nothing is known about which incident bundle it came "
+                    "from."
+                ),
+                "impact": (
+                    "The payload is treated as synthetic. Absent a provenance "
+                    "record there is no evidence that the graph on screen "
+                    "describes the selected system at all."
+                ),
+                "remediation": (
+                    "This is a server-side defect: the reconstruction endpoint "
+                    "must pass `provenance=` into the visualization generator."
+                ),
+            }
+        ],
+    }
+
+
+def summarize_boundary_coverage(
+    reconstruction: HolographicReconstruction,
+) -> Tuple[List[str], List[str]]:
+    """Split the observed boundary layers from the never-observed ones.
+
+    The second element is the complement of :class:`BoundaryLayer` — the
+    dimensions this reconstruction never read *anywhere*. It answers "how much
+    of the modelled telemetry surface was actually seen", which is the honest
+    denominator for a coverage statement.
+
+    It is deliberately *not* the deficiency list. See
+    :func:`scoped_boundary_layer_gaps` for that: a system that never declared
+    ``network_flow`` in its topology has not failed to deliver it, so counting
+    it as a missing layer would report a sparse bundle where none exists. Only
+    the declared-but-unobserved set is a real deficiency.
+    """
+    observed: set = set()
+
+    # Preferred source: the per-component layer index the reconstruction
+    # builds while fusing evidence.
+    for layers in (getattr(reconstruction, "observed_layers", None) or {}).values():
+        for layer in layers or []:
+            observed.add(str(getattr(layer, "value", layer)))
+
+    # Fallback for reconstructions that populate only the raw HEU group
+    # (hand-built fixtures, older call sites).
+    if not observed:
+        for heus in (getattr(reconstruction, "observed_heus", None) or {}).values():
+            for heu in heus or []:
+                layer = getattr(heu, "boundary_layer", None)
+                if layer is not None:
+                    observed.add(str(getattr(layer, "value", layer)))
+
+    undeclared = sorted(
+        layer.value for layer in BoundaryLayer if layer.value not in observed
+    )
+    return sorted(observed), undeclared
+
+
+def scoped_boundary_layer_gaps(
+    reconstruction: HolographicReconstruction,
+) -> List[str]:
+    """Layers the topology declared that the bundle delivered no evidence for.
+
+    This is the genuine deficiency signal, and it is scoped per component
+    (``"<component>.<layer>"``) because that is how it is computed — see
+    ``integration.py``, where ``_missing_layers`` diffs each component's
+    declared layers against the ones actually observed.
+
+    Returns an empty list when the reconstruction carries no scoped record,
+    which is the honest answer: without a declaration there is no way to tell
+    an undelivered layer from one that was never expected, and inventing a
+    deficiency would be worse than reporting none.
+    """
+    scoped = getattr(reconstruction, "missing_boundary_layers", None) or []
+    return sorted(str(entry) for entry in scoped)
+
+
+def _layer_name(entry: str) -> str:
+    """``"payment-svc.network_flow"`` -> ``"network_flow"`` for blind-spot lookup."""
+    return entry.rsplit(".", 1)[-1]
+
+
+def build_provenance(
+    *,
+    bundle_found: bool,
+    bundle_path: Optional[str] = None,
+    bundle_search_paths: Optional[List[str]] = None,
+    timeline_event_count: int = 0,
+    observed_boundary_layers: Optional[List[str]] = None,
+    missing_boundary_layers: Optional[List[str]] = None,
+    undeclared_boundary_layers: Optional[List[str]] = None,
+    synthetic_seed: Optional[int] = None,
+    synthetic_incident_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build the provenance record for a visualization payload.
+
+    Emits both the raw facts and the human-readable warnings derived from
+    them, so every consumer (UI banner, API client, report export) renders the
+    same explanation instead of each re-deriving its own.
+
+    ``missing_boundary_layers`` and ``undeclared_boundary_layers`` are kept
+    distinct because they support opposite conclusions:
+
+    * *missing* — the topology declared this layer and the bundle delivered
+      nothing for it. A real deficiency, and the only thing that warrants
+      telling an engineer to go export more telemetry.
+    * *undeclared* — the layer was never observed anywhere. A limitation of
+      what this incident can support, but declaring a layer you never
+      instrumented is not a bundle defect. Reported as a fact, never as a
+      demand.
+
+    Collapsing the two (as an earlier revision did, by deriving "missing" from
+    the 7-value enum complement) told every system that models only logs and
+    metrics that it had five missing layers — a fabricated sparseness signal on
+    a perfectly complete bundle.
+    """
+    observed = sorted(observed_boundary_layers or [])
+    missing = sorted(missing_boundary_layers or [])
+    undeclared = sorted(undeclared_boundary_layers or [])
+    warnings: List[Dict[str, str]] = []
+
+    if not bundle_found:
+        warnings.append(
+            {
+                "code": "BUNDLE_NOT_FOUND",
+                "severity": "critical",
+                "message": (
+                    "No incident bundle was found on disk, so this "
+                    "reconstruction describes a synthetic incident and NOT the "
+                    "system you selected."
+                ),
+                "impact": (
+                    "Every component, edge, metric and ambiguity region below "
+                    "is generated from a fixed synthetic scenario. It cannot "
+                    "be used to diagnose the real incident."
+                ),
+                "remediation": (
+                    "Ingest the incident's evidence bundle (logs, traces, "
+                    "metrics, config snapshot, deployment history) and re-run "
+                    "the reconstruction."
+                ),
+            }
+        )
+    else:
+        if timeline_event_count == 0:
+            warnings.append(
+                {
+                    "code": "BUNDLE_HAS_NO_TIMELINE",
+                    "severity": "critical",
+                    "message": (
+                        "The incident bundle was found but yielded no timeline "
+                        "events, so causal ordering could not be derived."
+                    ),
+                    "impact": (
+                        "Causal edges come from the declared topology only; "
+                        "the sequence of what happened when is unavailable."
+                    ),
+                    "remediation": (
+                        "Check that the bundle contains parseable JSONL logs, "
+                        "plain logs, traces or metrics CSVs, and that the "
+                        "manifest's evidence paths match the files on disk."
+                    ),
+                }
+            )
+        elif timeline_event_count < SPARSE_TIMELINE_EVENT_THRESHOLD:
+            warnings.append(
+                {
+                    "code": "BUNDLE_TIMELINE_SPARSE",
+                    "severity": "warning",
+                    "message": (
+                        f"Only {timeline_event_count} timeline events were "
+                        "parsed from the bundle."
+                    ),
+                    "impact": (
+                        "Fewer evidence units reach the inversion, which "
+                        "widens ambiguity regions and lowers reconstruction "
+                        "confidence."
+                    ),
+                    "remediation": (
+                        "Widen the capture window, or add the missing "
+                        "telemetry exports listed below."
+                    ),
+                }
+            )
+
+        if missing:
+            blind_spots = ", ".join(
+                LAYER_BLIND_SPOTS.get(_layer_name(entry), _layer_name(entry))
+                for entry in missing[:3]
+            )
+            warnings.append(
+                {
+                    "code": "BOUNDARY_LAYERS_MISSING",
+                    "severity": "warning" if observed else "critical",
+                    "message": (
+                        f"{len(missing)} declared telemetry "
+                        f"{'layer' if len(missing) == 1 else 'layers'} delivered "
+                        f"no evidence: {', '.join(missing)}."
+                    ),
+                    "impact": (
+                        f"These are dimensions the incident's own topology "
+                        f"expects to be observable, so their absence is a gap "
+                        f"in the bundle rather than a limit of the system. "
+                        f"Blind spots include: {blind_spots}."
+                    ),
+                    "remediation": (
+                        "Export the listed layers for the named components into "
+                        "the bundle to narrow the ambiguity regions reported "
+                        "below."
+                    ),
+                }
+            )
+        elif undeclared:
+            # Only worth saying when nothing worse is true. This is a coverage
+            # fact, not a defect, so it never escalates past info and asks for
+            # nothing.
+            blind_spots = ", ".join(
+                LAYER_BLIND_SPOTS.get(layer, layer) for layer in undeclared[:3]
+            )
+            warnings.append(
+                {
+                    "code": "BOUNDARY_LAYERS_UNDECLARED",
+                    "severity": "info",
+                    "message": (
+                        f"{len(undeclared)} of the {len(BoundaryLayer)} modelled "
+                        f"telemetry dimensions were not observed anywhere in "
+                        f"this incident: {', '.join(undeclared)}."
+                    ),
+                    "impact": (
+                        f"Nothing this bundle was supposed to contain is "
+                        f"missing; these dimensions simply were not part of the "
+                        f"incident's telemetry surface, so the reconstruction "
+                        f"cannot speak to them. Blind spots include: "
+                        f"{blind_spots}."
+                    ),
+                    "remediation": (
+                        "No action required for this incident. To widen future "
+                        "coverage, enable these exporters for the affected "
+                        "components."
+                    ),
+                }
+            )
+
+    record: Dict[str, Any] = {
+        "data_source": DATA_SOURCE_VERIFIED if bundle_found else DATA_SOURCE_SYNTHETIC,
+        "bundle_found": bundle_found,
+        "bundle_path": bundle_path,
+        "bundle_search_paths": list(bundle_search_paths or []),
+        "timeline_event_count": timeline_event_count,
+        "synthetic_seed": synthetic_seed,
+        "synthetic_incident_type": synthetic_incident_type,
+        "provenance_warnings": warnings,
+    }
+
+    # Boundary-layer facts are emitted only when the caller actually supplied
+    # them. `VisualizationDataGenerator.generate` treats an absent key as "the
+    # caller did not pin this" and derives it from the reconstruction, so
+    # emitting a placeholder empty list here would silently suppress that
+    # derivation and report zero coverage for a fully instrumented incident.
+    if observed_boundary_layers is not None:
+        record["observed_boundary_layers"] = observed
+    if missing_boundary_layers is not None:
+        record["missing_boundary_layers"] = missing
+    if undeclared_boundary_layers is not None:
+        record["undeclared_boundary_layers"] = undeclared
+
+    return record
+
+
 class VisualizationDataGenerator:
     """
     Generates visualization data from holographic reconstruction.
@@ -131,6 +463,7 @@ class VisualizationDataGenerator:
         counterfactual: Optional[CounterfactualResult] = None,
         anomalies: Optional[AnomalyReport] = None,
         scale_results: Optional[Dict] = None,
+        provenance: Optional[Dict[str, Any]] = None,
     ) -> VisualizationData:
         """
         Generate complete visualization data.
@@ -140,6 +473,12 @@ class VisualizationDataGenerator:
             counterfactual: Optional counterfactual result
             anomalies: Optional anomaly report
             scale_results: Optional multi-scale results
+            provenance: Optional evidence-provenance record. Callers that
+                resolved a real incident bundle must supply
+                ``build_provenance(...)``; callers that fell back to synthetic
+                data must supply the synthetic variant. Anything not supplied
+                defaults to the *synthetic* description — the visualization
+                must never claim to be bundle-backed by omission.
 
         Returns:
             VisualizationData with all visualization-ready structures
@@ -171,8 +510,12 @@ class VisualizationDataGenerator:
         if anomalies:
             viz.anomalies = [a.to_dict() for a in anomalies.anomalies]
 
-        # Metadata
+        # Metadata. The provenance block comes FIRST so an explicit record
+        # always wins over the defaults, and the defaults are the pessimistic
+        # ones: an unlabelled reconstruction is reported as synthetic, never
+        # as verified.
         viz.metadata = {
+            **default_provenance(),
             "overall_fidelity": reconstruction.overall_fidelity,
             "boundary_residual": reconstruction.boundary_residual,
             "num_components": len(reconstruction.reconstructed_services),
@@ -180,6 +523,26 @@ class VisualizationDataGenerator:
             "time_window_ns": reconstruction.time_window_ns,
             "generation_timestamp_ns": self.timestamp_ns,
         }
+        if provenance:
+            viz.metadata.update(provenance)
+
+        # The boundary-layer summary is derived from the reconstruction itself
+        # when the caller did not pin it explicitly — it is the single most
+        # useful "is this bundle sparse?" signal, so it must not depend on the
+        # caller remembering to compute it.
+        #
+        # Coverage (observed/undeclared) and deficiency (scoped missing) are
+        # derived independently: a caller may legitimately pin the scoped gaps
+        # — it knows the declaration — while leaving coverage to be read off
+        # the reconstruction.
+        if not provenance or "observed_boundary_layers" not in provenance:
+            observed, undeclared = summarize_boundary_coverage(reconstruction)
+            viz.metadata["observed_boundary_layers"] = observed
+            viz.metadata["undeclared_boundary_layers"] = undeclared
+        if not provenance or "missing_boundary_layers" not in provenance:
+            viz.metadata["missing_boundary_layers"] = scoped_boundary_layer_gaps(
+                reconstruction
+            )
 
         return viz
 
@@ -640,14 +1003,19 @@ def generate_visualization_data(
     scale_results: Optional[Dict] = None,
     incident_id: str = "",
     timestamp_ns: int = 0,
+    provenance: Optional[Dict[str, Any]] = None,
 ) -> VisualizationData:
     """
     Convenience function to generate visualization data.
 
-    Main integration point for PipelineOrchestrator.
+    Main integration point for PipelineOrchestrator. Callers that resolved a
+    real incident bundle should pass ``provenance=build_provenance(...)``; see
+    :meth:`VisualizationDataGenerator.generate` for what omission means.
     """
     generator = VisualizationDataGenerator(topology, incident_id, timestamp_ns)
-    return generator.generate(reconstruction, counterfactual, anomalies, scale_results)
+    return generator.generate(
+        reconstruction, counterfactual, anomalies, scale_results, provenance
+    )
 
 
 if __name__ == "__main__":

@@ -105,6 +105,13 @@ from .visualization import (
     VisualizationData,
     VisualizationFormat,
     generate_visualization_data,
+    build_provenance,
+    default_provenance,
+    summarize_boundary_coverage,
+    scoped_boundary_layer_gaps,
+    DATA_SOURCE_VERIFIED,
+    DATA_SOURCE_SYNTHETIC,
+    SPARSE_TIMELINE_EVENT_THRESHOLD,
 )
 
 __all__ = [
@@ -175,4 +182,12 @@ __all__ = [
     "VisualizationData",
     "VisualizationFormat",
     "generate_visualization_data",
+    # Evidence provenance
+    "build_provenance",
+    "default_provenance",
+    "summarize_boundary_coverage",
+    "scoped_boundary_layer_gaps",
+    "DATA_SOURCE_VERIFIED",
+    "DATA_SOURCE_SYNTHETIC",
+    "SPARSE_TIMELINE_EVENT_THRESHOLD",
 ]

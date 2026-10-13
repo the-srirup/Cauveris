@@ -49,9 +49,24 @@ import {
   TemporalController,
   GhostTrajectories,
   PatchMutations,
+  ProvenanceBanner,
   useForceLayout,
   useHolographicReconstruction,
   useCounterfactual,
+  VIEW_MODES,
+  SCENE_VIEWS,
+  QUALITY_TERMS,
+  STATUS_TERMS,
+  INSTRUMENTATION_TERMS,
+  PAGE_TERMS,
+  SHELL_CONTEXT,
+  COMPONENT_ACTIONS,
+  componentDeepLink,
+  evidenceCoveragePercent,
+  formatObservationWindow,
+  TOTAL_BOUNDARY_LAYERS,
+  type ViewModeValue,
+  type VisualizationMetadata,
 } from "@/holographic";
 
 const cardStyles = tv({
@@ -68,10 +83,13 @@ export default function HolographicReconstructionPage() {
   const { isAuthenticated, isLoading: authLoading } = useAuthStore();
   const router = useRouter();
 
-  // Navigation & View State
+  // Navigation & View State.
+  // `fieldMode` selects which view of the reconstructed state field is drawn
+  // (see VIEW_MODES); `displayGain` is a pure render-side brightness
+  // multiplier with no effect on the reconstruction itself.
   const [viewMode, setViewMode] = useState<"3d" | "topology" | "timeline">("3d");
-  const [opticalMode, setOpticalMode] = useState<"phase_hue" | "fringe_alarm" | "raw" | "intensity_slice">("phase_hue");
-  const [exposure, setExposure] = useState(1.0);
+  const [fieldMode, setFieldMode] = useState<ViewModeValue>("phase_hue");
+  const [displayGain, setDisplayGain] = useState(1.0);
   const [showGhosts, setShowGhosts] = useState(true);
   const [showPatch, setShowPatch] = useState(false);
   const [showControls, setShowControls] = useState(true);
@@ -84,6 +102,14 @@ export default function HolographicReconstructionPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiData, setApiData] = useState<any>(null);
+
+  // Evidence provenance for whatever is currently on screen. Absent means we
+  // are showing locally-mocked data (see loadMockData) and therefore have no
+  // provenance to report — which ProvenanceBanner renders as a warning rather
+  // than as a clean bill of health.
+  const [provenanceMetadata, setProvenanceMetadata] = useState<
+    VisualizationMetadata | undefined
+  >(undefined);
 
   // Raw Graph Data
   const [rawNodes, setRawNodes] = useState<CausalNode[]>([]);
@@ -114,6 +140,16 @@ export default function HolographicReconstructionPage() {
       });
       if (seq !== fetchSeqRef.current) return;
       setApiData(response);
+      // `lib/api.ts` types this as a loose record while the provenance
+      // contract lives in the holographic module, so the shape is asserted
+      // here. It is safe because the consumer validates rather than trusts:
+      // metadata without a `data_source` renders as "provenance unavailable",
+      // never as a clean bill of health.
+      setProvenanceMetadata(
+        response.metadata && typeof response.metadata === "object"
+          ? (response.metadata as VisualizationMetadata)
+          : undefined
+      );
       setRawNodes(response.bulk_nodes.map((n: any) => ({
         id: n.id,
         label: n.name,
@@ -153,6 +189,12 @@ export default function HolographicReconstructionPage() {
 
   const loadMockData = useCallback(() => {
     const id = incidentId || "INC-CAU-001";
+
+    // Drop any provenance from a previous successful fetch: this data did not
+    // come from the backend, so inheriting the last payload's bundle record
+    // would label a mock reconstruction as bundle-backed.
+    setApiData(null);
+    setProvenanceMetadata(undefined);
 
     const initialNodes: CausalNode[] = [
       {
@@ -297,16 +339,22 @@ export default function HolographicReconstructionPage() {
 
     setIncidentContext({
       id,
-      title: "Holographic 3D Causal Reconstruction",
+      title: SHELL_CONTEXT.title,
       state: "ACTIVE",
-      pipelineStage: "HOLOGRAPHIC_RECONSTRUCTION",
-      evidenceCoverage: 0.94,
+      pipelineStage: SHELL_CONTEXT.pipelineStage,
+      // Derived from the provenance record rather than a fixed figure. The
+      // top bar renders this as a percentage, so a hardcoded value would be
+      // an invented measurement about the incident on screen.
+      evidenceCoverage: evidenceCoveragePercent(
+        provenanceMetadata?.observed_boundary_layers?.length,
+        TOTAL_BOUNDARY_LAYERS
+      ),
       modelProvider: gpuEnabled ? "CUDA GPU (C++/pybind11)" : "CPU (NumPy)",
       backendStatus: "online",
       processingMode: judgeMode ? "judge" : engineerMode ? "engineer" : "autonomous",
       isDemonstration: false,
     });
-  }, [incidentId, judgeMode, engineerMode, setIncidentContext]);
+  }, [incidentId, judgeMode, engineerMode, setIncidentContext, provenanceMetadata]);
 
   // Fetch data on mount and when GPU settings change
   useEffect(() => {
@@ -329,6 +377,7 @@ export default function HolographicReconstructionPage() {
     phaseTexture,
     sliceTexture,
     activeDepthIndex,
+    depthSliceCount,
     reconstructHologram,
     setDepthSliceIndex,
   } = useHolographicReconstruction(layoutNodes, rawLinks, {
@@ -388,42 +437,40 @@ export default function HolographicReconstructionPage() {
   return (
     <div className="flex flex-col gap-[var(--section-gap)] text-[var(--color-text-primary)]">
       <PageHeader
-        title="Holographic Reconstruction Engine"
+        title={PAGE_TERMS.title}
         subtitle={
           incidentId
-            ? `Incident: ${incidentId} • Scalar Diffraction & Phase Retrieval`
-            : "Optical Wavefront & 3D Causal Graph Synthesis"
+            ? PAGE_TERMS.subtitleWithIncident(incidentId)
+            : PAGE_TERMS.subtitleNoIncident
         }
         badge={
           <Badge tone={hologramState.isComputing ? "amber" : "primary"} dot>
-            {hologramState.isComputing ? "Synthesizing Hologram..." : "Diffraction Online"}
+            {hologramState.isComputing
+              ? STATUS_TERMS.computing.label
+              : STATUS_TERMS.idle.label}
           </Badge>
         }
       />
+
+      {/* Evidence provenance: whether the graph below is your incident at all. */}
+      <ProvenanceBanner metadata={provenanceMetadata} />
 
       {/* Main Control Strip */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-2xl bg-slate-900/60 backdrop-blur border border-slate-800">
         <div className="flex flex-wrap items-center gap-3">
           <Select
             value={viewMode}
-            onValueChange={(val: string) => setViewMode(val as any)}
-            options={[
-              { value: "3d", label: "3D Hologram Volume" },
-              { value: "topology", label: "Causal DAG Topology" },
-              { value: "timeline", label: "Reality Rewind Timeline" },
-            ]}
+            onValueChange={(val: string) =>
+              setViewMode(val as (typeof SCENE_VIEWS)[number]["value"])
+            }
+            options={SCENE_VIEWS.map((v) => ({ value: v.value, label: v.label }))}
             className="w-48 text-xs"
           />
 
           <Select
-            value={opticalMode}
-            onValueChange={(val: string) => setOpticalMode(val as any)}
-            options={[
-              { value: "phase_hue", label: "Phase-Hue Wavefront" },
-              { value: "fringe_alarm", label: "Fringe Aliasing Warning" },
-              { value: "intensity_slice", label: "ASM Intensity Slice" },
-              { value: "raw", label: "Raw Phase Grayscale" },
-            ]}
+            value={fieldMode}
+            onValueChange={(val: string) => setFieldMode(val as ViewModeValue)}
+            options={VIEW_MODES.map((m) => ({ value: m.value, label: m.label }))}
             className="w-52 text-xs"
           />
 
@@ -487,17 +534,18 @@ export default function HolographicReconstructionPage() {
 
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span>Exposure:</span>
+            <span>{PAGE_TERMS.displayGain}:</span>
             <input
               type="range"
               min={0.2}
               max={3.0}
               step={0.1}
-              value={exposure}
-              onChange={(e) => setExposure(parseFloat(e.target.value))}
+              value={displayGain}
+              onChange={(e) => setDisplayGain(parseFloat(e.target.value))}
               className="w-20 h-1 bg-slate-700 rounded appearance-none accent-sky-400"
+              aria-label={PAGE_TERMS.displayGain}
             />
-            <span className="font-mono w-8">{exposure.toFixed(1)}x</span>
+            <span className="font-mono w-8">{displayGain.toFixed(1)}x</span>
           </div>
 
           <Button
@@ -511,7 +559,7 @@ export default function HolographicReconstructionPage() {
             disabled={loading}
           >
             <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? "animate-spin" : ""}`} />
-            Re-Synthesize
+            {PAGE_TERMS.recompute}
           </Button>
         </div>
       </div>
@@ -551,12 +599,12 @@ export default function HolographicReconstructionPage() {
             <Stars radius={400} depth={80} count={1800} factor={3} saturation={0} fade />
             <gridHelper args={[400, 30, "#334155", "#1e293b"]} position={[0, -70, 0]} />
 
-            {/* Optical Hologram Wavefront Volume Plane */}
+            {/* Reconstructed component-state field (boundary-to-bulk volume) */}
             <HologramVolume
               phaseTexture={phaseTexture}
               sliceTexture={sliceTexture}
-              displayMode={opticalMode}
-              exposure={exposure}
+              displayMode={fieldMode}
+              exposure={displayGain}
               planeSize={240}
             />
 
@@ -592,20 +640,25 @@ export default function HolographicReconstructionPage() {
             />
           </Canvas>
 
-          {/* Floating Depth Slice Scrubber Overlay */}
-          {opticalMode === "intensity_slice" && (
+          {/* Floating bulk-depth scrubber overlay */}
+          {fieldMode === "intensity_slice" && (
             <div className="absolute top-4 left-4 p-3 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/70 text-xs flex flex-col gap-2 w-64 shadow-xl">
               <div className="flex justify-between items-center text-slate-300">
-                <span className="font-semibold text-emerald-400">ASM Propagation Slice</span>
-                <span className="font-mono">z = {((activeDepthIndex - 10) * 4).toFixed(0)} mm</span>
+                <span className="font-semibold text-emerald-400">
+                  {PAGE_TERMS.sliceOverlayTitle}
+                </span>
+                <span className="font-mono">
+                  Depth {activeDepthIndex + 1} / {Math.max(1, depthSliceCount)}
+                </span>
               </div>
               <input
                 type="range"
                 min={0}
-                max={19}
+                max={Math.max(0, depthSliceCount - 1)}
                 value={activeDepthIndex}
                 onChange={(e) => setDepthSliceIndex(parseInt(e.target.value, 10))}
                 className="w-full h-1.5 bg-slate-700 rounded accent-emerald-400"
+                aria-label="Bulk depth slice"
               />
             </div>
           )}
@@ -630,12 +683,14 @@ export default function HolographicReconstructionPage() {
 
         {/* Right Inspector & Physics Telemetry Panel */}
         <div className="flex flex-col gap-[var(--section-gap)]">
-          {/* Wavefront Quality Telemetry */}
-          <Card title="Hologram Reconstruction Telemetry">
+          {/* Reconstruction confidence telemetry */}
+          <Card title={PAGE_TERMS.telemetryCardTitle}>
             <div className="space-y-3 text-xs">
               <div>
                 <div className="flex justify-between mb-1">
-                  <span className="text-slate-400">Mean Squared Error (MSE)</span>
+                  <span className="text-slate-400" title={QUALITY_TERMS.residual.implementationNote}>
+                    {QUALITY_TERMS.residual.label}
+                  </span>
                   <span className="font-mono text-sky-400">
                     {hologramState.quality.mse > 0
                       ? hologramState.quality.mse.toExponential(3)
@@ -654,7 +709,9 @@ export default function HolographicReconstructionPage() {
 
               <div>
                 <div className="flex justify-between mb-1">
-                  <span className="text-slate-400">Structural Similarity (SSIM)</span>
+                  <span className="text-slate-400" title={QUALITY_TERMS.fidelity.implementationNote}>
+                    {QUALITY_TERMS.fidelity.label}
+                  </span>
                   <span className="font-mono text-emerald-400 font-bold">
                     {(hologramState.quality.ssim * 100).toFixed(1)}%
                   </span>
@@ -669,7 +726,12 @@ export default function HolographicReconstructionPage() {
 
               <div>
                 <div className="flex justify-between mb-1">
-                  <span className="text-slate-400">Strehl Ratio</span>
+                  <span
+                    className="text-slate-400"
+                    title={QUALITY_TERMS.peakRecovery.implementationNote}
+                  >
+                    {QUALITY_TERMS.peakRecovery.label}
+                  </span>
                   <span className="font-mono text-amber-400 font-bold">
                     {(hologramState.quality.strehlRatio * 100).toFixed(1)}%
                   </span>
@@ -706,23 +768,37 @@ export default function HolographicReconstructionPage() {
               )}
 
               <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800 text-[11px]">
-                <div>
-                  <span className="text-slate-500">Wavelength:</span>
-                  <div className="font-mono text-slate-300">532 nm (Green)</div>
+                <div title={INSTRUMENTATION_TERMS.observationWindow.implementationNote}>
+                  <span className="text-slate-500">
+                    {INSTRUMENTATION_TERMS.observationWindow.label}:
+                  </span>
+                  <div className="font-mono text-slate-300">
+                    {formatObservationWindow(provenanceMetadata?.time_window_ns)}
+                  </div>
                 </div>
-                <div>
-                  <span className="text-slate-500">Pixel Pitch:</span>
-                  <div className="font-mono text-slate-300">8.0 µm</div>
+                <div title={INSTRUMENTATION_TERMS.samplingGrid.implementationNote}>
+                  <span className="text-slate-500">
+                    {INSTRUMENTATION_TERMS.samplingGrid.label}:
+                  </span>
+                  <div className="font-mono text-slate-300">
+                    {hologramState.gridSize}×{hologramState.gridSize}
+                  </div>
                 </div>
-                <div>
-                  <span className="text-slate-500">Layout State:</span>
+                <div title={INSTRUMENTATION_TERMS.layout.implementationNote}>
+                  <span className="text-slate-500">
+                    {INSTRUMENTATION_TERMS.layout.label}:
+                  </span>
                   <div className="font-mono text-emerald-400">
                     {isConverged ? "Converged" : "Relaxing..."}
                   </div>
                 </div>
-                <div>
-                  <span className="text-slate-500">Algorithm:</span>
-                  <div className="font-mono text-slate-300">Fienup HIO/ER</div>
+                <div title={INSTRUMENTATION_TERMS.solver.implementationNote}>
+                  <span className="text-slate-500">
+                    {INSTRUMENTATION_TERMS.solver.label}:
+                  </span>
+                  <div className="font-mono text-slate-300">
+                    {INSTRUMENTATION_TERMS.solver.value}
+                  </div>
                 </div>
               </div>
             </div>
@@ -853,6 +929,42 @@ export default function HolographicReconstructionPage() {
                     </Button>
                   </div>
                 </div>
+
+                {/*
+                  Hand-off into the tools that can actually act on this
+                  component. The reconstruction shows what the fleet state was;
+                  these are where an engineer does something about it. Each link
+                  carries the component id and the incident, so the target opens
+                  on the same subject instead of the reviewer's last context.
+                */}
+                <div className="pt-2 border-t border-slate-800">
+                  <div className="text-[11px] font-semibold text-sky-400 mb-2 flex items-center gap-1">
+                    <ArrowRight className="h-3.5 w-3.5" />
+                    Continue investigating {selectedNode.label}
+                  </div>
+                  <div className="space-y-1.5">
+                    {COMPONENT_ACTIONS.map((action) => (
+                      <button
+                        key={action.href}
+                        type="button"
+                        title={action.description}
+                        onClick={() =>
+                          router.push(
+                            componentDeepLink(action.href, selectedNode.id, incidentId)
+                          )
+                        }
+                        className="w-full flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-2.5 py-1.5 text-left text-[11px] text-slate-300 transition hover:border-sky-500/40 hover:bg-slate-800/60 hover:text-slate-100"
+                      >
+                        <span>{action.label}</span>
+                        <ArrowRight className="h-3 w-3 shrink-0 opacity-60" />
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-[10px] leading-snug text-slate-500">
+                    Opens the tool with this component and incident already
+                    selected.
+                  </p>
+                </div>
               </div>
             ) : (
               <div className="text-center py-8 text-slate-500 text-xs">
@@ -946,7 +1058,16 @@ export default function HolographicReconstructionPage() {
               href: "/evidence-vault",
             },
           ].map((card, index) => (
-            <a key={index} href={card.href} className={cardStyles()}>
+            // The incident (and the inspected component, when one is
+            // selected) rides along, so opening a tool from here lands on the
+            // same investigation rather than on whatever that page last had
+            // active. Plain anchors are kept — these are navigational links,
+            // and the targets are separate routes.
+            <a
+              key={index}
+              href={componentDeepLink(card.href, selectedNode?.id ?? null, incidentId)}
+              className={cardStyles()}
+            >
               <div className="flex items-start gap-4">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400">
                   <card.icon className="h-5 w-5" />

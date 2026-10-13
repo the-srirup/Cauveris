@@ -3,3 +3,4 @@
  */
 
 export * from "./IncidentComparison";
+export * from "./ProvenanceBanner";

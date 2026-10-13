@@ -125,6 +125,31 @@ export interface AnomalyData {
   deviation: number;
 }
 
+/**
+ * Where a reconstruction's evidence came from.
+ *
+ * `verified_bundle` means the backend resolved a real incident bundle on
+ * disk; `synthetic_fallback` means it did not, and the graph on screen is a
+ * fabricated scenario. The UI must render that difference — a synthetic
+ * reconstruction that looks identical to a real one is worse than no
+ * reconstruction, because it can be acted on.
+ */
+export type DataSource = "verified_bundle" | "synthetic_fallback";
+
+export type ProvenanceSeverity = "info" | "warning" | "critical";
+
+export interface ProvenanceWarning {
+  /** Stable machine-readable identifier (e.g. "BOUNDARY_LAYERS_MISSING"). */
+  code: string;
+  severity: ProvenanceSeverity;
+  /** What is wrong with this reconstruction's evidence. */
+  message: string;
+  /** What the engineer cannot conclude as a result. */
+  impact: string;
+  /** The concrete next step that would fix it. */
+  remediation: string;
+}
+
 export interface VisualizationMetadata {
   overall_fidelity: number;
   boundary_residual: number;
@@ -132,6 +157,26 @@ export interface VisualizationMetadata {
   num_ambiguity_regions: number;
   time_window_ns: number;
   generation_timestamp_ns: number;
+
+  // --- Evidence provenance (Phase 1: sparse-bundle resilience) ---
+  // Optional because older backends and the Next.js mock route predate them;
+  // treat `undefined` as "unknown provenance" and say so rather than assuming
+  // the reconstruction is trustworthy.
+  data_source?: DataSource;
+  bundle_found?: boolean;
+  /** Path the bundle was resolved from, or null when none was found. */
+  bundle_path?: string | null;
+  /** Every path that was probed, in priority order — shown when nothing was found. */
+  bundle_search_paths?: string[];
+  timeline_event_count?: number;
+  /** Boundary layers that actually reached the inversion. */
+  observed_boundary_layers?: string[];
+  /** Boundary layers absent from the bundle — the blind spots. */
+  missing_boundary_layers?: string[];
+  /** Identity of the fabricated scenario, when `data_source` is synthetic. */
+  synthetic_seed?: number | null;
+  synthetic_incident_type?: string | null;
+  provenance_warnings?: ProvenanceWarning[];
 }
 
 export interface VisualizationResponse {

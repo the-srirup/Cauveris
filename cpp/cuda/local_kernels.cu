@@ -110,7 +110,9 @@ __global__ void build_local_kernels_kernel(
     int num_components,
     int num_layers,
     int time_steps,
-    float time_step_ns
+    float time_step_ns,
+    DecayType decay_type,
+    const float* decay_params
 ) {
     // Each thread handles one (component, layer) pair
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -130,9 +132,16 @@ __global__ void build_local_kernels_kernel(
     float* kernel = gpu_kernels.get_kernel_ptr(0, comp, layer);
     if (!kernel) return;
 
-    // Default decay parameters
-    float params[4] = {decay_rate, 0.0f, 0.0f, 0.0f};
-    DecayType decay_type = DecayType::EXPONENTIAL;
+    // Use passed decay parameters; fallback to component_decay_rates for exp
+    float params[4];
+    params[0] = decay_params[idx * 4];
+    if (decay_params[idx * 4 + 1] != 0.0f) {
+        params[1] = decay_params[idx * 4 + 1];
+    } else {
+        params[1] = decay_rate;
+    }
+    params[2] = decay_params[idx * 4 + 2];
+    params[3] = decay_params[idx * 4 + 3];
 
     // Compute unnormalized kernel and sum for normalization
     float sum = 0.0f;
@@ -454,7 +463,7 @@ void launch_build_local_kernels(LocalKernelsGPU& gpu_kernels,
     cudaMemcpy(d_component_ids, component_ids, num_components * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_component_types, component_types, num_components * sizeof(ComponentType), cudaMemcpyHostToDevice);
 
-    // Component decay rates
+    // Component decay rates (used as default decay params)
     float h_decay_rates[static_cast<int>(ComponentType::COUNT)];
     for (int i = 0; i < static_cast<int>(ComponentType::COUNT); ++i) {
         h_decay_rates[i] = static_cast<float>(config.component_decay_rates[i]);
@@ -472,6 +481,39 @@ void launch_build_local_kernels(LocalKernelsGPU& gpu_kernels,
     cudaMalloc(&d_layer_weights, static_cast<int>(BoundaryLayer::COUNT) * sizeof(float));
     cudaMemcpy(d_layer_weights, h_layer_weights, static_cast<int>(BoundaryLayer::COUNT) * sizeof(float), cudaMemcpyHostToDevice);
 
+    // Build decay params array: for each component-layer pair, store decay parameters
+    // Format: [decay_type, param1, param2, param3] where param1 = decay_rate for exponential
+    float* h_decay_params = new float[total_pairs * 4];
+    uint8_t* h_decay_types = new uint8_t[total_pairs];
+
+    for (int comp = 0; comp < num_components; ++comp) {
+        ComponentType comp_type = component_types[comp];
+        float base_decay = static_cast<float>(config.component_decay_rates[static_cast<int>(comp_type)]);
+
+        for (int layer = 0; layer < static_cast<int>(BoundaryLayer::COUNT); ++layer) {
+            int pair_idx = comp * static_cast<int>(BoundaryLayer::COUNT) + layer;
+            h_decay_types[pair_idx] = static_cast<uint8_t>(config.default_decay);
+
+            // Initialize params: for EXPONENTIAL decay, param1 is decay_rate
+            h_decay_params[pair_idx * 4] = base_decay;  // lambda for exponential
+            h_decay_params[pair_idx * 4 + 1] = (config.default_decay == DecayType::EXPONENTIAL) ? base_decay : 0.0f;  // k for gamma
+            h_decay_params[pair_idx * 4 + 2] = 0.0f;
+            h_decay_params[pair_idx * 4 + 3] = 0.0f;
+        }
+    }
+
+    float* d_decay_params;
+    cudaMalloc(&d_decay_params, total_pairs * 4 * sizeof(float));
+    cudaMemcpy(d_decay_params, h_decay_params, total_pairs * 4 * sizeof(float), cudaMemcpyHostToDevice);
+
+    uint8_t* d_decay_types;
+    cudaMalloc(&d_decay_types, total_pairs * sizeof(uint8_t));
+    cudaMemcpy(d_decay_types, h_decay_types, total_pairs * sizeof(uint8_t), cudaMemcpyHostToDevice);
+
+    // Cleanup host arrays
+    delete[] h_decay_params;
+    delete[] h_decay_types;
+
     // Launch kernel
     build_local_kernels_kernel<<<blocks, threads>>>(
         gpu_kernels,
@@ -482,7 +524,9 @@ void launch_build_local_kernels(LocalKernelsGPU& gpu_kernels,
         num_components,
         static_cast<int>(BoundaryLayer::COUNT),
         gpu_kernels.time_steps,
-        static_cast<float>(config.time_step_ns)
+        static_cast<float>(config.time_step_ns),
+        static_cast<DecayType>(config.default_decay),
+        d_decay_params
     );
 
     cudaDeviceSynchronize();
@@ -492,6 +536,8 @@ void launch_build_local_kernels(LocalKernelsGPU& gpu_kernels,
     cudaFree(d_component_types);
     cudaFree(d_decay_rates);
     cudaFree(d_layer_weights);
+    cudaFree(d_decay_params);
+    cudaFree(d_decay_types);
 }
 
 void launch_build_local_kernels_advanced(LocalKernelsGPU& gpu_kernels,
