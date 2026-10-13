@@ -22,8 +22,6 @@ enum complement. That told a system modelling only logs and metrics that it had
 five missing layers — a fabricated deficiency on a complete bundle.
 """
 
-import pytest
-
 from cauveris.holographic.heu import BoundaryLayer
 from cauveris.holographic.visualization import (
     DATA_SOURCE_SYNTHETIC,
