@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import secrets
 import uuid
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -15,40 +16,24 @@ from typing import Any, Dict, List, Optional, Set
 import logging
 
 import jwt
-from pydantic import BaseModel
-
+from pydantic import BaseModel, field_validator
 
 logger = logging.getLogger(__name__)
 
-# Password hashing context
-# Use a simple hash for testing (replace with proper bcrypt in production)
+# Password hashing context using bcrypt
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
-    """Hash password using SHA-256 with salt."""
-    salt = secrets.token_hex(16)
-    hash_val = hashlib.sha256((password + salt).encode()).hexdigest()
-    return f"sha256${salt}${hash_val}"
+    """Hash password using bcrypt."""
+    return pwd_context.hash(password)
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    """Verify password against hash."""
-    if not password_hash.startswith("sha256$"):
-        return False
-    _, salt, hash_val = password_hash.split("$", 2)
-    return hashlib.sha256((password + salt).encode()).hexdigest() == hash_val
-
-
-# Create a mock context for compatibility
-class MockPwdContext:
-    def hash(self, password: str) -> str:
-        return hash_password(password)
-
-    def verify(self, password: str, password_hash: str) -> bool:
-        return verify_password(password, password_hash)
-
-
-pwd_context = MockPwdContext()
+    """Verify password against bcrypt hash."""
+    return pwd_context.verify(password, password_hash)
 
 
 class UserRole(str, Enum):
@@ -827,6 +812,34 @@ class RegisterRequest(BaseModel):
     full_name: str
     org_name: Optional[str] = None
     org_slug: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, v: str) -> str:
+        """Validate password meets minimum security requirements."""
+        import os
+        from cauveris.config import get_settings
+
+        settings = get_settings()
+        min_length = settings.auth_password_min_length
+
+        if len(v) < min_length:
+            raise ValueError(
+                f"Password must be at least {min_length} characters long"
+            )
+
+        # Check for at least one uppercase, one lowercase, one digit
+        has_upper = any(c.isupper() for c in v)
+        has_lower = any(c.islower() for c in v)
+        has_digit = any(c.isdigit() for c in v)
+
+        if not (has_upper and has_lower and has_digit):
+            raise ValueError(
+                "Password must contain at least one uppercase letter, "
+                "one lowercase letter, and one digit"
+            )
+
+        return v
 
 
 class RefreshRequest(BaseModel):

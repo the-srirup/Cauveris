@@ -4,25 +4,14 @@ import { ShellProvider } from '@/lib/useShell';
 
 expect.extend(toHaveNoViolations);
 
-// Mock lucide-react
-vi.mock('lucide-react', () => {
-  const icons = [
-    'LayoutDashboard', 'Clock', 'GitBranch', 'Eye', 'EyeOff', 'FlaskConical', 'Wrench',
-    'RotateCcw', 'Database', 'FileText', 'Settings', 'ChevronLeft', 'Menu',
-    'X', 'ChevronRight', 'Zap', 'Download', 'AlertTriangle', 'Plus', 'Upload',
-    'Play', 'Square', 'ExternalLink', 'Search', 'Bot', 'Scale', 'Shield',
-    'Link', 'Check', 'HelpCircle', 'Info', 'Loader2', 'Terminal', 'WifiOff',
-    'AlertCircle', 'CheckCircle', 'CheckCircle2', 'XCircle', 'ChevronUp', 'ChevronDown', 'Filter', 'Trash2',
-    'Palette', 'Bell', 'Keyboard', 'Command', 'Globe', 'Moon', 'Sun', 'Monitor', 'Key', 'Server',
-    'Sliders', 'Copy',
-    'Magnet', 'ZoomIn', 'ZoomOut', 'Maximize', 'ArrowLeft', 'ArrowRight', 'SkipBack', 'SkipForward', 'Timer', 'Package', 'Wrench',
-  ];
-  const mocks: Record<string, any> = {};
-  icons.forEach(name => {
-    mocks[name] = (props: any) => <svg data-testid={`icon-${name.toLowerCase()}`} {...props} />;
-  });
-  return mocks;
+// Mock lucide-react with importOriginal
+vi.mock('lucide-react', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, any>>();
+  return {
+    ...actual,
+  };
 });
+
 
 // Mock next/navigation
 vi.mock("next/navigation", () => ({

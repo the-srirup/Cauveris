@@ -12,62 +12,41 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-// Mock lucide-react - just provide basic icons
+// Mock lucide-react with Proxy to provide any icon dynamically
 vi.mock('lucide-react', () => {
-  // Create a mock icon component
   const createMockIcon = (name: string) => {
-    return (props: any) => <svg data-testid={`icon-${name}`} {...props} />;
+    const Icon = (props: any) => <svg data-testid={`icon-${name}`} {...props} />;
+    Icon.displayName = name;
+    return Icon;
   };
 
-  return {
-    Zap: createMockIcon('Zap'),
-    Database: createMockIcon('Database'),
-    GitBranch: createMockIcon('GitBranch'),
-    FlaskConical: createMockIcon('FlaskConical'),
-    Wrench: createMockIcon('Wrench'),
-    Eye: createMockIcon('Eye'),
-    FileText: createMockIcon('FileText'),
-    RotateCcw: createMockIcon('RotateCcw'),
-    Download: createMockIcon('Download'),
-    AlertTriangle: createMockIcon('AlertTriangle'),
-    Plus: createMockIcon('Plus'),
-    Upload: createMockIcon('Upload'),
-    Play: createMockIcon('Play'),
-    Square: createMockIcon('Square'),
-    ExternalLink: createMockIcon('ExternalLink'),
-    Clock: createMockIcon('Clock'),
-    ChevronRight: createMockIcon('ChevronRight'),
-    ChevronLeft: createMockIcon('ChevronLeft'),
-    Menu: createMockIcon('Menu'),
-    X: createMockIcon('X'),
-    LayoutDashboard: createMockIcon('LayoutDashboard'),
-    Search: createMockIcon('Search'),
-    Bot: createMockIcon('Bot'),
-    Scale: createMockIcon('Scale'),
-    Shield: createMockIcon('Shield'),
-    Link: createMockIcon('Link'),
-    Check: createMockIcon('Check'),
-    HelpCircle: createMockIcon('HelpCircle'),
-    Info: createMockIcon('Info'),
-    Loader2: createMockIcon('Loader2'),
-    Terminal: createMockIcon('Terminal'),
-    WifiOff: createMockIcon('WifiOff'),
-    AlertCircle: createMockIcon('AlertCircle'),
-    CheckCircle: createMockIcon('CheckCircle'),
-    XCircle: createMockIcon('XCircle'),
-    ChevronUp: createMockIcon('ChevronUp'),
-    ChevronDown: createMockIcon('ChevronDown'),
-    Filter: createMockIcon('Filter'),
-    Trash2: createMockIcon('Trash2'),
-    Settings: createMockIcon('Settings'),
-    Palette: createMockIcon('Palette'),
-    Bell: createMockIcon('Bell'),
-    Moon: createMockIcon('Moon'),
-    Sun: createMockIcon('Sun'),
-    Monitor: createMockIcon('Monitor'),
-    Globe: createMockIcon('Globe'),
-  };
+  return new Proxy({}, {
+    get: (_target, prop: string) => {
+      if (prop === '__esModule') return true;
+      if (prop === 'then') return undefined;
+      return createMockIcon(String(prop));
+    },
+    has: () => true,
+  });
 });
+
+// Mock @react-three/fiber and @react-three/drei
+vi.mock('@react-three/fiber', () => ({
+  Canvas: ({ children }: any) => <div data-testid="r3f-canvas">{children}</div>,
+  useFrame: vi.fn(),
+  useThree: () => ({
+    camera: { position: { set: vi.fn() } },
+    scene: {},
+    gl: { domElement: {} },
+  }),
+  createPortal: ({ children }: any) => children,
+}));
+
+vi.mock('@react-three/drei', () => ({
+  OrbitControls: () => null,
+  Stars: () => null,
+  Html: ({ children }: any) => <div>{children}</div>,
+}));
 
 // Mock Shell context
 const mockShellState = {

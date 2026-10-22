@@ -4,8 +4,36 @@ Loads settings from environment variables with sensible defaults.
 """
 
 import os
+import secrets
+import warnings
 from typing import Optional
 from dataclasses import dataclass, field
+
+
+def _generate_secure_secret() -> str:
+    """Generate a cryptographically secure random secret."""
+    return secrets.token_urlsafe(32)
+
+
+def _validate_secret_key(key: str, env_name: str = "CAUVERIS_SECRET_KEY") -> str:
+    """Validate secret key meets security requirements."""
+    if not key or key == "dev-secret-change-in-prod":
+        if not key:
+            warnings.warn(
+                f"{env_name} is not set. Using insecure random key. "
+                "Set {env_name} environment variable in production!",
+                UserWarning
+            )
+        return _generate_secure_secret()
+
+    # Validate minimum length for security
+    if len(key) < 32:
+        raise ValueError(
+            f"{env_name} must be at least 32 characters long for security. "
+            f"Current length: {len(key)}"
+        )
+
+    return key
 
 
 @dataclass
@@ -21,7 +49,9 @@ class Settings:
 
     # Security
     secret_key: str = field(
-        default_factory=lambda: os.getenv("CAUVERIS_SECRET_KEY", "dev-secret-change-in-prod")
+        default_factory=lambda: _validate_secret_key(
+            os.getenv("CAUVERIS_SECRET_KEY", "dev-secret-change-in-prod")
+        )
     )
     max_upload_size: int = field(
         default_factory=lambda: int(os.getenv("CAUVERIS_MAX_UPLOAD_SIZE", "104857600"))
@@ -220,8 +250,9 @@ class Settings:
         default_factory=lambda: os.getenv("CAUVERIS_AUTH_REDIS_URL", "redis://localhost:6379")
     )
     auth_jwt_secret: str = field(
-        default_factory=lambda: os.getenv(
-            "CAUVERIS_JWT_SECRET", "dev-jwt-secret-change-in-production-min-32-chars"
+        default_factory=lambda: _validate_secret_key(
+            os.getenv("CAUVERIS_JWT_SECRET", ""),
+            "CAUVERIS_JWT_SECRET"
         )
     )
     auth_jwt_algorithm: str = field(
@@ -243,7 +274,7 @@ class Settings:
         default_factory=lambda: os.getenv("CAUVERIS_AUTH_MFA_REQUIRED_ROLES", "admin,super_admin")
     )
     auth_cookie_secure: bool = field(
-        default_factory=lambda: os.getenv("CAUVERIS_AUTH_COOKIE_SECURE", "false").lower() == "true"
+        default_factory=lambda: os.getenv("CAUVERIS_AUTH_COOKIE_SECURE", "true").lower() == "true"
     )
     auth_cookie_samesite: str = field(
         default_factory=lambda: os.getenv("CAUVERIS_AUTH_COOKIE_SAMESITE", "lax")

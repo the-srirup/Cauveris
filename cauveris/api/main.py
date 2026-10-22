@@ -129,32 +129,7 @@ async def startup_event():
     )
     # Initialize auth store
     init_auth_store(backend=settings.auth_backend, redis_url=settings.auth_redis_url)
-    auth_store = get_auth_store()
-    if auth_store:
-        try:
-            demo_user = await auth_store.get_user_by_email("demo@cauveris.local")
-            if not demo_user:
-                demo_org = Organization(
-                    id="org_demo",
-                    name="Demo Organization",
-                    slug="demo",
-                    description="Demo organization for local testing",
-                    owner_user_id="usr_demo",
-                    is_active=True,
-                )
-                await auth_store.create_org(demo_org)
-                demo_user = User(
-                    id="usr_demo",
-                    email="demo@cauveris.local",
-                    full_name="Demo User",
-                    role=UserRole.ENGINEER,
-                    org_id="org_demo",
-                    is_active=True,
-                )
-                demo_user.set_password("demo123456")
-                await auth_store.create_user(demo_user)
-        except Exception as e:
-            logger.warning(f"Could not seed demo user: {e}")
+    # Note: Demo user seeding removed for production security
 
 
 @app.on_event("shutdown")
@@ -173,12 +148,23 @@ async def shutdown_event():
 
 
 # CORS middleware
+from cauveris.config import get_settings
+
+settings = get_settings()
+# Get allowed origins from environment, default to same origin for security
+_allowed_origins_str = os.getenv("CAUVERIS_CORS_ORIGINS", "")
+if _allowed_origins_str:
+    _allowed_origins = [origin.strip() for origin in _allowed_origins_str.split(",")]
+else:
+    # Default to empty list - no cross-origin access by default for security
+    _allowed_origins = []
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Forwarded-For"],
 )
 
 
@@ -334,9 +320,6 @@ async def idempotency_middleware(request: Request, call_next):
     idempotency_key = request.headers.get("Idempotency-Key")
     if not idempotency_key:
         return await call_next(request)
-
-    # DEBUG
-    print(f"IDEMPOTENCY: {request.method} {request.url.path} key={idempotency_key[:20]}")
 
     # Validate key format
     import re
@@ -611,12 +594,6 @@ def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[st
     global _anonymous_incident_count, _global_active_incidents
     settings = get_settings()
     user_id, org_id, is_anonymous = _get_client_identity(request)
-
-    print(f"DEBUG LIMITS: user={user_id}, org={org_id}, anon={is_anonymous}")
-    print(f"DEBUG LIMITS: _anonymous_incident_count={_anonymous_incident_count}")
-    print(f"DEBUG LIMITS: _global_active_incidents={_global_active_incidents}")
-    print(f"DEBUG LIMITS: _active_incidents_per_user={dict(_active_incidents_per_user)}")
-    print(f"DEBUG LIMITS: _active_incidents_per_org={dict(_active_incidents_per_org)}")
 
     headers = {}
 
@@ -2599,10 +2576,10 @@ async def reconstruct_incident(
     )
 
     # Prevent duplicate start request if already running
-    print(f"DEBUG: pipeline_tasks keys: {list(pipeline_tasks.keys())}")
+    logger.debug(f"Pipeline tasks: {list(pipeline_tasks.keys())}")
     if incident_id in pipeline_tasks:
-        print(
-            f"DEBUG: Found existing task for {incident_id}, is_running: {pipeline_tasks[incident_id].is_running()}"
+        logger.debug(
+            f"Found existing task for {incident_id}, is_running: {pipeline_tasks[incident_id].is_running()}"
         )
         existing_orch = pipeline_tasks[incident_id]
         if existing_orch.is_running():
