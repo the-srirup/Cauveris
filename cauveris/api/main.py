@@ -3,6 +3,7 @@ Main FastAPI application for Cauveris.
 """
 
 import asyncio
+import os
 import shutil
 import time
 import uuid
@@ -148,8 +149,6 @@ async def shutdown_event():
 
 
 # CORS middleware
-from cauveris.config import get_settings
-
 settings = get_settings()
 # Get allowed origins from environment, default to same origin for security
 _allowed_origins_str = os.getenv("CAUVERIS_CORS_ORIGINS", "")

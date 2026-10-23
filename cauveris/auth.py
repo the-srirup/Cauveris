@@ -4,7 +4,6 @@ Provides user authentication, JWT token management, session handling, and RBAC.
 """
 
 import asyncio
-import hashlib
 import secrets
 import uuid
 import re
@@ -28,6 +27,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def hash_password(password: str) -> str:
     """Hash password using bcrypt."""
+    # bcrypt has a 72-byte limit for passwords, so we truncate if needed
+    if len(password.encode('utf-8')) > 72:
+        password = password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
     return pwd_context.hash(password)
 
 
@@ -252,6 +254,9 @@ class User:
         return pwd_context.verify(password, self.password_hash)
 
     def set_password(self, password: str) -> None:
+        # bcrypt has a 72-byte limit for passwords, so we truncate if needed
+        if len(password.encode('utf-8')) > 72:
+            password = password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
         self.password_hash = pwd_context.hash(password)
 
     def has_permission(self, permission: str) -> bool:
@@ -338,6 +343,9 @@ class APIKey:
         return pwd_context.verify(raw_key, self.key_hash)
 
     def set_key(self, raw_key: str) -> None:
+        # bcrypt has a 72-byte limit for keys, so we truncate if needed
+        if len(raw_key.encode('utf-8')) > 72:
+            raw_key = raw_key.encode('utf-8')[:72].decode('utf-8', errors='ignore')
         self.key_hash = pwd_context.hash(raw_key)
         self.key_prefix = raw_key[:8]
 

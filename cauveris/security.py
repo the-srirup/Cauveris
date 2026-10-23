@@ -28,9 +28,9 @@ SECRET_PATTERNS = [
         r'(?i)aws[_-]?secret[_-]?access[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]',
         "AWS Secret Key",
     ),
-    (r"(?i)aws[_-]?access[_-]?key[_-]?id[\s]*[:=][\s]*[\'"]?([A-Z0-9]{20})", "AWS Access Key ID"),
+    (r'(?i)aws[_-]?access[_-]?key[_-]?id[\s]*[:=][\s]*[\'"]?([A-Z0-9]{20})', "AWS Access Key ID"),
     # GCP
-    (r"(?i)google[_-]?api[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{30,})[\'"]', "Google API Key"),
+    (r'(?i)google[_-]?api[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{30,})[\'"]', "Google API Key"),
     (r"(?i)service[_-]?account[_-]?key[\s]*[:=]", "Service Account Key"),
     # Database URLs
     (r'(?i)(postgres|postgresql|mysql|mongodb|redis|amqp|elasticsearch)://[^\s\'"]+', "Database URL"),
@@ -40,14 +40,14 @@ SECRET_PATTERNS = [
     (r"-----BEGIN RSA PRIVATE KEY-----", "RSA Private Key"),
     (r"-----BEGIN EC PRIVATE KEY-----", "EC Private Key"),
     (r"-----BEGIN OPENSSH PRIVATE KEY-----", "OpenSSH Private Key"),
-    (r"(?i)private[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]", "Private Key"),
-    (r"(?i)pem[_-]?file[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]", "PEM File"),
+    (r'(?i)private[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Private Key"),
+    (r'(?i)pem[_-]?file[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "PEM File"),
     # Credentials
     (r'(?i)(password|passwd|pwd)[\s]*[:=][\s]*[\'"]([^\'"]{8,})[\'"]', "Password"),
     (r'(?i)credential[_-]?file[\s]*[:=]', "Credential File"),
     # Heroku / General secrets
     (r"(?i)heroku[_-]?api[_-]?key[\s]*[:=]", "Heroku API Key"),
-    (r"(?i)stripe[_-]?secret[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]", "Stripe Secret Key"),
+    (r'(?i)stripe[_-]?secret[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Stripe Secret Key"),
     # OAuth / API tokens
     (r'(?i)client[_-]?secret[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Client Secret"),
     (r'(?i)api[_-]?token[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "API Token"),
