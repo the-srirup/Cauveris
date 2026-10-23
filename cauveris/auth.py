@@ -6,21 +6,16 @@ Provides user authentication, JWT token management, session handling, and RBAC.
 import asyncio
 import secrets
 import uuid
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
-import logging
+
+from passlib.context import CryptContext
 
 import jwt
 from pydantic import BaseModel, field_validator
-
-logger = logging.getLogger(__name__)
-
-# Password hashing context using bcrypt
-from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -825,7 +820,6 @@ class RegisterRequest(BaseModel):
     @classmethod
     def validate_password_strength(cls, v: str) -> str:
         """Validate password meets minimum security requirements."""
-        import os
         from cauveris.config import get_settings
 
         settings = get_settings()
