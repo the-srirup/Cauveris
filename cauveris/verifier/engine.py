@@ -38,7 +38,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from cauveris.analysis.model import TwinParameters
 from cauveris.analysis.system_model import SystemModel, get_system_model
@@ -805,7 +805,6 @@ if __name__ == "__main__":
 
     def _snapshot_from_bytes(self, originals: Dict[str, bytes]) -> Dict[str, Any]:
         """The safety snapshot of the pre-patch workspace."""
-        import tempfile
 
         import yaml as _yaml
 

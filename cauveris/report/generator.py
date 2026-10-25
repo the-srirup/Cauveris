@@ -15,7 +15,6 @@ from cauveris.schemas.hypothesis import Hypothesis
 from cauveris.schemas.experiment import Experiment
 from cauveris.schemas.patch import PatchCandidate, VerificationReport
 from cauveris.simulation.runner import DigitalTwinFaultInjectors, CloudToRobotDigitalTwin
-from cauveris.simulation.mapping import map_experiment_to_intervention
 from cauveris.config import get_settings
 import logging
 

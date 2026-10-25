@@ -20,9 +20,9 @@ import json
 import logging
 import math
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 from cauveris.analysis.model import SimulationOutcome, TwinParameters, simulate_pipeline
 from cauveris.analysis.system_model import Kinematics, SafetyBudget, SystemModel, get_system_model
@@ -293,21 +293,24 @@ class CloudToRobotDigitalTwin:
             theta += omega * dt_s
 
             needed_stopping_dist = self.stopping_distance(v, age_ms)
-            clearance = (obstacle_x - x) if obstacle_x is not None else None
             status = "NOMINAL"
             margin: Optional[float] = None
 
             if obstacle_x is not None:
-                margin = clearance - needed_stopping_dist
+                obs_clearance = obstacle_x - x
+                clearance = obs_clearance
+                margin = obs_clearance - needed_stopping_dist
                 if min_clearance_margin_m is None or margin < min_clearance_margin_m:
                     min_clearance_margin_m = margin
-                if clearance <= needed_stopping_dist + (v * dt_s):
+                if obs_clearance <= needed_stopping_dist + (v * dt_s):
                     # Service deceleration for detected obstacle
                     status = "BRAKING"
                     v = max(0.0, v - brake * dt_s)
                 else:
                     v = min(max_speed, v + accel * dt_s)
-            elif not halted and dist_to_goal > 0.4:
+            else:
+                clearance = None
+            if not halted and dist_to_goal > 0.4 and obstacle_x is None:
                 v = min(max_speed, v + accel * dt_s)
 
             # ISO 13849 Category 1 / PL-d Safety Watchdog:
@@ -720,6 +723,7 @@ class SimulationRunner:
             "avg_total_latency": round(mean_age, 2),
             "max_total_latency": round(self._max(trial_records, "total_latency_ms"), 2),
             "p95_total_latency": round(p95_age, 2),
+            "relative_latency_reduction": round(relative_reduction, 4),
             "hypothesis_supported": bool(supported),
             "budget_satisfied": bool(budget_satisfied),
             "baseline_comparison": round(baseline_stale, 4),

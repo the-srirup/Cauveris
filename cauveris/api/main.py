@@ -71,7 +71,7 @@ from cauveris.concurrency import (
 )
 from cauveris.job_queue import init_job_queue, close_job_queue
 from cauveris.config import get_settings
-from cauveris.api.holographic import router as holographic_router
+from cauveris.api.holographic import router as holographic_router, get_holographic_reconstruction
 
 
 class CreateIncidentRequest(BaseModel):
@@ -1160,7 +1160,6 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
 
 
 # Include holographic router
-from cauveris.api.holographic import get_holographic_reconstruction
 app.include_router(holographic_router, prefix="/api/v1")
 
 

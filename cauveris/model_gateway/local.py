@@ -77,8 +77,10 @@ class LocalModelGateway(ModelGateway):
                 if part.strip()
             ]
         self.endpoints: List[str] = endpoints
-        self.model_name = model_name or getattr(
-            self.settings, "local_model_name", "qwen2.5:7b-instruct"
+        self.model_name: str = str(
+            model_name
+            or getattr(self.settings, "local_model_name", "qwen2.5:7b-instruct")
+            or "qwen2.5:7b-instruct"
         )
         self.timeout = float(
             timeout

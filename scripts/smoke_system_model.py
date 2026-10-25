@@ -9,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from cauveris.analysis import build_system_model  # noqa: E402
-from cauveris.analysis.system_model import ParameterRole  # noqa: E402
 
 BUNDLE = ROOT / "golden_incident" / "incident-CAU-0001"
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Assemble a standalone CUDA toolkit from NVIDIA's redistributable components.
 
@@ -26,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import platform
 import shutil
 import ssl
@@ -73,9 +71,11 @@ def download(url: str, destination: Path) -> Path:
     print(f"  fetching {destination.name}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_suffix(destination.suffix + ".part")
-    with urllib.request.urlopen(url, context=ssl.create_default_context()) as response:
-        with tmp.open("wb") as handle:
-            shutil.copyfileobj(response, handle)
+    with (
+        urllib.request.urlopen(url, context=ssl.create_default_context()) as response,
+        tmp.open("wb") as handle,
+    ):
+        shutil.copyfileobj(response, handle)
     tmp.replace(destination)
     return destination
 

@@ -26,22 +26,15 @@ The model contains:
 from __future__ import annotations
 
 import logging
-import math
 import re
-import statistics
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .evidence import (
-    ConfigChange,
     DeploymentEvent,
     EvidenceBundle,
-    LogRecord,
-    MetricSample,
-    RecordingMessage,
-    Span,
     parse_timestamp,
 )
 from .model import (
@@ -57,7 +50,6 @@ from .statistics import (
     detect_change_point,
     distribution,
     linear_fit,
-    mann_whitney,
     percentile,
 )
 
@@ -123,7 +115,7 @@ class ParameterRole:
     )
 
 
-_ROLE_PATTERNS: List[Tuple[ParameterRole, Tuple[str, ...]]] = [
+_ROLE_PATTERNS: List[Tuple[str, Tuple[str, ...]]] = [
     (ParameterRole.SAFETY_BUDGET, ("freshness_budget", "staleness_budget", "max_age", "max_staleness")),
     (ParameterRole.BATCH_WINDOW, ("batch_window", "batch_timeout", "batching_window", "max_delay", "batching_delay")),
     (ParameterRole.BATCH_SIZE, ("max_batch_size", "batch_size", "max_batch", "batch_limit")),
@@ -758,7 +750,6 @@ def _build_budget(model: SystemModel) -> None:
         budget.required_rate_hz = rate[1]
         budget.sources["required_rate_hz"] = rate[0]
 
-    stop_on_stale = _find_config_value(config, (ParameterRole.OTHER,))
     for key, value in config.items():
         if "emergency_stop" in key.lower() and "stale" in key.lower():
             budget.emergency_stop_on_stale = bool(value)
@@ -1212,16 +1203,17 @@ def _correlate_with_deployments(model: SystemModel) -> None:
     if preceding:
         suspect = preceding[-1]
         model.anomaly_onset_correlated_deployment = suspect
-        delta = (onset - suspect.timestamp).total_seconds()
-        model.notes.append(
-            f"Deployment {suspect.deployment_id} preceded the anomaly onset by "
-            f"{delta:.1f}s ({delta / 60.0:.1f} min); it is the most recent "
-            "rollout before the incident and is the prime suspect."
-        )
-        # A rollout that is very old is a weaker suspect than one that landed
-        # shortly before the onset; say so rather than implying equal weight.
-        if delta > 24 * 3600:
+        if suspect.timestamp is not None:
+            delta = (onset - suspect.timestamp).total_seconds()
             model.notes.append(
+                f"Deployment {suspect.deployment_id} preceded the anomaly onset by "
+                f"{delta:.1f}s ({delta / 60.0:.1f} min); it is the most recent "
+                "rollout before the incident and is the prime suspect."
+            )
+            # A rollout that is very old is a weaker suspect than one that landed
+            # shortly before the onset; say so rather than implying equal weight.
+            if delta > 24 * 3600:
+                model.notes.append(
                 f"Deployment {suspect.deployment_id} landed more than a day before "
                 "the onset, so a causal link is possible but not strong."
             )
@@ -1618,7 +1610,6 @@ def _check_consistency(model: SystemModel) -> None:
     contradictions are reported rather than averaged away.
     """
     params = model.parameters
-    window_s = params.batching_window_ms / 1000.0
     max_batch = params.max_batch_size
 
     evidence = _arrival_rate_evidence(model)

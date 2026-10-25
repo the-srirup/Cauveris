@@ -14,7 +14,7 @@ import json
 import re
 import yaml
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 from cauveris.schemas.experiment import Experiment
 from cauveris.schemas.hypothesis import Hypothesis
 from cauveris.simulation.mapping import map_hypothesis_to_intervention

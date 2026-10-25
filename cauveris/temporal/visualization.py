@@ -183,7 +183,7 @@ def _build_lane_topology(
     for node in nodes:
         lane_events.setdefault(node.get("lane", ""), []).append(node)
 
-    lane_pairs: Dict[Tuple[str, str], Dict[str, int]] = {}
+    lane_pairs: Dict[Tuple[str, str], int] = {}
     lane_provenance: Dict[Tuple[str, str], Dict[str, int]] = {}
     for edge in edges:
         src = lane_of.get(edge.get("source", ""))
@@ -198,9 +198,9 @@ def _build_lane_topology(
 
     # Longest-path tier over the lane DAG (iterative, cycle-safe).
     parents: Dict[str, set] = {}
-    for src, tgt in lane_pairs:
-        parents.setdefault(tgt, set()).add(src)
-        parents.setdefault(src, set())
+    for src_lane, tgt_lane in lane_pairs:
+        parents.setdefault(tgt_lane, set()).add(src_lane)
+        parents.setdefault(src_lane, set())
 
     level: Dict[str, int] = {}
     for lane in parents:
@@ -242,7 +242,7 @@ def _build_lane_topology(
                 "last_message": ordered[-1].get("message", ""),
             }
         )
-    lanes.sort(key=lambda l: (l["tier"], l["lane"]))
+    lanes.sort(key=lambda item: (item["tier"], item["lane"]))
 
     lane_edges = []
     for (src, tgt), count in lane_pairs.items():
@@ -254,7 +254,7 @@ def _build_lane_topology(
                 "provenance": lane_provenance.get((src, tgt), {}),
             }
         )
-    lane_edges.sort(key=lambda e: (level.get(e["source"], 0), e["target"]))
+    lane_edges.sort(key=lambda edge_item: (level.get(str(edge_item["source"]), 0), str(edge_item["target"])))
 
     return lanes, lane_edges
 

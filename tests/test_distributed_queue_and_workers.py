@@ -319,7 +319,6 @@ async def test_the_queue_says_whether_a_worker_is_serving_it():
     "How many jobs are queued" is not the interesting question; "is anybody
     going to work on them" is.
     """
-    from cauveris.job_queue import JobQueue
 
     backend = InMemoryQueueBackend(max_size=10, default_ttl=60)
     queue = JobQueue(backend, worker_id="stats-worker")

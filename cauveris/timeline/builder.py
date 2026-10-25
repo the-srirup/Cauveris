@@ -118,7 +118,6 @@ class TimelineBuilder:
         # The component the system's own runtime evidence belongs to: the
         # robot, as the bundle names it.
         system_component = self._system_component(bundle_path)
-        aliases = load_component_aliases(bundle_path)
 
         # 1. Parse OpenTelemetry traces
         parsed_trace_files = set()

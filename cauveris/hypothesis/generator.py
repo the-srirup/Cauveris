@@ -1282,7 +1282,8 @@ class HypothesisGenerator:
 
         fallback = ordered[-1] if ordered else current
         outcome = ev.predict(batching_window_ms=fallback)
-        return fallback, outcome or last, False
+        final_outcome = outcome or last or ev.predict() or SimulationOutcome()
+        return fallback, final_outcome, False
 
     @staticmethod
     def _outcome_within_budget(outcome: SimulationOutcome, budget_ms: float) -> bool:

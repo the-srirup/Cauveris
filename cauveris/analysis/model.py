@@ -33,11 +33,11 @@ import logging
 import math
 import random
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from .statistics import Distribution, distribution, percentile
+from .statistics import Distribution, distribution
 
 logger = logging.getLogger(__name__)
 

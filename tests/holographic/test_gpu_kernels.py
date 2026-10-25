@@ -322,7 +322,7 @@ class TestLinalg:
 
         # A path graph: n nodes, each connected to its neighbour.
         n = 64
-        rows, cols, values = [], [], []
+        cols, values = [], []
         row_ptr = [0]
         for i in range(n):
             for j in (i - 1, i, i + 1):

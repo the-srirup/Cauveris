@@ -1169,6 +1169,12 @@ class RabbitMQQueueBackend(QueueBackend):
 
         message = self._message_for(job)
 
+        if self._exchange is None:
+            await self._ensure_connection()
+        if self._exchange is None:
+            logger.error("RabbitMQ exchange not available")
+            return False
+
         await self._exchange.publish(message, routing_key=routing_key)
         self._jobs[job.id] = job
         self._prune_jobs()
