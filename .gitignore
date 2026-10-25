@@ -159,10 +159,27 @@ out/
 .DS_Store
 Thumbs.db
 
-# Environment variables
+# Environment variables & secrets
 .env
 .env.*
+.env*.local
+*.env
+*.env.*
 !.env.example
+!.env.production.example
+
+# Secrets, Keys & Certificates
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+id_rsa*
+id_ed25519*
+*credentials*.json
+*secret*.json
+service-account*.json
 
 # Ruff cache
 .ruff_cache/
