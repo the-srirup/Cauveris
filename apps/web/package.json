@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "test": "node --max-old-space-size=4096 ./node_modules/vitest/vitest.mjs run"
+    "test": "node --max-old-space-size=4096 ./node_modules/vitest/vitest.mjs run",
+    "postinstall": "node scripts/patch-drei.js"
   },
   "keywords": [],
   "author": "",
