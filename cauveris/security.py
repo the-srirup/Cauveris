@@ -114,7 +114,12 @@ def safe_join(base: str, *paths: str) -> Path:
         ValueError: If path traversal is attempted
     """
     base_path = Path(base).resolve()
-    target_path = (base_path / Path(*paths)).resolve()
+    target_path = base_path
+
+    for p in paths:
+        # Normalize backslashes to forward slashes so Windows separators are handled cross-platform (e.g. Linux CI)
+        normalized = str(p).replace("\\", "/")
+        target_path = (target_path / Path(normalized)).resolve()
 
     # Ensure target is within base
     try:
