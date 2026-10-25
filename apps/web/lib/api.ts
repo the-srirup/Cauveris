@@ -211,7 +211,7 @@ export interface TrajectoryPoint {
   t: number;
   x: number;
   y: number;
-  v: number;
+  v?: number;
   heading?: number;
   latency_ms: number;
   status: string;
@@ -220,6 +220,19 @@ export interface TrajectoryPoint {
   batch_wait_ms?: number;
   gpu_compute_ms?: number;
   network_delay_ms?: number;
+}
+
+/**
+ * One digital-twin trial run: the full 2D path the robot actually traced
+ * under that trial's fault configuration, plus the twin's own verdict.
+ */
+export interface TrialRun {
+  path: TrajectoryPoint[];
+  final_status: string;
+  is_confirmed_safe: boolean;
+  stop_coordinate?: { x: number; y: number } | null;
+  halt_reason?: string | null;
+  distance_traveled_m: number;
 }
 
 export interface Experiment {
@@ -236,6 +249,12 @@ export interface Experiment {
   metrics?: Record<string, any>;
   trajectory?: TrajectoryPoint[];
   trajectories?: any[];
+  trial_count?: number;
+  reproduction_count?: number;
+  conclusion?: string;
+  logs_artifact_id?: string;
+  metrics_artifact_id?: string;
+  replay_artifact_id?: string;
 }
 
 /**
@@ -378,8 +397,151 @@ export interface IncidentReport {
   [key: string]: any;
 }
 
+/** One side of the before/after twin comparison, as measured by the backend. */
+export interface ReplaySide {
+  trial_count: number;
+  reproduction_count: number;
+  reproduction_rate: number;
+  avg_latency_ms: number;
+  p99_latency_ms: number;
+  max_latency_ms: number;
+  avg_batch_wait_ms?: number | null;
+  avg_gpu_compute_ms?: number | null;
+  avg_network_delay_ms?: number | null;
+  goal_reached_count: number;
+  emergency_stop_count: number;
+  is_confirmed_safe: boolean;
+  halt_reason?: string | null;
+  stop_coordinate?: { x: number; y: number } | null;
+  trajectory: TrajectoryPoint[];
+  trajectories: TrialRun[];
+  parameters: Record<string, any>;
+}
+
+export interface VictoryReplayResponse {
+  incident_id: string;
+  available: boolean;
+  reason?: string;
+  experiment?: {
+    experiment_id: string;
+    hypothesis_id: string;
+    branch_name: string;
+    intervention: string;
+    conclusion?: string | null;
+    reproduction_rate?: number | null;
+  };
+  applied_configuration?: Record<string, string>;
+  before: ReplaySide | null;
+  after: ReplaySide | null;
+  delta: Record<string, number | null> | null;
+  verdict?: {
+    failure_eliminated: boolean;
+    regression_introduced: boolean;
+    improvement: boolean;
+  };
+  freshness_budget_ms?: number;
+  patch?: (PatchCandidate & { id?: string; diff?: string }) | null;
+  verification?: VerificationReport | null;
+}
+
+export interface TemporalVisualizationEvent {
+  id: string;
+  ts: number;
+  domain: string;
+  label: string;
+  merge_group?: string | null;
+  confidence: number;
+  lane: string;
+  source: string;
+  source_type: string;
+  message: string;
+  clock_domain: string;
+  attributes: Record<string, any>;
+}
+
+export interface TemporalVisualizationConnection {
+  source: string;
+  target: string;
+  type: "causal_edge" | "violation" | "loop_edge";
+  provenance?: string;
+  confidence?: number;
+  description?: string;
+  loop_id?: string | null;
+}
+
+export interface TemporalVisualizationCausalStep {
+  source: string;
+  target: string;
+  provenance: string;
+  source_lane: string;
+  target_lane: string;
+  source_message: string;
+  target_message: string;
+}
+
+export interface TemporalVisualizationCausalChain {
+  terminal_id: string;
+  terminal_lane: string;
+  terminal_message: string;
+  terminal_source: string;
+  terminal_domain: string;
+  is_safety_outcome: boolean;
+  length: number;
+  steps: TemporalVisualizationCausalStep[];
+}
+
+export interface TemporalVisualizationLane {
+  lane: string;
+  tier: number;
+  event_count: number;
+  domains: string[];
+  sources: string[];
+  start_s: number;
+  end_s: number;
+  first_message: string;
+  last_message: string;
+}
+
+export interface TemporalVisualizationLaneEdge {
+  source: string;
+  target: string;
+  edge_count: number;
+  provenance: Record<string, number>;
+}
+
 export interface TemporalVisualizationResponse {
-  bulk_nodes: Array<{
+  events?: TemporalVisualizationEvent[];
+  connections?: TemporalVisualizationConnection[];
+  anomaly_points?: Array<{
+    id: string;
+    type: string;
+    severity: number;
+    confidence: number;
+    explanation: string;
+  }>;
+  untrusted_bands?: Array<{
+    start_s: number;
+    end_s: number;
+    reason: string;
+    description: string;
+  }>;
+  causal_chains?: TemporalVisualizationCausalChain[];
+  lanes?: TemporalVisualizationLane[];
+  lane_edges?: TemporalVisualizationLaneEdge[];
+  summary?: {
+    total_events: number;
+    connections: number;
+    anomaly_count: number;
+    time_loop_count: number;
+    is_anomalous: boolean;
+    confidence: number;
+    causal_edge_count: number;
+    violation_count: number;
+    provenance_breakdown: Record<string, number>;
+    chain_count: number;
+    lane_count: number;
+  };
+  bulk_nodes?: Array<{
     id: string;
     name?: string;
     type?: string;
@@ -392,7 +554,7 @@ export interface TemporalVisualizationResponse {
     color?: string;
     [key: string]: any;
   }>;
-  bulk_edges: Array<{
+  bulk_edges?: Array<{
     source: string;
     target: string;
     type?: string;
@@ -917,6 +1079,11 @@ class ApiClient {
   // Get temporal visualization data
   async getTemporalVisualization(incidentId: string): Promise<TemporalVisualizationResponse> {
     return this.request(`/incidents/${incidentId}/temporal-visualization`);
+  }
+
+  // Real before/after digital-twin comparison (re-runs the twin both sides)
+  async getVictoryReplay(incidentId: string): Promise<VictoryReplayResponse> {
+    return this.requestDeduped<VictoryReplayResponse>(`/incidents/${incidentId}/victory-replay`);
   }
 
   // Get holographic reconstruction data

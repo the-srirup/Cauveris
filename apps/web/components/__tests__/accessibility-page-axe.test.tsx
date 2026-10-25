@@ -108,7 +108,9 @@ vi.mock("@/lib/useShell", () => ({
 }));
 
 // Mock API
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => {
+  const { victoryReplayFixture } = await import("./fixtures/victory-replay");
+  return ({
   api: {
     get: vi.fn().mockResolvedValue({
       id: "CAU-0001",
@@ -170,8 +172,10 @@ vi.mock("@/lib/api", () => ({
     applyPatch: vi.fn().mockResolvedValue({ success: true }),
     list: vi.fn().mockResolvedValue({ incidents: [] }),
     simulateCustom: vi.fn().mockResolvedValue({}),
+    getVictoryReplay: vi.fn().mockResolvedValue(victoryReplayFixture),
   },
-}));
+  });
+});
 
 // Mock hooks
 vi.mock("@/hooks/useMediaQuery", () => ({
@@ -264,6 +268,8 @@ describe('Accessibility Audit - Page Components (axe-core)', () => {
   describe('VictoryReplay', () => {
     it('should have no accessibility violations', async () => {
       const { container } = renderPage(<VictoryReplay />);
+      // Await the real twin comparison load so axe scans the fully rendered page.
+      await screen.findByRole('heading', { name: 'Key Performance & Safety Metrics Comparison', level: 2 });
       const results = await axe(container);
       expect(results).toHaveNoViolations();
     });

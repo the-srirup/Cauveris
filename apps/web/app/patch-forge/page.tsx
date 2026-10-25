@@ -395,7 +395,7 @@ function PatchForgeContent() {
                     const rep = reportByPatch.get(selectedPatch.candidate_id || selectedPatch.id);
                     const gateResults: Record<number, boolean> = {
                       1: Boolean(rep?.applies_cleanly ?? selectedPatch.applied_cleanly ?? (selectedPatch as any).applies_cleanly ?? false),
-                      2: Boolean(rep?.regression_test_fails_before ?? selectedPatch.regression_test_fails_before ?? false),
+                      2: Boolean(rep?.regression_test_fails_before ?? (selectedPatch as any).regression_test_fails_before ?? false),
                       3: Boolean(rep?.regression_test_passes_after ?? selectedPatch.regression_test_passes_after ?? false),
                       4: Boolean(rep?.original_failure_not_reproduced ?? selectedPatch.original_failure_not_reproduced ?? false),
                       5: Boolean(rep?.existing_tests_pass ?? selectedPatch.existing_tests_pass ?? false),

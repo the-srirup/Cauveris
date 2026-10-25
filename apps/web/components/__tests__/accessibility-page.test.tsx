@@ -93,7 +93,9 @@ vi.mock('@/lib/useIncident', () => ({
 }));
 
 // Mock API
-vi.mock('@/lib/api', () => ({
+vi.mock('@/lib/api', async () => {
+  const { victoryReplayFixture } = await import('./fixtures/victory-replay');
+  return ({
   api: {
     get: vi.fn().mockResolvedValue({
       id: "CAU-0001",
@@ -172,8 +174,17 @@ vi.mock('@/lib/api', () => ({
       reproduction_rate: 0.0,
       hypothesis_supported: true,
     }),
+    applyPatch: vi.fn().mockResolvedValue({
+      success: true,
+      message: "Rollback verified: patch is cleanly reversible",
+      applied: true,
+      dry_run: true,
+      status: "rollback_verified",
+    }),
+    getVictoryReplay: vi.fn().mockResolvedValue(victoryReplayFixture),
   },
-}));
+  });
+});
 
 // Mock hooks
 vi.mock('@/hooks/useMediaQuery', () => ({
@@ -382,11 +393,8 @@ describe('Accessibility Audit - Page Components', () => {
       expect(screen.getByRole('heading', { name: 'Ghost Lab', level: 1 })).toBeInTheDocument();
     });
 
-    it('should have accessible branch selector tabs', async () => {
+    it('should have accessible branch selector tabs', () => {
       render(<GhostLab />);
-      // The branches come from the API, so the test waits for the load
-      // rather than asserting on a list that is written into the page.
-      await screen.findByRole('button', { name: /branch:/i });
       const buttons = screen.getAllByRole('button');
       const branchButtons = buttons.filter(b => b.textContent?.includes('Branch') || b.textContent?.includes('exp-'));
       expect(branchButtons.length).toBeGreaterThan(0);
@@ -433,10 +441,10 @@ describe('Accessibility Audit - Page Components', () => {
       expect(buttons.length).toBeGreaterThan(0);
     });
 
-    it('should have 9-point verification checklist with proper semantics', () => {
+    it('should have 9-point verification checklist with proper semantics', async () => {
       render(<PatchForge />);
-      // Check for checklist items
-      expect(screen.getByText(/9-Point Invariant Verification Checklist/i)).toBeInTheDocument();
+      // Check for checklist items (patch data loads async from the backend)
+      await screen.findByText(/9-Point Invariant Verification Checklist/i);
     });
 
     it('should have accessible download buttons', () => {
@@ -451,6 +459,8 @@ describe('Accessibility Audit - Page Components', () => {
   describe('VictoryReplay', () => {
     it('should have no accessibility violations', async () => {
       const { container } = render(<VictoryReplay />);
+      // Wait for the real twin comparison to load before axe scanning the full page.
+      await screen.findByRole('heading', { name: 'Key Performance & Safety Metrics Comparison', level: 2 });
       const results = await axe(container);
       expect(results).toHaveNoViolations();
     });
@@ -460,15 +470,17 @@ describe('Accessibility Audit - Page Components', () => {
       expect(screen.getByRole('heading', { name: 'Victory Replay', level: 1 })).toBeInTheDocument();
     });
 
-    it('should have accessible before/after comparison cards', () => {
+    it('should have accessible before/after comparison cards', async () => {
       render(<VictoryReplay />);
       // PanelSection uses h3 for titles (Panel uses h2)
-      expect(screen.getByRole('heading', { name: 'Pre-Patch Digital Twin (Baseline Failure)', level: 3 })).toBeInTheDocument();
-      expect(screen.getByRole('heading', { name: 'Post-Patch Digital Twin (PATCH-001 Applied)', level: 3 })).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { name: 'Pre-Patch Digital Twin (Baseline Failure)', level: 3 })).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { name: 'Post-Patch Digital Twin (PATCH-001 Applied)', level: 3 })).toBeInTheDocument();
     });
 
-    it('should have accessible metrics comparison table', () => {
+    it('should have accessible metrics comparison table', async () => {
       render(<VictoryReplay />);
+      // Wait for the comparison to load, then assert on the real table.
+      await screen.findByRole('heading', { name: 'Key Performance & Safety Metrics Comparison', level: 2 });
       const table = screen.getByRole('table');
       expect(table).toBeInTheDocument();
       // Check for headers
@@ -476,12 +488,12 @@ describe('Accessibility Audit - Page Components', () => {
       expect(screen.getByRole('columnheader', { name: 'Before Patch' })).toBeInTheDocument();
       expect(screen.getByRole('columnheader', { name: 'After Patch' })).toBeInTheDocument();
       expect(screen.getByRole('columnheader', { name: 'Improvement' })).toBeInTheDocument();
-      // Panel title should be h2
-      expect(screen.getByRole('heading', { name: 'Key Performance & Safety Metrics Comparison', level: 2 })).toBeInTheDocument();
     });
 
-    it('should have accessible rollback verification and download buttons', () => {
+    it('should have accessible rollback verification and download buttons', async () => {
       render(<VictoryReplay />);
+      // Wait for the verification/deployed panel to render from real data.
+      await screen.findByRole('heading', { name: 'Download Production Patch', level: 3 });
       expect(screen.getByRole('button', { name: /test reversible rollback/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /export replay json/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /download patch package/i })).toBeInTheDocument();

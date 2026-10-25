@@ -24,6 +24,7 @@ from fastapi import (
     Response,
     Depends,
     WebSocket,
+    Query,
 )
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -1159,7 +1160,34 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
 
 
 # Include holographic router
+from cauveris.api.holographic import get_holographic_reconstruction
 app.include_router(holographic_router, prefix="/api/v1")
+
+
+@app.get("/api/v1/incidents/{incident_id}/holographic/reconstruction")
+async def get_incident_holographic_reconstruction_alias(
+    incident_id: str,
+    enable_counterfactual: bool = Query(False),
+    enable_anomalies: bool = Query(True),
+    enable_multiscale: bool = Query(True),
+    use_gpu: bool = Query(True),
+    gpu_decay_type: str = Query("exponential"),
+    gpu_normalization: str = Query("l1"),
+    gpu_time_step_ns: int = Query(1000000),
+    gpu_max_kernel_time_ns: int = Query(10000000000),
+):
+    """Alias for incident-scoped holographic reconstruction."""
+    return await get_holographic_reconstruction(
+        incident_id=incident_id,
+        enable_counterfactual=enable_counterfactual,
+        enable_anomalies=enable_anomalies,
+        enable_multiscale=enable_multiscale,
+        use_gpu=use_gpu,
+        gpu_decay_type=gpu_decay_type,
+        gpu_normalization=gpu_normalization,
+        gpu_time_step_ns=gpu_time_step_ns,
+        gpu_max_kernel_time_ns=gpu_max_kernel_time_ns,
+    )
 
 
 @app.get("/")
@@ -4355,6 +4383,177 @@ async def simulate_custom_parameters(
             if hypothesis_supported
             else f"Safety violation triggered: {reproduction_count}/{req.trials} emergency stops ({reproduction_rate:.1%}, avg latency {avg_latency:.1f}ms)"
         ),
+    }
+
+
+@app.get("/api/v1/incidents/{incident_id}/victory-replay")
+async def get_victory_replay(
+    request: Request,
+    incident_id: str,
+    user_data: tuple = Depends(get_current_user),
+):
+    """
+    Run the real before/after digital-twin comparison for this incident.
+
+    The "before" side is the twin running with the incident's original
+    (un-patched) fault configuration; the "after" side is the twin running
+    with the configuration the verified patch actually installs. Both sides run
+    over the identical seeds, so any difference is attributable to the patch alone.
+    Requires: experiment:read permission
+    """
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
+
+    if not user.has_permission("experiment:read") and not user.has_permission("*"):
+        if owner_user != user_id and owner_org != org_id:
+            raise HTTPException(status_code=403, detail="Not authorized to view experiments")
+
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="experiment.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("user-agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
+
+    from cauveris.simulation.mapping import map_experiment_to_intervention
+    from cauveris.simulation.runner import (
+        CloudToRobotDigitalTwin,
+        DigitalTwinFaultInjectors,
+    )
+
+    ctx = pipeline_contexts.get(incident_id)
+    experiments = ctx.experiments if ctx and ctx.experiments else []
+    patches = ctx.patch_candidates if ctx and ctx.patch_candidates else []
+
+    patch_by_experiment: Dict[str, Any] = {}
+    for p in patches:
+        exp_id = str(getattr(p, "candidate_id", "")).replace("patch-", "")
+        patch_by_experiment[exp_id] = p
+
+    chosen_exp = None
+    chosen_patch = None
+    for exp in experiments:
+        pid = patch_by_experiment.get(getattr(exp, "experiment_id", ""))
+        if pid is not None and getattr(pid, "verified", False):
+            chosen_exp, chosen_patch = exp, pid
+            break
+    if chosen_exp is None and experiments:
+        chosen_exp = min(
+            experiments, key=lambda e: getattr(e, "reproduction_rate", 1.0)
+        )
+        chosen_patch = patch_by_experiment.get(getattr(chosen_exp, "experiment_id", ""))
+
+    if chosen_exp is None:
+        return {
+            "incident_id": incident_id,
+            "available": False,
+            "reason": "No experiment branches have been simulated for this incident yet.",
+            "before": None,
+            "after": None,
+            "delta": None,
+            "patch": None,
+            "verification": None,
+        }
+
+    before_faults = DigitalTwinFaultInjectors()
+
+    plan = map_experiment_to_intervention(
+        hypothesis_id=getattr(chosen_exp, "hypothesis_id", ""),
+        intervention=getattr(chosen_exp, "intervention", ""),
+    )
+    after_faults = DigitalTwinFaultInjectors()
+    applied: Dict[str, Any] = {}
+    if plan.batching_window_ms is not None:
+        after_faults.batching_window_ms = plan.batching_window_ms
+        applied["batching_window_ms"] = plan.batching_window_ms
+    if plan.qos_queue_depth is not None:
+        after_faults.qos_queue_depth = plan.qos_queue_depth
+        applied["qos_queue_depth"] = plan.qos_queue_depth
+    if plan.clock_skew_ms is not None:
+        after_faults.clock_skew_ms = plan.clock_skew_ms
+        applied["clock_skew_ms"] = plan.clock_skew_ms
+    if plan.max_batch_size is not None:
+        after_faults.max_batch_size = plan.max_batch_size
+        applied["max_batch_size"] = plan.max_batch_size
+    if plan.gpu_contention_ms is not None:
+        after_faults.gpu_contention_ms = plan.gpu_contention_ms
+        applied["gpu_contention_ms"] = plan.gpu_contention_ms
+
+    budget = 120.0
+    oracle = getattr(chosen_exp, "failure_oracle", None) or {}
+    if isinstance(oracle, dict) and oracle.get("freshness_budget_ms"):
+        budget = float(oracle["freshness_budget_ms"])
+
+    comparison = CloudToRobotDigitalTwin.compare_configurations(
+        before_faults=before_faults,
+        after_faults=after_faults,
+        trials=20,
+        seed_base=1000,
+        freshness_budget_ms=budget,
+    )
+
+    verification = None
+    if ctx and ctx.verification_reports:
+        for vr in ctx.verification_reports:
+            if getattr(vr, "patch_candidate_id", None) == getattr(
+                chosen_patch, "candidate_id", None
+            ):
+                verification = vr.model_dump() if hasattr(vr, "model_dump") else dict(vr)
+                break
+        if verification is None and ctx.verification_reports:
+            vr = ctx.verification_reports[0]
+            verification = vr.model_dump() if hasattr(vr, "model_dump") else dict(vr)
+
+    patch_payload = None
+    if chosen_patch is not None:
+        patch_payload = (
+            chosen_patch.model_dump()
+            if hasattr(chosen_patch, "model_dump")
+            else dict(chosen_patch)
+        )
+        patch_payload["id"] = patch_payload.get("candidate_id", "")
+        patch_payload["diff"] = patch_payload.get("unified_diff", "")
+
+    return {
+        "incident_id": incident_id,
+        "available": True,
+        "experiment": {
+            "experiment_id": getattr(chosen_exp, "experiment_id", ""),
+            "hypothesis_id": getattr(chosen_exp, "hypothesis_id", ""),
+            "branch_name": getattr(chosen_exp, "branch_name", ""),
+            "intervention": getattr(chosen_exp, "intervention", ""),
+            "conclusion": getattr(chosen_exp, "conclusion", None),
+            "reproduction_rate": getattr(chosen_exp, "reproduction_rate", None),
+        },
+        "applied_configuration": plan.applied_changes,
+        "before": comparison["before"],
+        "after": comparison["after"],
+        "delta": comparison["delta"],
+        "verdict": comparison["verdict"],
+        "freshness_budget_ms": comparison["freshness_budget_ms"],
+        "patch": patch_payload,
+        "verification": verification,
     }
 
 

@@ -157,16 +157,16 @@ function HolographicReconstructionContent() {
         confidence: n.confidence,
         config_changed: n.config_changed,
       }));
-      const links = (response.bulk_edges || []).map((e: any) => ({
+      const links: CausalLink[] = (response.bulk_edges || []).map((e: any) => ({
         source: e.source,
         target: e.target,
         strength: e.thickness ? e.thickness / 4 : 0.5,
-        type: "causes",
+        type: "causes" as const,
         latency_ms: e.latency_ms,
       }));
       setRawNodes(nodes);
       setRawLinks(links);
-      setTemporalFrames(response.temporal_frames || []);
+      setTemporalFrames((response as any).temporal_frames || []);
       setError(null);
     } catch (err: any) {
       if (seq !== fetchSeqRef.current) return;

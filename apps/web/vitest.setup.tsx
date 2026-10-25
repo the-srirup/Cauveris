@@ -118,31 +118,38 @@ vi.mock('@/lib/useShell', () => ({
 }));
 
 // Mock API
-vi.mock('@/lib/api', () => ({
-  api: {
-    get: vi.fn(),
-    create: vi.fn(),
-    reconstruct: vi.fn(),
-    cancel: vi.fn(),
-    reset: vi.fn(),
-    validate: vi.fn(),
-    uploadFile: vi.fn(),
-    getEvents: vi.fn(),
-    getReport: vi.fn(),
-    getTimeline: vi.fn(),
-    getTemporalAnalysis: vi.fn(),
-    health: vi.fn(),
-    modelHealth: vi.fn(),
-    list: vi.fn(),
-    simulateCustom: vi.fn(),
-    exportReport: vi.fn().mockResolvedValue({}),
-    listReports: vi.fn().mockResolvedValue({ reports: [] }),
-    deleteReport: vi.fn().mockResolvedValue({ message: "deleted" }),
-    resetDemo: vi.fn(),
-    downloadPatchPackage: vi.fn(),
-    exportPatch: vi.fn(),
-  },
-}));
+vi.mock('@/lib/api', async () => {
+  const { victoryReplayFixture, applyPatchSuccessFixture } = await import(
+    './components/__tests__/fixtures/victory-replay'
+  );
+  return {
+    api: {
+      get: vi.fn(),
+      create: vi.fn(),
+      reconstruct: vi.fn(),
+      cancel: vi.fn(),
+      reset: vi.fn(),
+      validate: vi.fn(),
+      uploadFile: vi.fn(),
+      getEvents: vi.fn(),
+      getReport: vi.fn(),
+      getTimeline: vi.fn(),
+      getTemporalAnalysis: vi.fn(),
+      health: vi.fn(),
+      modelHealth: vi.fn(),
+      list: vi.fn(),
+      simulateCustom: vi.fn(),
+      exportReport: vi.fn().mockResolvedValue({}),
+      listReports: vi.fn().mockResolvedValue({ reports: [] }),
+      deleteReport: vi.fn().mockResolvedValue({ message: "deleted" }),
+      resetDemo: vi.fn(),
+      downloadPatchPackage: vi.fn(),
+      exportPatch: vi.fn(),
+      applyPatch: vi.fn().mockResolvedValue(applyPatchSuccessFixture),
+      getVictoryReplay: vi.fn().mockResolvedValue(victoryReplayFixture),
+    },
+  };
+});
 
 // Mock hooks
 vi.mock('@/hooks/useMediaQuery', () => ({

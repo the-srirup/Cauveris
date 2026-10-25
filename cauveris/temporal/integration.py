@@ -30,6 +30,45 @@ from cauveris.temporal.pattern import (
 logger = logging.getLogger(__name__)
 
 
+# Attribute keys that carry a real measurement worth surfacing in the UI.
+_INTERESTING_ATTRIBUTES = (
+    "topic",
+    "metric_name",
+    "metric_value",
+    "unit",
+    "span_name",
+    "duration_ms",
+    "observed_latency_ms",
+    "queue.wait_ms",
+    "batch.window_ms",
+    "freshness_budget_ms",
+    "http.status_code",
+    "http.url",
+    "node",
+    "level",
+    "deployment_id",
+    "service",
+    "robot_id",
+    "location",
+)
+
+
+def _flatten_attributes(attributes: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Keep the scalar attributes worth rendering; drop bulky nested payloads.
+
+    MCAP payloads and deployment change lists are large and belong in the
+    bundle, not in every graph node.
+    """
+    flat: Dict[str, Any] = {}
+    for key in _INTERESTING_ATTRIBUTES:
+        if key in attributes:
+            value = attributes[key]
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                flat[key] = value
+    return flat
+
+
 @dataclass
 class TemporalAnalysisResult:
     """
@@ -262,12 +301,63 @@ class TemporalAnalyzer:
             "is_time_anomalous": len(violations) > 0 or len(anomalies) > 0,
             "temporal_confidence_score": confidence,
             "untrusted_windows": untrusted,
+            "evidence_graph": self._build_evidence_graph(evidence),
         }
 
         # Annotate incident for report embedding
         self._annotate_incident(incident, result)
 
         return result
+
+    # ------------------------------------------------------------------ #
+    def _build_evidence_graph(
+        self,
+        evidence: List[TemporalEvidence],
+    ) -> Dict[str, Any]:
+        """
+        Serialize the evidence timeline and its causal edges.
+
+        The visualization layer needs stable evidence IDs to anchor edges on;
+        the timeline events it is handed carry no such ID, so the graph is
+        derived here where the ``TemporalEvidence`` objects live.
+        """
+        nodes = []
+        base_ns = min((ev.timestamp_ns for ev in evidence), default=0)
+        for ev in evidence:
+            nodes.append(
+                {
+                    "evidence_id": ev.evidence_id,
+                    "timestamp_ns": ev.timestamp_ns,
+                    "relative_ts_s": round((ev.timestamp_ns - base_ns) / 1e9, 3),
+                    "lane": ev.lane,
+                    "source": ev.source,
+                    "source_type": ev.source_type,
+                    "message": ev.message,
+                    "clock_domain": ev.clock_domain.value
+                    if hasattr(ev.clock_domain, "value")
+                    else str(ev.clock_domain),
+                    "timestamp_kind": ev.timestamp_kind.value
+                    if hasattr(ev.timestamp_kind, "value")
+                    else str(ev.timestamp_kind),
+                    "precision_ns": ev.precision_ns,
+                    "confidence": float(ev.extra.get("confidence", 0.0) or 0.0),
+                    "status": ev.extra.get("status", ""),
+                    "attributes": _flatten_attributes(ev.extra.get("attributes", {})),
+                }
+            )
+
+        edges = []
+        for ev in evidence:
+            for child_id, prov in ev.child_provenance.items():
+                edges.append(
+                    {
+                        "source": ev.evidence_id,
+                        "target": child_id,
+                        "provenance": prov.value if hasattr(prov, "value") else str(prov),
+                    }
+                )
+
+        return {"nodes": nodes, "edges": edges}
 
     # ------------------------------------------------------------------ #
     def _tolerance_for_provenance(

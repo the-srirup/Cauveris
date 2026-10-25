@@ -409,6 +409,112 @@ class CloudToRobotDigitalTwin:
             ),
         }
 
+    @staticmethod
+    def compare_configurations(
+        before_faults: DigitalTwinFaultInjectors,
+        after_faults: DigitalTwinFaultInjectors,
+        trials: int = 20,
+        seed_base: int = 1000,
+        freshness_budget_ms: float = 120.0,
+    ) -> Dict[str, Any]:
+        """
+        Run the twin twice — once with the pre-patch fault configuration, once
+        with the post-patch configuration — over the identical seed set, so
+        the two sides differ only by the intervention.
+
+        Every number this returns is measured by the twin: there is no assumed
+        or canned baseline anywhere in the comparison.
+        """
+        def _run(faults: DigitalTwinFaultInjectors) -> Dict[str, Any]:
+            twin = CloudToRobotDigitalTwin(faults, budget_ms=freshness_budget_ms)
+            seed_list = [seed_base + i for i in range(trials)]
+
+            cycles: List[Dict[str, Any]] = []
+            runs: List[Dict[str, Any]] = []
+            emergency_stops = 0
+            for seed in seed_list:
+                cycle = twin.step(seed=seed)
+                cycles.append(cycle)
+                if cycle.get("emergency_stop"):
+                    emergency_stops += 1
+                runs.append(twin.simulate_trajectory(seed=seed))
+
+            latencies = sorted(c["total_latency_ms"] for c in cycles)
+            p99_idx = int(0.99 * len(latencies))
+            p99 = latencies[min(p99_idx, len(latencies) - 1)] if latencies else 0.0
+
+            def _mean(key: str) -> Optional[float]:
+                vals = [c[key] for c in cycles if key in c]
+                if not vals:
+                    return None
+                return round(sum(vals) / len(vals), 2)
+
+            goal_reached = sum(1 for r in runs if r.get("final_status") == "GOAL_REACHED")
+            halted = sum(1 for r in runs if r.get("final_status") == "EMERGENCY_STOP")
+            halt_reason = next((r.get("halt_reason") for r in runs if r.get("halt_reason")), None)
+            stop_coordinate = next(
+                (r.get("stop_coordinate") for r in runs if r.get("stop_coordinate")), None
+            )
+
+            return {
+                "trial_count": trials,
+                "reproduction_count": emergency_stops,
+                "reproduction_rate": round(emergency_stops / trials, 4) if trials else 0.0,
+                "avg_latency_ms": round(sum(latencies) / len(latencies), 2) if latencies else 0.0,
+                "p99_latency_ms": round(p99, 2),
+                "max_latency_ms": round(max(latencies), 2) if latencies else 0.0,
+                "avg_batch_wait_ms": _mean("batch_wait_ms"),
+                "avg_gpu_compute_ms": _mean("gpu_compute_ms"),
+                "avg_network_delay_ms": _mean("network_delay_ms"),
+                "goal_reached_count": goal_reached,
+                "emergency_stop_count": halted,
+                "is_confirmed_safe": goal_reached == trials and halted == 0,
+                "halt_reason": halt_reason,
+                "stop_coordinate": stop_coordinate,
+                "trajectory": runs[0]["path"] if runs else [],
+                "trajectories": runs,
+                "parameters": {
+                    "batching_window_ms": faults.batching_window_ms,
+                    "qos_queue_depth": faults.qos_queue_depth,
+                    "clock_skew_ms": faults.clock_skew_ms,
+                    "max_batch_size": faults.max_batch_size,
+                    "gpu_contention_ms": faults.gpu_contention_ms,
+                    "freshness_budget_ms": freshness_budget_ms,
+                },
+            }
+
+        before = _run(before_faults)
+        after = _run(after_faults)
+
+        def _delta(key: str) -> Optional[float]:
+            b, a = before.get(key), after.get(key)
+            if isinstance(b, (int, float)) and isinstance(a, (int, float)):
+                return round(a - b, 2)
+            return None
+
+        return {
+            "before": before,
+            "after": after,
+            "delta": {
+                "reproduction_rate": _delta("reproduction_rate"),
+                "avg_latency_ms": _delta("avg_latency_ms"),
+                "p99_latency_ms": _delta("p99_latency_ms"),
+                "max_latency_ms": _delta("max_latency_ms"),
+                "avg_batch_wait_ms": _delta("avg_batch_wait_ms"),
+                "avg_gpu_compute_ms": _delta("avg_gpu_compute_ms"),
+                "avg_network_delay_ms": _delta("avg_network_delay_ms"),
+                "goal_reached_count": _delta("goal_reached_count"),
+            },
+            "freshness_budget_ms": freshness_budget_ms,
+            "verdict": {
+                "failure_eliminated": before["reproduction_count"] > 0
+                and after["reproduction_count"] == 0,
+                "regression_introduced": before["reproduction_count"] == 0
+                and after["reproduction_count"] > 0,
+                "improvement": after["reproduction_rate"] < before["reproduction_rate"],
+            },
+        }
+
 
 class SimulationRunner:
     """Runs digital twin simulations in sandbox environments with fault injectors."""

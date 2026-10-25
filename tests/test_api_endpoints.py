@@ -167,3 +167,20 @@ async def test_holographic_reconstruction_calibration(test_user):
         assert cloud_node["confidence"] > 0
         assert 0.0 <= cloud_node["health"] <= 1.0
         assert cloud_node["metrics"]["cpu_usage"] > 0.0  # incorporates GPU compute load
+
+
+@pytest.mark.asyncio
+async def test_victory_replay_endpoint(test_user):
+    """Verify GET /api/v1/incidents/CAU-0001/victory-replay."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers.update(test_user["headers"])
+        await client.post("/api/v1/incidents?golden=true")
+
+        res = await client.get("/api/v1/incidents/CAU-0001/victory-replay")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["incident_id"] == "CAU-0001"
+        assert "before" in data
+        assert "after" in data
+        assert "delta" in data
