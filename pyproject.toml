@@ -33,6 +33,7 @@ dependencies = [
     "python-json-logger>=4.2.0",
     "pyjwt>=2.8.0",
     "passlib[bcrypt]>=1.7.4",
+    "aio-pika>=10.1.1",
 ]
 
 [project.optional-dependencies]

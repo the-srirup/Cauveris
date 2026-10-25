@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, type ReactNode, useRef } from "react";
-import { tv } from "tailwind-variants";
 import { X, ChevronRight, Search, Zap, Database, GitBranch, FlaskConical, Wrench, Eye, FileText, RotateCcw, Download, AlertTriangle, Plus, Upload, Play, Square, ExternalLink, Clock } from "lucide-react";
 import { Button, Badge } from "./ui";
 import { Tooltip } from "./Tooltip";
@@ -9,93 +8,6 @@ import { useShell } from "@/lib/useShell";
 import { useActiveIncident } from "@/lib/useIncident";
 import { api } from "@/lib/api";
 import { useRouter } from "next/navigation";
-
-const paletteStyles = tv({
-  base: `
-    fixed inset-0 z-50 flex items-start justify-center pt-16
-    bg-[var(--color-overlay)] backdrop-blur-sm
-    animate-fade-in
-  `,
-});
-
-const panelStyles = tv({
-  base: `
-    w-full max-w-2xl rounded-2xl border border-[var(--color-border)]
-    bg-[var(--theme-background)]/95 backdrop-blur-xl shadow-2xl
-    overflow-hidden flex flex-col
-    animate-slide-up
-  `,
-});
-
-const headerStyles = tv({
-  base: `
-    flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)]
-    bg-[var(--color-surface)]/60 backdrop-blur-sm
-  `,
-});
-
-const searchStyles = tv({
-  base: `
-    relative flex-1
-  `,
-});
-
-const listStyles = tv({
-  base: `
-    flex-1 overflow-y-auto max-h-[60vh] min-h-[200px]
-  `,
-});
-
-const categoryStyles = tv({
-  base: `
-    px-4 py-2 text-[10px] font-medium uppercase tracking-widest text-[var(--color-text-muted)]
-    border-b border-[var(--color-border)]
-  `,
-});
-
-const itemStyles = tv({
-  base: `
-    flex items-center gap-3 px-4 py-2.5 text-sm
-    hover:bg-[var(--color-surface)] transition-colors
-    cursor-pointer
-    border-b border-[var(--color-border)] last:border-0
-    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-background)]
-  `,
-  variants: {
-    selected: {
-      true: "bg-[var(--color-surface)]",
-      false: "",
-    },
-    disabled: {
-      true: "opacity-50 cursor-not-allowed",
-      false: "",
-    },
-  },
-  defaultVariants: {
-    selected: false,
-    disabled: false,
-  },
-});
-
-const shortcutStyles = tv({
-  base: `
-    flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium
-    bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]
-  `,
-});
-
-const emptyStyles = tv({
-  base: `
-    flex flex-col items-center justify-center py-12 px-6 gap-3 text-center text-[var(--color-text-muted)]
-  `,
-});
-
-const footerStyles = tv({
-  base: `
-    flex items-center justify-between px-4 py-2 border-t border-[var(--color-border)]
-    bg-[var(--color-surface)]/60 backdrop-blur-sm text-[11px] text-[var(--color-text-muted)]
-  `,
-});
 
 interface Command {
   id: string;
@@ -205,7 +117,6 @@ export function CommandPalette() {
         input.onchange = (e) => {
           const files = (e.target as HTMLInputElement).files;
           if (files && files.length > 0) {
-            // TODO: Implement upload
             console.log("Uploading", files.length, "files");
           }
         };
@@ -374,7 +285,7 @@ export function CommandPalette() {
         setCommandPalette(false);
       },
     },
-  ], [incident, loadIncident, router, setCommandPalette]);
+  ], [incident, loadIncident, router, setCommandPalette, state.isNavCollapsed, toggleNavCollapse]);
 
   // Filter commands by query
   const filteredCommands = useMemo(() => {
@@ -434,15 +345,21 @@ export function CommandPalette() {
   if (!state.commandPaletteOpen || !isMounted) return null;
 
   return (
-    <div className={paletteStyles()} onKeyDown={handleKeyDown} role="dialog" aria-modal="true" aria-label="Command Palette">
-      <div className={panelStyles()}>
+    <div
+      className="fixed inset-0 z-[var(--z-palette)] flex items-start justify-center pt-16 bg-[var(--color-canvas)]/80 backdrop-blur-sm"
+      onKeyDown={handleKeyDown}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Command Palette"
+    >
+      <div className="w-full max-w-2xl rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-inset)] shadow-[var(--shadow-lg)] overflow-hidden flex flex-col">
         {/* Header */}
-        <header className={headerStyles()}>
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-accent)]/10 text-[var(--color-accent)]">
+        <header className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 backdrop-blur-sm">
+          <div className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)]">
             <Zap className="h-5 w-5" />
           </div>
-          <div className={searchStyles()}>
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)] pointer-events-none" />
+          <div className="relative flex-1">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-fg-muted)] pointer-events-none" />
             <input
               id="command-palette-search"
               type="text"
@@ -452,14 +369,14 @@ export function CommandPalette() {
                 setSelectedIndex(0);
               }}
               placeholder="Type a command or search…"
-              className="w-full h-10 pl-10 pr-4 bg-[var(--color-surface-2)]/60 border border-[var(--color-border)] rounded-xl text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]/60 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-transparent transition-all"
+              className="w-full h-10 pl-10 pr-4 bg-[var(--color-canvas-subtle)]/60 border border-[var(--color-border-default)] rounded-[var(--radius-md)] text-sm text-[var(--color-fg-default)] placeholder:text-[var(--color-fg-subtle)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-fg)] focus:border-transparent transition-colors duration-80"
               autoFocus
             />
           </div>
           <Tooltip content="Close (Esc)" position="left">
             <button
               onClick={() => setCommandPalette(false)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)] transition-colors border border-transparent hover:border-[var(--color-border)]"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-subtle)] transition-colors border border-transparent hover:border-[var(--color-border-default)]"
               aria-label="Close command palette"
             >
               <X className="h-4 w-4" />
@@ -468,10 +385,10 @@ export function CommandPalette() {
         </header>
 
         {/* Results */}
-        <div className={listStyles()} role="listbox" aria-label="Commands">
+        <div className="flex-1 overflow-y-auto max-h-[60vh] min-h-[200px]" role="listbox" aria-label="Commands">
           {filteredCommands.length === 0 ? (
-            <div className={emptyStyles()}>
-              <Search className="h-8 w-8 text-[var(--color-text-muted)]/50" />
+            <div className="flex flex-col items-center justify-center py-12 px-6 gap-3 text-center text-[var(--color-fg-muted)]">
+              <Search className="h-8 w-8 text-[var(--color-fg-muted)]/50" />
               <span>No commands match "{query}"</span>
               <span className="text-[11px]">Try a different search term</span>
             </div>
@@ -482,7 +399,7 @@ export function CommandPalette() {
                 if (!items.length) return null;
                 return (
                   <div key={key}>
-                    <div className={categoryStyles()} aria-hidden="true">
+                    <div className="px-4 py-2 text-[10px] font-medium uppercase tracking-widest text-[var(--color-fg-subtle)] border-b border-[var(--color-border-default)]" aria-hidden="true">
                       <span className="flex items-center gap-1.5">{icon} {label}</span>
                     </div>
                     {items.map((cmd, index) => {
@@ -491,27 +408,35 @@ export function CommandPalette() {
                       return (
                         <div
                           key={cmd.id}
-                          className={itemStyles({ selected: isSelected, disabled: cmd.disabled })}
+                          className={`
+                            flex items-center gap-3 px-4 py-2.5 text-sm
+                            hover:bg-[var(--color-canvas-subtle)] transition-colors duration-80
+                            cursor-pointer
+                            border-b border-[var(--color-border-muted)] last:border-0
+                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-canvas)]
+                            ${isSelected ? "bg-[var(--color-canvas-subtle)]" : ""}
+                            ${cmd.disabled ? "opacity-50 cursor-not-allowed" : ""}
+                          `}
                           role="option"
                           aria-selected={isSelected}
                           aria-disabled={cmd.disabled}
                           onClick={() => !cmd.disabled && cmd.action()}
                           onMouseEnter={() => setSelectedIndex(globalIndex)}
                         >
-                          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-surface)] text-[var(--color-text-muted)]">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)] text-[var(--color-fg-muted)]">
                             {cmd.icon || <Zap className="h-4 w-4" />}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="font-medium text-[var(--color-text-primary)] truncate">{cmd.label}</div>
-                            <div className="text-[11px] text-[var(--color-text-muted)] truncate">{cmd.description}</div>
+                            <div className="font-medium text-[var(--color-fg-default)] truncate">{cmd.label}</div>
+                            <div className="text-[11px] text-[var(--color-fg-muted)] truncate">{cmd.description}</div>
                           </div>
                           <div className="flex items-center gap-1.5">
                             {cmd.shortcut.split(" ").map((key) => (
-                              <kbd key={key} className={shortcutStyles()}>
+                              <kbd key={key} className="flex items-center gap-1 px-2 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-mono font-medium bg-[var(--color-canvas-subtle)] text-[var(--color-fg-muted)] border border-[var(--color-border-default)]">
                                 {key}
                               </kbd>
                             ))}
-                            {isSelected && <ChevronRight className="h-4 w-4 text-[var(--color-accent)]" />}
+                            {isSelected && <ChevronRight className="h-4 w-4 text-[var(--color-accent-fg)]" />}
                           </div>
                         </div>
                       );
@@ -524,7 +449,7 @@ export function CommandPalette() {
         </div>
 
         {/* Footer */}
-        <footer className={footerStyles()}>
+        <footer className="flex items-center justify-between px-4 py-2 border-t border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 backdrop-blur-sm text-[11px] text-[var(--color-fg-muted)]">
           <span>↑↓ Navigate • Enter Execute • Esc Close</span>
           <span>{filteredCommands.length} command{filteredCommands.length !== 1 ? "s" : ""}</span>
         </footer>

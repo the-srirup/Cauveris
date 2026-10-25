@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
 from .heu import HolographicEvidenceUnit, convert_timeline_to_heus
+from .calibration import CalibrationProfile
 from .topology import SystemTopology, ComponentInfo
 from .reconstruction import HolographicReconstruction, ReconstructedServiceState, AmbiguityRegion
 from .solver import SolverConfig, solve_holographic_inverse
@@ -143,6 +144,8 @@ class MultiScaleReconstructor:
         timeline_events: List[Dict[str, Any]],
         incident_time_window: Tuple[int, int],
         raw_signals: Optional[Dict] = None,
+        calibration: Optional[CalibrationProfile] = None,
+        aliases: Optional[Dict[str, str]] = None,
     ) -> Dict[ReconstructionScale, ScaleReconstruction]:
         """
         Perform multi-scale holographic reconstruction.
@@ -151,6 +154,9 @@ class MultiScaleReconstructor:
             timeline_events: Full timeline events from Cauveris
             incident_time_window: (start_ns, end_ns) of incident
             raw_signals: Raw signals from RawSignalExtractor
+            calibration: Scales the incident's own declarations put its
+                measurements on
+            aliases: The bundle's declared component aliases
 
         Returns:
             Dict mapping scale to ScaleReconstruction
@@ -159,7 +165,13 @@ class MultiScaleReconstructor:
         incident_duration = end_ns - start_ns
 
         # 1. Convert all timeline events to HEUs
-        all_heus = convert_timeline_to_heus(timeline_events, raw_signals or {}, incident_duration)
+        all_heus = convert_timeline_to_heus(
+            timeline_events,
+            raw_signals or {},
+            incident_duration,
+            calibration=calibration,
+            aliases=aliases,
+        )
 
         # 2. Reconstruct at each scale (coarsest to finest for prior chaining)
         results = {}
@@ -393,6 +405,8 @@ def reconstruct_multiscale(
     incident_time_window: Tuple[int, int],
     raw_signals: Optional[Dict] = None,
     config: Optional[MultiScaleConfig] = None,
+    calibration: Optional[CalibrationProfile] = None,
+    aliases: Optional[Dict[str, str]] = None,
 ) -> Dict[ReconstructionScale, ScaleReconstruction]:
     """
     Convenience function for multi-scale reconstruction.
@@ -403,12 +417,17 @@ def reconstruct_multiscale(
         incident_time_window: (start_ns, end_ns)
         raw_signals: Raw signals
         config: Multi-scale configuration
+        calibration: Scales the incident's own declarations put its
+            measurements on
+        aliases: The bundle's declared component aliases
 
     Returns:
         Dict of scale reconstructions
     """
     reconstructor = MultiScaleReconstructor(topology, config)
-    return reconstructor.reconstruct(timeline_events, incident_time_window, raw_signals)
+    return reconstructor.reconstruct(
+        timeline_events, incident_time_window, raw_signals, calibration, aliases
+    )
 
 
 if __name__ == "__main__":

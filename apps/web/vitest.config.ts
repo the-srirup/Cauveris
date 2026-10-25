@@ -11,12 +11,18 @@ export default defineConfig({
     include: [
       'components/__tests__/**/*.test.tsx',
       'src/**/__tests__/**/*.test.ts*',
+      'lib/__tests__/**/*.test.ts*',
     ],
+    pool: 'forks',
+    forks: {
+      isolate: false,
+      singleFork: true,
+    },
   },
   resolve: {
     alias: {
-      '@/holographic': path.resolve(__dirname, './src/holographic'),
-      '@': path.resolve(__dirname, './'),
+      '@/holographic': path.resolve(import.meta.dirname, './src/holographic'),
+      '@': path.resolve(import.meta.dirname, './'),
     },
   },
 });

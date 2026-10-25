@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { PageHeader, Card, Badge, Button, Input, Toggle } from "@/components/ui";
+import { PageHeader, Card, Badge, Button, Input, Toggle, Slider, Panel, PanelSection } from "@/components/ui";
 import {
   Palette,
   Bell,
@@ -47,12 +47,12 @@ import { useActiveIncident } from "@/lib/useIncident";
 import { useShell } from "@/lib/useShell";
 import { useAuthStore } from "@/lib/auth";
 
-const BTN_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary";
+const BTN_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]";
 
 const settingRowStyles = tv({
   base: `
-    flex items-center justify-between py-[var(--setting-row-padding)] px-[var(--space-4)] rounded-xl bg-[var(--color-surface)]/50 border border-[var(--color-border)]
-    transition-all duration-150 hover:bg-[var(--color-surface)]/60
+    flex items-center justify-between py-[var(--setting-row-padding)] px-[var(--space-4)] rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]
+    transition-all duration-150 hover:bg-[var(--color-canvas-subtle)]/60
   `,
 });
 
@@ -119,10 +119,10 @@ const defaultSettings: SettingsType = {
   apiEndpoint: "http://localhost:8000/api/v1",
   modelProvider: "nebius",
   maxConcurrentExperiments: 3,
-  modelBaseUrl: "https://api.nebius.ai/v1",
-  modelFast: "nemotron-3-nano",
-  modelReasoning: "nemotron-3-super",
-  modelEscalation: "nemotron-3-ultra",
+  modelBaseUrl: "https://api.tokenfactory.nebius.com/v1",
+  modelFast: "meta-llama/Meta-Llama-3.1-8B-Instruct",
+  modelReasoning: "meta-llama/Meta-Llama-3.1-70B-Instruct",
+  modelEscalation: "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF",
 };
 
 export default function SettingsPage() {
@@ -576,8 +576,8 @@ export default function SettingsPage() {
   if (authLoading) {
     return (
       <div className="flex flex-col gap-8 max-w-7xl mx-auto w-full min-h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand-primary)]" />
-        <p className="text-[var(--color-text-muted)]">Loading settings...</p>
+        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-accent-fg)]" />
+        <p className="text-[var(--color-fg-muted)]">Loading settings...</p>
       </div>
     );
   }
@@ -586,20 +586,20 @@ export default function SettingsPage() {
   if (!isAuthenticated) {
     return (
       <div className="flex flex-col gap-8 max-w-7xl mx-auto w-full min-h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand-primary)]" />
-        <p className="text-[var(--color-text-muted)]">Redirecting to login...</p>
+        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-accent-fg)]" />
+        <p className="text-[var(--color-fg-muted)]">Redirecting to login...</p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-8 max-w-7xl mx-auto w-full">
+    <div className="w-full space-y-5">
       <PageHeader
         title="Settings"
         subtitle="Manage display preferences, live model credentials, and application controls"
       />
 
-      <div className="grid gap-6 lg:grid-cols-4">
+      <div className="grid gap-5 lg:grid-cols-4">
         {/* Navigation Sidebar */}
         <aside className="lg:col-span-1">
           <Card className="h-fit sticky top-16">
@@ -609,10 +609,10 @@ export default function SettingsPage() {
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${BTN_FOCUS} ${
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius-md)] text-sm font-medium transition-all ${BTN_FOCUS} ${
                       activeTab === tab.id
-                        ? "bg-primary/10 text-primary font-semibold border-l-2 border-primary"
-                        : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]/50 hover:text-[var(--color-text-primary)]"
+                        ? "bg-[var(--color-accent-muted)]/10 text-[var(--color-accent-fg)] font-semibold border-l-2 border-[var(--color-accent-fg)]"
+                        : "text-[var(--color-fg-muted)] hover:bg-[var(--color-canvas-subtle)]/50 hover:text-[var(--color-fg-default)]"
                     }`}
                     role="tab"
                     aria-selected={activeTab === tab.id}
@@ -626,8 +626,8 @@ export default function SettingsPage() {
               </div>
             </nav>
             {isSaving && (
-              <div className="mt-4 flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-                <Loader2 className="h-3 w-3 animate-spin text-primary" />
+              <div className="mt-4 flex items-center gap-2 text-xs text-[var(--color-fg-muted)]">
+                <Loader2 className="h-3 w-3 animate-spin text-[var(--color-accent-fg)]" />
                 Saving preferences...
               </div>
             )}
@@ -635,7 +635,7 @@ export default function SettingsPage() {
         </aside>
 
         {/* Tab Panels: All 6 rendered in DOM with hidden attribute for accessibility & tests */}
-        <div className="lg:col-span-3 space-y-6">
+        <div className="lg:col-span-3 space-y-5">
           {/* 1. Appearance Tab */}
           <div
             role="tabpanel"
@@ -645,64 +645,64 @@ export default function SettingsPage() {
             className={activeTab !== "appearance" ? "hidden" : "space-y-[var(--section-gap)]"}
           >
             <Card>
-              <h2 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                <Palette className="h-5 w-5 text-primary" /> Theme
+              <h2 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <Palette className="h-5 w-5 text-[var(--color-accent-fg)]" /> Theme
               </h2>
               <div className="grid gap-3 sm:grid-cols-3">
                 {[
                   { id: "light", label: "Light", desc: "Clean bright theme for daytime", icon: Sun, iconColor: "text-amber-400" },
-                  { id: "dark", label: "Dark", desc: "High-contrast dark reality debugger", icon: Moon, iconColor: "text-primary" },
-                  { id: "system", label: "System", desc: "Follow operating system preference", icon: Monitor, iconColor: "text-[var(--color-text-muted)]" },
+                  { id: "dark", label: "Dark", desc: "High-contrast dark reality debugger", icon: Moon, iconColor: "text-[var(--color-accent-fg)]" },
+                  { id: "system", label: "System", desc: "Follow operating system preference", icon: Monitor, iconColor: "text-[var(--color-fg-muted)]" },
                 ].map((item) => (
                   <button
                     key={item.id}
                     onClick={() => updateSetting("theme", item.id as SettingsType["theme"])}
-                    className={`p-4 rounded-xl border-2 text-left transition-all ${BTN_FOCUS} ${
+                    className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
                       settings.theme === item.id
-                        ? "border-primary bg-primary/10 ring-1 ring-primary"
-                        : "border-[var(--color-border)] hover:border-primary/40 bg-[var(--color-surface)]/50"
+                        ? "border-[var(--color-accent-fg)] bg-[var(--color-accent-muted)]/10 ring-1 ring-[var(--color-accent-fg)]"
+                        : "border-[var(--color-border-default)] hover:border-[var(--color-accent-muted)]/40 bg-[var(--color-canvas-subtle)]/50"
                     }`}
                   >
                     <div className="flex items-center gap-2 mb-1.5">
                       <item.icon className={`h-5 w-5 ${item.iconColor}`} />
-                      <span className="font-medium text-[var(--color-text-primary)]">{item.label}</span>
+                      <span className="font-medium text-[var(--color-fg-default)]">{item.label}</span>
                     </div>
-                    <p className="text-xs text-[var(--color-text-muted)]">{item.desc}</p>
+                    <p className="text-xs text-[var(--color-fg-muted)]">{item.desc}</p>
                   </button>
                 ))}
               </div>
             </Card>
 
             <Card>
-              <h3 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                <Zap className="h-5 w-5 text-primary" /> Accent Color
+              <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <Zap className="h-5 w-5 text-[var(--color-accent-fg)]" /> Accent Color
               </h3>
               <div className="flex flex-wrap gap-3">
                 {[
-                  { id: "primary", name: "Cyber Blue", bg: "bg-blue-500" },
-                  { id: "secondary", name: "Quantum Purple", bg: "bg-purple-500" },
+                  { id: "primary", name: "Monochrome Charcoal", bg: "bg-neutral-600" },
+                  { id: "secondary", name: "Slate Neutral", bg: "bg-slate-500" },
                   { id: "success", name: "Emerald Matrix", bg: "bg-emerald-500" },
                   { id: "amber", name: "Amber Alert", bg: "bg-amber-500" },
                 ].map((color) => (
                   <button
                     key={color.id}
                     onClick={() => updateSetting("accentColor", color.id as SettingsType["accentColor"])}
-                    className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border-2 transition-all ${BTN_FOCUS} ${
+                    className={`flex items-center gap-2.5 px-4 py-2.5 rounded-[var(--radius-lg)] border-2 transition-all ${BTN_FOCUS} ${
                       settings.accentColor === color.id
-                        ? "border-primary bg-primary/10 ring-1 ring-primary"
-                        : "border-[var(--color-border)] hover:border-primary/30 bg-[var(--color-surface)]/40"
+                        ? "border-[var(--color-accent-fg)] bg-[var(--color-accent-muted)]/10 ring-1 ring-[var(--color-accent-fg)]"
+                        : "border-[var(--color-border-default)] hover:border-[var(--color-accent-muted)]/30 bg-[var(--color-canvas-subtle)]/40"
                     }`}
                   >
                     <span className={`h-3.5 w-3.5 rounded-full ${color.bg}`} />
-                    <span className="text-sm font-medium text-[var(--color-text-primary)]">{color.name}</span>
+                    <span className="text-sm font-medium text-[var(--color-fg-default)]">{color.name}</span>
                   </button>
                 ))}
               </div>
             </Card>
 
             <Card>
-              <h3 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                <GitBranch className="h-5 w-5 text-primary" /> Layout Density
+              <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <GitBranch className="h-5 w-5 text-[var(--color-accent-fg)]" /> Layout Density
               </h3>
               <div className="grid gap-3 sm:grid-cols-3">
                 {[
@@ -713,28 +713,28 @@ export default function SettingsPage() {
                   <button
                     key={density.id}
                     onClick={() => updateSetting("density", density.id as SettingsType["density"])}
-                    className={`p-4 rounded-xl border-2 text-left transition-all ${BTN_FOCUS} ${
+                    className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
                       settings.density === density.id
-                        ? "border-primary bg-primary/10 ring-1 ring-primary"
-                        : "border-[var(--color-border)] hover:border-primary/40 bg-[var(--color-surface)]/50"
+                        ? "border-[var(--color-accent-fg)] bg-[var(--color-accent-muted)]/10 ring-1 ring-[var(--color-accent-fg)]"
+                        : "border-[var(--color-border-default)] hover:border-[var(--color-accent-muted)]/40 bg-[var(--color-canvas-subtle)]/50"
                     }`}
                   >
-                    <span className="font-medium text-[var(--color-text-primary)]">{density.label}</span>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1">{density.desc}</p>
+                    <span className="font-medium text-[var(--color-fg-default)]">{density.label}</span>
+                    <p className="text-xs text-[var(--color-fg-muted)] mt-1">{density.desc}</p>
                   </button>
                 ))}
               </div>
             </Card>
 
             <Card>
-              <h3 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                <FlaskConical className="h-5 w-5 text-primary" /> Motion & Transitions
+              <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <FlaskConical className="h-5 w-5 text-[var(--color-accent-fg)]" /> Motion & Transitions
               </h3>
               <div className="space-y-[var(--setting-group-gap)]">
                 <div className={settingRowStyles()}>
                   <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Animations</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Enable micro-interactions and smooth sidebar resizing</p>
+                    <p className="font-medium text-[var(--color-fg-default)]">Animations</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Enable micro-interactions and smooth sidebar resizing</p>
                   </div>
                   <Toggle
                     aria-label="Animations"
@@ -744,8 +744,8 @@ export default function SettingsPage() {
                 </div>
                 <div className={settingRowStyles()}>
                   <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Reduced Motion</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Disable all non-essential movement for accessibility</p>
+                    <p className="font-medium text-[var(--color-fg-default)]">Reduced Motion</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Disable all non-essential movement for accessibility</p>
                   </div>
                   <Toggle
                     aria-label="Reduced Motion"
@@ -766,14 +766,14 @@ export default function SettingsPage() {
             className={activeTab !== "notifications" ? "hidden" : "space-y-[var(--section-gap)]"}
           >
             <Card>
-              <h2 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                <Zap className="h-5 w-5 text-primary" /> Pipeline & Simulation Alerts
+              <h2 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <Zap className="h-5 w-5 text-[var(--color-accent-fg)]" /> Pipeline & Simulation Alerts
               </h2>
               <div className="space-y-[var(--setting-group-gap)]">
                 <div className={settingRowStyles()}>
                   <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Pipeline Events</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Notify on stage transitions, completions, and anomalies</p>
+                    <p className="font-medium text-[var(--color-fg-default)]">Pipeline Events</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Notify on stage transitions, completions, and anomalies</p>
                   </div>
                   <Toggle
                     aria-label="Pipeline Events"
@@ -783,8 +783,8 @@ export default function SettingsPage() {
                 </div>
                 <div className={settingRowStyles()}>
                   <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Experiment Results</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Notify when digital-twin simulation counterfactuals finish</p>
+                    <p className="font-medium text-[var(--color-fg-default)]">Experiment Results</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Notify when digital-twin simulation counterfactuals finish</p>
                   </div>
                   <Toggle
                     aria-label="Experiment Results"
@@ -794,8 +794,8 @@ export default function SettingsPage() {
                 </div>
                 <div className={settingRowStyles()}>
                   <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Error Notifications</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Critical invariants broken or execution exceptions</p>
+                    <p className="font-medium text-[var(--color-fg-default)]">Error Notifications</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Critical invariants broken or execution exceptions</p>
                   </div>
                   <Toggle
                     aria-label="Error Notifications"
@@ -805,8 +805,8 @@ export default function SettingsPage() {
                 </div>
                 <div className={settingRowStyles()}>
                   <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Desktop Notifications</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">OS system alerts when Cauveris tab is in background</p>
+                    <p className="font-medium text-[var(--color-fg-default)]">Desktop Notifications</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">OS system alerts when Cauveris tab is in background</p>
                   </div>
                   <Toggle
                     aria-label="Desktop Notifications"
@@ -830,14 +830,14 @@ export default function SettingsPage() {
             <Card>
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="font-semibold text-[var(--color-text-primary)] flex items-center gap-2">
-                    <Command className="h-5 w-5 text-primary" /> Application Command Center
+                  <h2 className="font-semibold text-[var(--color-fg-default)] flex items-center gap-2">
+                    <Command className="h-5 w-5 text-[var(--color-accent-fg)]" /> Application Command Center
                   </h2>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                  <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">
                     Direct visual execution of system actions and investigation routines
                   </p>
                 </div>
-                <Badge tone="primary" className="border-primary/40 text-primary">
+                <Badge tone="primary" className="border-[var(--color-accent-muted)]/40 text-[var(--color-accent-fg)]">
                   Active Incident: {incidentId || "None"}
                 </Badge>
               </div>
@@ -845,78 +845,78 @@ export default function SettingsPage() {
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <button
                   onClick={handleCreateIncident}
-                  className={`p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/60 hover:bg-primary/10 hover:border-primary/40 text-left transition-all ${BTN_FOCUS}`}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-[var(--color-accent-muted)]/10 hover:border-[var(--color-accent-muted)]/40 text-left transition-all ${BTN_FOCUS}`}
                 >
-                  <div className="flex items-center gap-2 text-[var(--color-text-primary)] font-medium mb-1">
-                    <Zap className="h-4 w-4 text-primary" />
+                  <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
+                    <Zap className="h-4 w-4 text-[var(--color-accent-fg)]" />
                     <span>Create New Incident</span>
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)]">Initialize fresh investigation session</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Initialize fresh investigation session</p>
                 </button>
 
                 <button
                   onClick={handleLoadGolden}
-                  className={`p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/60 hover:bg-amber-500/10 hover:border-amber-500/40 text-left transition-all ${BTN_FOCUS}`}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-amber-500/10 hover:border-amber-500/40 text-left transition-all ${BTN_FOCUS}`}
                 >
-                  <div className="flex items-center gap-2 text-[var(--color-text-primary)] font-medium mb-1">
+                  <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
                     <Clock className="h-4 w-4 text-amber-400" />
                     <span>Load Golden Benchmark</span>
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)]">Load CAU-0001 AMR Batching Bottleneck</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Load CAU-0001 AMR Batching Bottleneck</p>
                 </button>
 
                 <button
                   onClick={handleReconstruct}
-                  className={`p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/60 hover:bg-emerald-500/10 hover:border-emerald-500/40 text-left transition-all ${BTN_FOCUS}`}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-emerald-500/10 hover:border-emerald-500/40 text-left transition-all ${BTN_FOCUS}`}
                 >
-                  <div className="flex items-center gap-2 text-[var(--color-text-primary)] font-medium mb-1">
+                  <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
                     <RotateCcw className="h-4 w-4 text-emerald-400" />
                     <span>Reconstruct Pipeline</span>
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)]">Re-run causal discovery & verification</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Re-run causal discovery & verification</p>
                 </button>
 
                 <button
                   onClick={handleExportReport}
-                  className={`p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/60 hover:bg-blue-500/10 hover:border-blue-500/40 text-left transition-all ${BTN_FOCUS}`}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-[var(--color-canvas-inset)] hover:border-[var(--color-border-strong)] text-left transition-all ${BTN_FOCUS}`}
                 >
-                  <div className="flex items-center gap-2 text-[var(--color-text-primary)] font-medium mb-1">
-                    <Download className="h-4 w-4 text-blue-400" />
+                  <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
+                    <Download className="h-4 w-4 text-[var(--color-fg-default)]" />
                     <span>Export Report (JSON)</span>
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)]">Download formal causal diagnosis</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Download formal causal diagnosis</p>
                 </button>
 
                 <button
                   onClick={handleDownloadPatch}
-                  className={`p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/60 hover:bg-purple-500/10 hover:border-purple-500/40 text-left transition-all ${BTN_FOCUS}`}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-purple-500/10 hover:border-purple-500/40 text-left transition-all ${BTN_FOCUS}`}
                 >
-                  <div className="flex items-center gap-2 text-[var(--color-text-primary)] font-medium mb-1">
+                  <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
                     <Wrench className="h-4 w-4 text-purple-400" />
                     <span>Download Patch Package</span>
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)]">Export verified patch artifact zip</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Export verified patch artifact zip</p>
                 </button>
 
                 <button
                   onClick={resetDemo}
-                  className={`p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/60 hover:bg-danger/10 hover:border-danger/40 text-left transition-all ${BTN_FOCUS}`}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-[var(--color-danger-muted)] hover:border-[var(--color-danger-muted)]/40 text-left transition-all ${BTN_FOCUS}`}
                 >
-                  <div className="flex items-center gap-2 text-[var(--color-text-primary)] font-medium mb-1">
-                    <Trash2 className="h-4 w-4 text-danger" />
+                  <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
+                    <Trash2 className="h-4 w-4 text-[var(--color-danger-fg)]" />
                     <span>Reset Demo Environment</span>
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)]">Restore clean sandbox state</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Restore clean sandbox state</p>
                 </button>
               </div>
             </Card>
 
             {/* Execution Modes */}
             <Card>
-              <h3 className="font-semibold text-[var(--color-text-primary)] mb-2 flex items-center gap-2">
-                <Sliders className="h-5 w-5 text-primary" /> Autonomous vs. Supervised Execution Modes
+              <h3 className="font-semibold text-[var(--color-fg-default)] mb-2 flex items-center gap-2">
+                <Sliders className="h-5 w-5 text-[var(--color-accent-fg)]" /> Autonomous vs. Supervised Execution Modes
               </h3>
-              <p className="text-xs text-[var(--color-text-muted)] mb-4">
+              <p className="text-xs text-[var(--color-fg-muted)] mb-4">
                 Configure safety invariants and autonomy levels for robotic incident remediation
               </p>
               <div className="grid gap-3 sm:grid-cols-3">
@@ -926,17 +926,17 @@ export default function SettingsPage() {
                     setEngineerMode(false);
                     addActivity({ type: "system", message: "Autonomous Mode activated", dismissible: true });
                   }}
-                  className={`p-4 rounded-xl border-2 text-left transition-all ${BTN_FOCUS} ${
+                  className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
                     !judgeMode && !engineerMode
-                      ? "border-primary bg-primary/10 ring-1 ring-primary"
-                      : "border-[var(--color-border)] hover:border-primary/40 bg-[var(--color-surface)]/50"
+                      ? "border-[var(--color-accent-fg)] bg-[var(--color-accent-muted)]/10 ring-1 ring-[var(--color-accent-fg)]"
+                      : "border-[var(--color-border-default)] hover:border-[var(--color-accent-muted)]/40 bg-[var(--color-canvas-subtle)]/50"
                   }`}
                 >
-                  <div className="flex items-center gap-2 font-medium text-[var(--color-text-primary)] mb-1">
-                    <Bot className="h-4 w-4 text-primary" />
+                  <div className="flex items-center gap-2 font-medium text-[var(--color-fg-default)] mb-1">
+                    <Bot className="h-4 w-4 text-[var(--color-accent-fg)]" />
                     <span>Autonomous</span>
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)]">Self-healing: automatically hypothecates and applies fixes</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Self-healing: automatically hypothecates and applies fixes</p>
                 </button>
 
                 <button
@@ -945,17 +945,17 @@ export default function SettingsPage() {
                     setEngineerMode(false);
                     addActivity({ type: "system", message: "Judge Mode activated", dismissible: true });
                   }}
-                  className={`p-4 rounded-xl border-2 text-left transition-all ${BTN_FOCUS} ${
+                  className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
                     judgeMode
                       ? "border-amber-500 bg-amber-500/10 ring-1 ring-amber-500"
-                      : "border-[var(--color-border)] hover:border-amber-500/40 bg-[var(--color-surface)]/50"
+                      : "border-[var(--color-border-default)] hover:border-amber-500/40 bg-[var(--color-canvas-subtle)]/50"
                   }`}
                 >
-                  <div className="flex items-center gap-2 font-medium text-[var(--color-text-primary)] mb-1">
+                  <div className="flex items-center gap-2 font-medium text-[var(--color-fg-default)] mb-1">
                     <Shield className="h-4 w-4 text-amber-400" />
                     <span>Judge Mode</span>
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)]">Human verification required before applying any patch</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Human verification required before applying any patch</p>
                 </button>
 
                 <button
@@ -964,34 +964,34 @@ export default function SettingsPage() {
                     setJudgeMode(false);
                     addActivity({ type: "system", message: "Engineer Mode activated", dismissible: true });
                   }}
-                  className={`p-4 rounded-xl border-2 text-left transition-all ${BTN_FOCUS} ${
+                  className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
                     engineerMode
                       ? "border-purple-500 bg-purple-500/10 ring-1 ring-purple-500"
-                      : "border-[var(--color-border)] hover:border-purple-500/40 bg-[var(--color-surface)]/50"
+                      : "border-[var(--color-border-default)] hover:border-purple-500/40 bg-[var(--color-canvas-subtle)]/50"
                   }`}
                 >
-                  <div className="flex items-center gap-2 font-medium text-[var(--color-text-primary)] mb-1">
+                  <div className="flex items-center gap-2 font-medium text-[var(--color-fg-default)] mb-1">
                     <Wrench className="h-4 w-4 text-purple-400" />
                     <span>Engineer Mode</span>
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)]">Deep telemetry traces, raw kernel timings, and step-through</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Deep telemetry traces, raw kernel timings, and step-through</p>
                 </button>
               </div>
             </Card>
 
             {/* Layout Shell Controls */}
             <Card>
-              <h3 className="font-semibold text-[var(--color-text-primary)] mb-3 flex items-center gap-2">
-                <LayoutDashboard className="h-5 w-5 text-primary" /> Shell Layout Controls
+              <h3 className="font-semibold text-[var(--color-fg-default)] mb-3 flex items-center gap-2">
+                <LayoutDashboard className="h-5 w-5 text-[var(--color-accent-fg)]" /> Shell Layout Controls
               </h3>
               <div className="grid gap-3 sm:grid-cols-3">
                 <button
                   onClick={() => toggleNavCollapse()}
-                  className={`p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/40 hover:bg-[var(--color-surface)]/50 text-left transition-all flex items-center justify-between ${BTN_FOCUS}`}
+                  className={`p-3 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40 hover:bg-[var(--color-canvas-subtle)]/50 text-left transition-all flex items-center justify-between ${BTN_FOCUS}`}
                 >
                   <div>
-                    <span className="text-sm font-medium text-[var(--color-text-primary)] block">Navigation Sidebar</span>
-                    <span className="text-xs text-[var(--color-text-muted)]">{shellState.isNavCollapsed ? "Collapsed" : "Expanded"}</span>
+                    <span className="text-sm font-medium text-[var(--color-fg-default)] block">Navigation Sidebar</span>
+                    <span className="text-xs text-[var(--color-fg-muted)]">{shellState.isNavCollapsed ? "Collapsed" : "Expanded"}</span>
                   </div>
                   <Badge tone={shellState.isNavCollapsed ? "secondary" : "primary"}>
                     {shellState.isNavCollapsed ? "Mini" : "Full"}
@@ -1000,11 +1000,11 @@ export default function SettingsPage() {
 
                 <button
                   onClick={() => (shellState.inspectorOpen ? closeInspector() : openInspector("timeline", { mode: "timeline" }))}
-                  className={`p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/40 hover:bg-[var(--color-surface)]/50 text-left transition-all flex items-center justify-between ${BTN_FOCUS}`}
+                  className={`p-3 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40 hover:bg-[var(--color-canvas-subtle)]/50 text-left transition-all flex items-center justify-between ${BTN_FOCUS}`}
                 >
                   <div>
-                    <span className="text-sm font-medium text-[var(--color-text-primary)] block">Context Inspector</span>
-                    <span className="text-xs text-[var(--color-text-muted)]">{shellState.inspectorOpen ? "Visible" : "Hidden"}</span>
+                    <span className="text-sm font-medium text-[var(--color-fg-default)] block">Context Inspector</span>
+                    <span className="text-xs text-[var(--color-fg-muted)]">{shellState.inspectorOpen ? "Visible" : "Hidden"}</span>
                   </div>
                   <Badge tone={shellState.inspectorOpen ? "primary" : "secondary"}>
                     {shellState.inspectorOpen ? "Open" : "Closed"}
@@ -1015,11 +1015,11 @@ export default function SettingsPage() {
                   onClick={() =>
                     setTrayState(shellState.trayState === "closed" ? "expanded" : "closed")
                   }
-                  className={`p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/40 hover:bg-[var(--color-surface)]/50 text-left transition-all flex items-center justify-between ${BTN_FOCUS}`}
+                  className={`p-3 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40 hover:bg-[var(--color-canvas-subtle)]/50 text-left transition-all flex items-center justify-between ${BTN_FOCUS}`}
                 >
                   <div>
-                    <span className="text-sm font-medium text-[var(--color-text-primary)] block">Activity Tray</span>
-                    <span className="text-xs text-[var(--color-text-muted)]">Current: {shellState.trayState}</span>
+                    <span className="text-sm font-medium text-[var(--color-fg-default)] block">Activity Tray</span>
+                    <span className="text-xs text-[var(--color-fg-muted)]">Current: {shellState.trayState}</span>
                   </div>
                   <Badge tone="neutral" className="capitalize">
                     {shellState.trayState}
@@ -1030,8 +1030,8 @@ export default function SettingsPage() {
 
             {/* Keyboard Shortcuts Cheat Sheet */}
             <Card>
-              <h3 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                <Clock className="h-5 w-5 text-primary" /> Keyboard Shortcuts Reference
+              <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <Clock className="h-5 w-5 text-[var(--color-accent-fg)]" /> Keyboard Shortcuts Reference
               </h3>
               <div className="grid gap-3 sm:grid-cols-2">
                 {[
@@ -1047,10 +1047,10 @@ export default function SettingsPage() {
                 ].map((item, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center justify-between p-2.5 rounded-lg bg-[var(--color-surface)]/50 border border-[var(--color-border)] text-sm"
+                    className="flex items-center justify-between p-2.5 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)] text-sm"
                   >
-                    <span className="text-[var(--color-text-primary)]/80">{item.action}</span>
-                    <kbd className="px-2 py-1 text-xs font-mono rounded bg-[var(--color-surface)]/50 border border-[var(--color-border)]/20 text-primary font-semibold">
+                    <span className="text-[var(--color-fg-muted)]/80">{item.action}</span>
+                    <kbd className="px-2 py-1 text-xs font-mono rounded bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]/20 text-[var(--color-accent-fg)] font-semibold">
                       {item.shortcut}
                     </kbd>
                   </div>
@@ -1068,34 +1068,40 @@ export default function SettingsPage() {
             className={activeTab !== "privacy" ? "hidden" : "space-y-[var(--section-gap)]"}
           >
             <Card>
-              <h2 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                <Shield className="h-5 w-5 text-primary" /> Security & Telemetry
+              <h2 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <Shield className="h-5 w-5 text-[var(--color-accent-fg)]" /> Security & Telemetry
               </h2>
               <div className="space-y-[var(--setting-group-gap)]">
-                <div className="py-[var(--setting-row-padding)] px-[var(--space-4)] rounded-xl bg-[var(--color-surface)]/50 border border-[var(--color-border)]">
-                  <label htmlFor="settings-session-timeout" className="block text-sm font-medium text-[var(--color-text-primary)] mb-2">
-                    Session timeout (minutes)
-                  </label>
-                  <p className="text-xs text-[var(--color-text-muted)] mb-3">
-                    Automatically lock authentication and terminal session when inactive
-                  </p>
-                  <div className="max-w-xs">
-                    <Input
-                      id="settings-session-timeout"
-                      aria-label="Session timeout (minutes)"
-                      type="number"
-                      min={5}
-                      max={1440}
-                      value={settings.sessionTimeout}
-                      onChange={(e) => updateSetting("sessionTimeout", parseInt(e.target.value) || 30)}
-                    />
-                  </div>
-                </div>
+                <Panel>
+                  <PanelSection>
+                    <div className="py-[var(--setting-row-padding)] px-[var(--space-4)] rounded-[var(--radius-lg)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]">
+                      <label htmlFor="settings-session-timeout" className="block text-sm font-medium text-[var(--color-fg-default)] mb-2">
+                        Session timeout (minutes)
+                      </label>
+                      <p className="text-xs text-[var(--color-fg-muted)] mb-3">
+                        Automatically lock authentication and terminal session when inactive
+                      </p>
+                      <div className="max-w-md">
+                        <Slider
+                          id="settings-session-timeout"
+                          aria-label="Session timeout (minutes)"
+                          value={settings.sessionTimeout}
+                          min={5}
+                          max={1440}
+                          step={5}
+                          showValue
+                          valueFormatter={(v) => `${v} min`}
+                          onValueChange={(v) => updateSetting("sessionTimeout", v)}
+                        />
+                      </div>
+                    </div>
+                  </PanelSection>
+                </Panel>
 
                 <div className={settingRowStyles()}>
                   <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Anonymized Telemetry</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Contribute anonymized causal DAG accuracy metrics</p>
+                    <p className="font-medium text-[var(--color-fg-default)]">Anonymized Telemetry</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Contribute anonymized causal DAG accuracy metrics</p>
                   </div>
                   <Toggle
                     aria-label="Telemetry"
@@ -1106,8 +1112,8 @@ export default function SettingsPage() {
 
                 <div className={settingRowStyles()}>
                   <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Local Storage Encryption</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Encrypt cached incident artifacts and session tokens</p>
+                    <p className="font-medium text-[var(--color-fg-default)]">Local Storage Encryption</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Encrypt cached incident artifacts and session tokens</p>
                   </div>
                   <Toggle
                     aria-label="Local Storage Encryption"
@@ -1128,33 +1134,82 @@ export default function SettingsPage() {
             className={activeTab !== "data" ? "hidden" : "space-y-[var(--section-gap)]"}
           >
             <Card>
-              <h2 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                <Database className="h-5 w-5 text-primary" /> Retention & Data Management
+              <h2 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <Database className="h-5 w-5 text-[var(--color-accent-fg)]" /> Retention & Data Management
               </h2>
               <div className="space-y-[var(--setting-group-gap)]">
-                <div className={settingRowStyles()}>
-                  <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Auto-save</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Periodically persist investigation state to browser</p>
-                  </div>
-                  <Toggle
-                    aria-label="Auto-save"
-                    checked={settings.autoSave}
-                    onChange={(v) => updateSetting("autoSave", v)}
-                  />
-                </div>
+                <Panel>
+                  <PanelSection title="Retention Policies">
+                    <div className="space-y-[var(--setting-group-gap)]">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <p className="font-medium text-[var(--color-fg-default)]">Evidence Retention</p>
+                            <p className="text-sm text-[var(--color-fg-muted)]">Days to keep evidence artifacts before cleanup</p>
+                          </div>
+                          <span className="text-sm font-mono text-[var(--color-accent-fg)]">{settings.evidenceRetention} days</span>
+                        </div>
+                        <Slider
+                          aria-label="Evidence retention (days)"
+                          value={settings.evidenceRetention}
+                          min={7}
+                          max={365}
+                          step={1}
+                          showValue
+                          valueFormatter={(v) => `${v} days`}
+                          onValueChange={(v) => updateSetting("evidenceRetention", v)}
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <p className="font-medium text-[var(--color-fg-default)]">Log Retention</p>
+                            <p className="text-sm text-[var(--color-fg-muted)]">Days to keep system logs and activity history</p>
+                          </div>
+                          <span className="text-sm font-mono text-[var(--color-accent-fg)]">{settings.logRetention} days</span>
+                        </div>
+                        <Slider
+                          aria-label="Log retention (days)"
+                          value={settings.logRetention}
+                          min={7}
+                          max={365}
+                          step={1}
+                          showValue
+                          valueFormatter={(v) => `${v} days`}
+                          onValueChange={(v) => updateSetting("logRetention", v)}
+                        />
+                      </div>
+                    </div>
+                  </PanelSection>
+                </Panel>
 
-                <div className={settingRowStyles()}>
-                  <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Cross-tab Synchronization</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Synchronize active incident selection across windows</p>
-                  </div>
-                  <Toggle
-                    aria-label="Cross-tab Synchronization"
-                    checked={settings.syncTabs}
-                    onChange={(v) => updateSetting("syncTabs", v)}
-                  />
-                </div>
+                <Panel>
+                  <PanelSection title="Data Synchronization">
+                    <div className={settingRowStyles()}>
+                      <div>
+                        <p className="font-medium text-[var(--color-fg-default)]">Auto-save</p>
+                        <p className="text-sm text-[var(--color-fg-muted)]">Periodically persist investigation state to browser</p>
+                      </div>
+                      <Toggle
+                        aria-label="Auto-save"
+                        checked={settings.autoSave}
+                        onChange={(v) => updateSetting("autoSave", v)}
+                      />
+                    </div>
+
+                    <div className={settingRowStyles()}>
+                      <div>
+                        <p className="font-medium text-[var(--color-fg-default)]">Cross-tab Synchronization</p>
+                        <p className="text-sm text-[var(--color-fg-muted)]">Synchronize active incident selection across windows</p>
+                      </div>
+                      <Toggle
+                        aria-label="Cross-tab Synchronization"
+                        checked={settings.syncTabs}
+                        onChange={(v) => updateSetting("syncTabs", v)}
+                      />
+                    </div>
+                  </PanelSection>
+                </Panel>
 
                 <div className="flex flex-wrap gap-3 pt-3">
                   <Button variant="outline" onClick={exportSettings} className={BTN_FOCUS}>
@@ -1183,10 +1238,10 @@ export default function SettingsPage() {
             <Card>
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="font-semibold text-[var(--color-text-primary)] flex items-center gap-2">
-                    <Server className="h-5 w-5 text-primary" /> Model Gateway Status
+                  <h2 className="font-semibold text-[var(--color-fg-default)] flex items-center gap-2">
+                    <Server className="h-5 w-5 text-[var(--color-accent-fg)]" /> Model Gateway Status
                   </h2>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                  <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">
                     Live inference engine status and model execution configuration
                   </p>
                 </div>
@@ -1196,40 +1251,40 @@ export default function SettingsPage() {
                 >
                   <span
                     className={`h-2 w-2 rounded-full ${
-                      isLiveGateway ? "bg-emerald-400 animate-pulse" : "bg-blue-400"
+                      isLiveGateway ? "bg-emerald-400 animate-pulse" : "bg-[var(--color-fg-muted)]"
                     }`}
                   />
                   <span>{isLiveGateway ? "Nebius Live Gateway Active" : "Deterministic Local Fixtures"}</span>
                 </Badge>
               </div>
 
-              <div className="p-4 rounded-xl bg-[var(--color-surface)]/50 border border-[var(--color-border)] mb-4">
+              <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)] mb-4">
                 <div className="grid gap-4 sm:grid-cols-2 text-sm">
                   <div>
-                    <span className="text-xs text-[var(--color-text-muted)] block">Active Provider</span>
-                    <span className="font-medium text-[var(--color-text-primary)]">{gatewayProviderName}</span>
+                    <span className="text-xs text-[var(--color-fg-muted)] block">Active Provider</span>
+                    <span className="font-medium text-[var(--color-fg-default)]">{gatewayProviderName}</span>
                   </div>
                   <div>
-                    <span className="text-xs text-[var(--color-text-muted)] block">Fast Model</span>
-                    <span className="font-mono text-primary">{settings.modelFast}</span>
+                    <span className="text-xs text-[var(--color-fg-muted)] block">Fast Model</span>
+                    <span className="font-mono text-[var(--color-accent-fg)]">{settings.modelFast}</span>
                   </div>
                   <div>
-                    <span className="text-xs text-[var(--color-text-muted)] block">Reasoning Model</span>
+                    <span className="text-xs text-[var(--color-fg-muted)] block">Reasoning Model</span>
                     <span className="font-mono text-purple-400">{settings.modelReasoning}</span>
                   </div>
                   <div>
-                    <span className="text-xs text-[var(--color-text-muted)] block">Escalation Model</span>
+                    <span className="text-xs text-[var(--color-fg-muted)] block">Escalation Model</span>
                     <span className="font-mono text-amber-400">{settings.modelEscalation}</span>
                   </div>
                 </div>
               </div>
 
               {/* Secure API Key Input Section */}
-              <div className="space-y-4 pt-2 border-t border-[var(--color-border)]">
+              <div className="space-y-4 pt-2 border-t border-[var(--color-border-default)]">
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
-                    <label htmlFor="settings-model-api-key" className="text-sm font-medium text-[var(--color-text-primary)] flex items-center gap-2">
-                      <Key className="h-4 w-4 text-primary" /> Nebius / OpenAI API Key
+                    <label htmlFor="settings-model-api-key" className="text-sm font-medium text-[var(--color-fg-default)] flex items-center gap-2">
+                      <Key className="h-4 w-4 text-[var(--color-accent-fg)]" /> Nebius / OpenAI API Key
                     </label>
                     {maskedKey && (
                       <span className="text-xs text-emerald-400 flex items-center gap-1">
@@ -1237,19 +1292,19 @@ export default function SettingsPage() {
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)] mb-3">
+                  <p className="text-xs text-[var(--color-fg-muted)] mb-3">
                     Paste your API key below. Once saved, the key is permanently masked on screen to prevent shoulder-surfing.
                     No need to modify .env or source files.
                   </p>
 
                   {/* Masked Preview if stored */}
                   {maskedKey && (
-                    <div className="mb-3 flex items-center justify-between p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/30">
+                    <div className="mb-3 flex items-center justify-between p-3 rounded-[var(--radius-lg)] bg-emerald-950/20 border border-emerald-500/30">
                       <div className="flex items-center gap-2.5">
                         <Shield className="h-4 w-4 text-emerald-400 flex-shrink-0" />
                         <div>
                           <span className="text-xs text-emerald-300 font-mono tracking-wider">{maskedKey}</span>
-                          <span className="text-[10px] text-[var(--color-text-muted)] block">Stored safely in runtime environment</span>
+                          <span className="text-[10px] text-[var(--color-fg-muted)] block">Stored safely in runtime environment</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1289,7 +1344,7 @@ export default function SettingsPage() {
                     <button
                       type="button"
                       onClick={() => setShowApiKey(!showApiKey)}
-                      className={`absolute right-3 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] rounded ${BTN_FOCUS}`}
+                      className={`absolute right-3 p-1 text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] rounded ${BTN_FOCUS}`}
                       aria-label={showApiKey ? "Hide API key" : "Show API key"}
                     >
                       {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -1300,12 +1355,12 @@ export default function SettingsPage() {
                 {/* Test Result Feedback */}
                 {testResult && (
                   <div
-                    className={`p-3.5 rounded-xl border text-sm flex items-start gap-2.5 ${
+                    className={`p-3.5 rounded-[var(--radius-lg)] border text-sm flex items-start gap-2.5 ${
                       testResult.isTesting
-                        ? "bg-blue-500/10 border-blue-500/30 text-blue-300"
+                        ? "bg-[var(--color-canvas-subtle)] border-[var(--color-border-default)] text-[var(--color-fg-default)]"
                         : testResult.success
                         ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                        : "bg-danger/10 border-danger/30 text-red-300"
+                        : "bg-[var(--color-danger-muted)] border-[var(--color-danger-muted)]/30 text-red-300"
                     }`}
                   >
                     {testResult.isTesting ? (
@@ -1313,7 +1368,7 @@ export default function SettingsPage() {
                     ) : testResult.success ? (
                       <CheckCircle2 className="h-4 w-4 text-emerald-400 mt-0.5 flex-shrink-0" />
                     ) : (
-                      <XCircle className="h-4 w-4 text-danger mt-0.5 flex-shrink-0" />
+                      <XCircle className="h-4 w-4 text-[var(--color-danger-fg)] mt-0.5 flex-shrink-0" />
                     )}
                     <div>
                       <p className="font-medium">{testResult.message}</p>
@@ -1358,7 +1413,7 @@ export default function SettingsPage() {
                     <Button
                       variant="ghost"
                       onClick={handleClearApiKey}
-                      className={`text-danger hover:bg-danger/10 ${BTN_FOCUS}`}
+                      className={`text-[var(--color-danger-fg)] hover:bg-[var(--color-danger-muted)] ${BTN_FOCUS}`}
                       aria-label="Clear API Key"
                     >
                       Clear / Revert to Local
@@ -1370,12 +1425,12 @@ export default function SettingsPage() {
 
             {/* Model Gateway URL & Models Card */}
             <Card>
-              <h3 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                <Globe className="h-5 w-5 text-primary" /> Gateway Endpoint & Model Architecture
+              <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <Globe className="h-5 w-5 text-[var(--color-accent-fg)]" /> Gateway Endpoint & Model Architecture
               </h3>
               <div className="space-y-4">
                 <div>
-                  <label htmlFor="settings-model-base-url" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+                  <label htmlFor="settings-model-base-url" className="block text-sm font-medium text-[var(--color-fg-default)] mb-1">
                     Gateway Base URL
                   </label>
                   <Input
@@ -1383,16 +1438,16 @@ export default function SettingsPage() {
                     aria-label="Gateway Base URL"
                     value={settings.modelBaseUrl}
                     onChange={(e) => updateSetting("modelBaseUrl", e.target.value)}
-                    placeholder="https://api.nebius.ai/v1"
+                    placeholder="https://api.tokenfactory.nebius.com/v1"
                   />
-                  <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                  <p className="text-xs text-[var(--color-fg-muted)] mt-1">
                     Compatible with Nebius Token Factory or any OpenAI-compatible API proxy
                   </p>
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div>
-                    <label htmlFor="settings-model-fast" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+                    <label htmlFor="settings-model-fast" className="block text-sm font-medium text-[var(--color-fg-default)] mb-1">
                       Fast Model
                     </label>
                     <Input
@@ -1404,7 +1459,7 @@ export default function SettingsPage() {
                   </div>
 
                   <div>
-                    <label htmlFor="settings-model-reasoning" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+                    <label htmlFor="settings-model-reasoning" className="block text-sm font-medium text-[var(--color-fg-default)] mb-1">
                       Reasoning Model
                     </label>
                     <Input
@@ -1416,7 +1471,7 @@ export default function SettingsPage() {
                   </div>
 
                   <div>
-                    <label htmlFor="settings-model-escalation" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+                    <label htmlFor="settings-model-escalation" className="block text-sm font-medium text-[var(--color-fg-default)] mb-1">
                       Escalation Model
                     </label>
                     <Input
@@ -1432,12 +1487,12 @@ export default function SettingsPage() {
 
             {/* General Advanced Settings (With required test labels) */}
             <Card>
-              <h3 className="font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                <Sliders className="h-5 w-5 text-primary" /> General Engine Parameters
+              <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <Sliders className="h-5 w-5 text-[var(--color-accent-fg)]" /> General Engine Parameters
               </h3>
               <div className="space-y-4">
                 <div>
-                  <label htmlFor="settings-api-endpoint" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
+                  <label htmlFor="settings-api-endpoint" className="block text-sm font-medium text-[var(--color-fg-default)] mb-1">
                     API endpoint
                   </label>
                   <Input
@@ -1449,25 +1504,30 @@ export default function SettingsPage() {
                   />
                 </div>
 
-                <div>
-                  <label htmlFor="settings-max-concurrent" className="block text-sm font-medium text-[var(--color-text-primary)] mb-1">
-                    Max concurrent experiments
-                  </label>
-                  <Input
-                    id="settings-max-concurrent"
-                    aria-label="Max concurrent experiments"
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={settings.maxConcurrentExperiments}
-                    onChange={(e) => updateSetting("maxConcurrentExperiments", parseInt(e.target.value) || 3)}
-                  />
-                </div>
+                <Panel>
+                  <PanelSection>
+                    <div>
+                      <label htmlFor="settings-max-concurrent" className="block text-sm font-medium text-[var(--color-fg-default)] mb-1">
+                        Max concurrent experiments
+                      </label>
+                      <Slider
+                        id="settings-max-concurrent"
+                        aria-label="Max concurrent experiments"
+                        value={settings.maxConcurrentExperiments}
+                        min={1}
+                        max={10}
+                        step={1}
+                        showValue
+                        onValueChange={(v) => updateSetting("maxConcurrentExperiments", v)}
+                      />
+                    </div>
+                  </PanelSection>
+                </Panel>
 
                 <div className={settingRowStyles()}>
                   <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Debug Mode</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Enable verbose logging and diagnostic stack traces</p>
+                    <p className="font-medium text-[var(--color-fg-default)]">Debug Mode</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Enable verbose logging and diagnostic stack traces</p>
                   </div>
                   <Toggle
                     aria-label="Debug Mode"
@@ -1478,8 +1538,8 @@ export default function SettingsPage() {
 
                 <div className={settingRowStyles()}>
                   <div>
-                    <p className="font-medium text-[var(--color-text-primary)]">Experimental Features</p>
-                    <p className="text-sm text-[var(--color-text-muted)]">Early access to neural causal abstraction primitives</p>
+                    <p className="font-medium text-[var(--color-fg-default)]">Experimental Features</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Early access to neural causal abstraction primitives</p>
                   </div>
                   <Toggle
                     aria-label="Experimental Features"

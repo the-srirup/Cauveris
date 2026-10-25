@@ -16,6 +16,55 @@ from typing import Dict, List, Optional, Tuple
 from .topology import SystemTopology, ComponentInfo, CausalEdge, ResourceCapacity
 
 
+# How long an internal state change takes to reach a component's own
+# boundary.  These factors are the *policy* of the model: they encode how
+# fast a database publishes its metrics compared with a queue, and how long
+# a scrape interval is compared with an instrumented trace.
+#
+# They live here, in one place, because the GPU path uses the same numbers.
+# A second copy in the CUDA extension would be a second place for them to
+# drift apart, and the two paths would then disagree about the physics.
+BASE_TAU_MS = 10.0
+
+COMPONENT_TYPE_TAU_FACTORS = {
+    "service": 1.0,
+    "database": 2.0,  # Databases have more internal buffering
+    "queue": 0.5,  # Queues are fast
+    "gateway": 0.8,  # Gateways are network-bound
+    "monitoring": 1.5,  # Monitoring aggregates
+}
+
+LAYER_TAU_FACTORS = {
+    "application_log": 1.0,  # Logs: immediate
+    "infrastructure_log": 1.2,  # System logs: slight delay
+    "distributed_trace": 0.3,  # Traces: very fast (instrumented)
+    "metrics_export": 5.0,  # Metrics: scrape interval ~10-30s
+    "network_flow": 1.0,  # NetFlow: per-packet or per-flow
+    "config_state": 10.0,  # Config: propagation through reload
+    "deployment_event": 0.1,  # Deployment: instant marker
+}
+
+
+def compute_local_tau_ns(component_type: str, layer: str) -> float:
+    """
+    Characteristic time constant of a component's local propagation kernel.
+
+    The constant is the product of a base delay, a factor for the kind of
+    component and a factor for the boundary layer that is being observed.
+
+    Args:
+        component_type: "service", "database", "queue", "gateway", ...
+        layer: "application_log", "metrics_export", ...
+
+    Returns:
+        The time constant in nanoseconds.
+    """
+    base_tau_ms = BASE_TAU_MS
+    base_tau_ms *= COMPONENT_TYPE_TAU_FACTORS.get(component_type, 1.0)
+    base_tau_ms *= LAYER_TAU_FACTORS.get(layer, 1.0)
+    return base_tau_ms * 1_000_000
+
+
 @dataclass(slots=True)
 class KernelConfig:
     """Configuration for kernel construction."""
@@ -194,33 +243,7 @@ class CausalKernelBuilder:
 
     def _compute_local_tau(self, component: ComponentInfo, layer: str) -> float:
         """Compute characteristic time constant for local propagation."""
-        # Base latency from resource capacity (higher capacity = faster internal propagation)
-        base_tau_ms = 10.0  # 10ms base
-
-        # Adjust by component type
-        type_factors = {
-            "service": 1.0,
-            "database": 2.0,  # Databases have more internal buffering
-            "queue": 0.5,  # Queues are fast
-            "gateway": 0.8,  # Gateways are network-bound
-            "monitoring": 1.5,  # Monitoring aggregates
-        }
-        base_tau_ms *= type_factors.get(component.component_type, 1.0)
-
-        # Adjust by boundary layer
-        layer_factors = {
-            "application_log": 1.0,  # Logs: immediate
-            "infrastructure_log": 1.2,  # System logs: slight delay
-            "distributed_trace": 0.3,  # Traces: very fast (instrumented)
-            "metrics_export": 5.0,  # Metrics: scrape interval ~10-30s
-            "network_flow": 1.0,  # NetFlow: per-packet or per-flow
-            "config_state": 10.0,  # Config: propagation through reload
-            "deployment_event": 0.1,  # Deployment: instant marker
-        }
-        base_tau_ms *= layer_factors.get(layer, 1.0)
-
-        # Convert to nanoseconds
-        return base_tau_ms * 1_000_000
+        return compute_local_tau_ns(component.component_type, layer)
 
     def _build_cross_kernel(
         self,

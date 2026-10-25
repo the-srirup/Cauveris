@@ -11,6 +11,34 @@ import { ReportPage } from '@/app/reports/page';
 
 expect.extend(toHaveNoViolations);
 
+// Mock next/navigation
+vi.mock("next/navigation", () => ({
+  usePathname: vi.fn(() => "/reality-rewind"),
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    prefetch: vi.fn(),
+    back: vi.fn(),
+  }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+// Mock next/link
+vi.mock("next/link", () => ({
+  default: ({ children, href, className = "", ...props }: { children: React.ReactNode; href: string; className?: string }) => (
+    <a href={href} className={className} {...props}>{children}</a>
+  ),
+}));
+
+// Mock auth store
+vi.mock("@/lib/auth", () => ({
+  useAuthStore: () => ({
+    user: { id: "test-user", name: "Operator" },
+    isAuthenticated: true,
+    isLoading: false,
+  }),
+}));
+
 // Mock useShell and other context providers for page components
 vi.mock('@/lib/useShell', () => ({
   useShell: () => ({
@@ -50,10 +78,16 @@ vi.mock('@/lib/useShell', () => ({
     setCommandPalette: vi.fn(),
   }),
   ShellProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('@/lib/useIncident', () => ({
   useActiveIncident: () => ({
+    incident: { id: "CAU-0001", title: "Test Incident" },
     incidentId: 'CAU-0001',
     judgeMode: false,
     engineerMode: false,
+    setIncidentId: vi.fn(),
+    loadIncident: vi.fn(),
   }),
   buildIncidentContext: vi.fn(),
 }));
@@ -112,6 +146,32 @@ vi.mock('@/lib/api', () => ({
     applyPatch: vi.fn().mockResolvedValue({ success: true }),
     list: vi.fn().mockResolvedValue({ incidents: [] }),
     simulateCustom: vi.fn().mockResolvedValue({}),
+    getHypotheses: vi.fn().mockResolvedValue({
+      incident_id: "CAU-0001",
+      count: 1,
+      hypotheses: [
+        {
+          id: "h1_batching_window",
+          hypothesis_id: "h1_batching_window",
+          title: "H1: Dynamic Batching Window Increase",
+          causal_claim: "Increased dynamic batching window in deployment v42 caused inference latency to exceed the robot freshness budget (120ms), producing stale detections that triggered emergency stop.",
+          description: "Increased dynamic batching window in deployment v42 caused inference latency to exceed the robot freshness budget (120ms), producing stale detections that triggered emergency stop.",
+          confidence: 92,
+          confidence_prior: 0.92,
+          status: "INFERRED",
+          intervention: "Reduce dynamic batching window from 200ms to 100ms in config/inference.yaml",
+          supporting_artifact_ids: ["deployments/events.json", "config/inference.yaml", "traces/otel.json", "metrics/gpu.csv"],
+          contradicting_artifact_ids: [],
+          missing_artifact_ids: ["logs/freshness_check.json"],
+        },
+      ],
+    }),
+    testHypothesis: vi.fn().mockResolvedValue({
+      status: "CONFIRMED",
+      message: "Confirmed as root cause",
+      reproduction_rate: 0.0,
+      hypothesis_supported: true,
+    }),
   },
 }));
 
@@ -143,11 +203,12 @@ vi.mock('lucide-react', () => {
     'LayoutDashboard', 'Clock', 'GitBranch', 'Eye', 'EyeOff', 'FlaskConical', 'Wrench',
     'RotateCcw', 'Database', 'FileText', 'Settings', 'ChevronLeft', 'Menu',
     'X', 'ChevronRight', 'Zap', 'Download', 'AlertTriangle', 'Plus', 'Upload',
-    'Play', 'Square', 'ExternalLink', 'Search', 'Bot', 'Scale', 'Shield',
+    'Play', 'Pause', 'Square', 'ExternalLink', 'Search', 'Bot', 'Scale', 'Shield', 'Home',
     'Link', 'Check', 'HelpCircle', 'Info', 'Loader2', 'Terminal', 'WifiOff',
     'AlertCircle', 'CheckCircle', 'CheckCircle2', 'XCircle', 'ChevronUp', 'ChevronDown', 'Filter', 'Trash2',
     'Palette', 'Bell', 'Keyboard', 'Command', 'Globe', 'Moon', 'Sun', 'Monitor', 'Key', 'Server',
     'Sliders', 'Copy', 'Magnet', 'ZoomIn', 'ZoomOut', 'Maximize', 'ArrowLeft', 'ArrowRight', 'SkipBack', 'SkipForward', 'Timer', 'Package',
+    'ShieldAlert', 'ShieldCheck', 'User', 'LogOut', 'FileCode',
   ];
   const mocks: Record<string, any> = {};
   icons.forEach(name => {
@@ -156,92 +217,6 @@ vi.mock('lucide-react', () => {
   return mocks;
 });
 
-// Mock UI primitives
-vi.mock('@/components/ui', () => ({
-  Badge: ({ children, tone = "default", className = "", ...props }: any) => (
-    <span className={`px-2 py-0.5 rounded text-xs ${className}`} data-tone={tone} {...props}>{children}</span>
-  ),
-  Button: ({ children, className = "", ...props }: any) => (
-    <button className={className} {...props}>{children}</button>
-  ),
-  Progress: ({ className = "", value, ...props }: any) => (
-    <div className={className} role="progressbar" aria-valuenow={value} {...props} />
-  ),
-  Input: ({ className = "", ...props }: any) => (
-    <input className={className} {...props} />
-  ),
-  Select: ({ className = "", value, onValueChange, options, label, ...props }: any) => (
-    <div>
-      {label && <label htmlFor={props.id || "select-mock"} className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1.5">{label}</label>}
-      <select id={props.id || "select-mock"} className={className} value={value} onChange={(e) => onValueChange(e.target.value)} {...props}>
-        {options?.map((opt: any) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-      </select>
-    </div>
-  ),
-  Card: ({ title, children, action, className = "", ...props }: any) => (
-    <section className={`glass ring-glow rounded-2xl border border-[var(--color-border)] p-6 ${className}`} {...props}>
-      {(title || action) && (
-        <header className="mb-5 flex items-center justify-between gap-4">
-          <h2 className="flex items-center gap-2.5 text-sm font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-            {title}
-          </h2>
-          {action}
-        </header>
-      )}
-      {children}
-    </section>
-  ),
-  Stat: ({ label, value, sub, trend, ...props }: any) => (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/40 p-4" {...props}>
-      <div className="text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">{label}</div>
-      <div className="mt-1.5 font-mono text-2xl font-semibold text-[var(--color-text-primary)]">{value}</div>
-      {sub && <div className={`mt-1 text-xs`}>{sub}</div>}
-    </div>
-  ),
-  PageHeader: ({ title, subtitle, badge, ...props }: any) => (
-    <div className="mb-8" {...props}>
-      <div className="flex items-center gap-3">
-        <h1 className="text-gradient text-3xl font-bold tracking-tight">{title}</h1>
-        {badge}
-      </div>
-      {subtitle && <p className="mt-1.5 text-sm text-[var(--color-text-muted)]">{subtitle}</p>}
-    </div>
-  ),
-  KV: ({ label, value, sub, ...props }: any) => (
-    <div className="flex items-center justify-between gap-4 py-2 text-sm" {...props}>
-      <div>
-        <span className="text-[var(--color-text-muted)]">{label}</span>
-        {sub && <span className="block text-sm text-[var(--color-text-muted)]/70">{sub}</span>}
-      </div>
-      <span className="text-right font-medium text-[var(--color-text-primary)]">{value}</span>
-    </div>
-  ),
-  Toggle: ({ checked, onChange, disabled = false, ...props }: any) => (
-    <button
-      onClick={() => !disabled && onChange(!checked)}
-      disabled={disabled}
-      role="switch"
-      aria-checked={checked}
-      {...props}
-    >
-      {checked ? 'ON' : 'OFF'}
-    </button>
-  ),
-  Divider: ({ orientation = "horizontal", className = "", ...props }: any) => (
-    orientation === "horizontal" ? (
-      <hr className={`border-t border-[var(--color-border)] ${className}`} role="separator" {...props} />
-    ) : (
-      <div className={`border-l border-[var(--color-border)] ${className}`} role="separator" {...props} />
-    )
-  ),
-  Tooltip: ({ children, content }: { children: React.ReactNode; content: React.ReactNode }) => (
-    <div className="relative inline-block" data-testid="tooltip">
-      {children}
-      <div className="absolute invisible group-hover:visible">{content}</div>
-    </div>
-  ),
-  TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
 
 // Mock Tooltip
 vi.mock('@/components/Tooltip', () => ({
@@ -301,7 +276,7 @@ describe('Accessibility Audit - Page Components', () => {
     it('should have filter controls with proper ARIA', () => {
       render(<EvidenceVault />);
       // Select filters should be keyboard accessible
-      expect(screen.getByLabelText('')).toBeInTheDocument(); // Select components
+      expect(screen.getByLabelText(/filter by artifact type/i)).toBeInTheDocument();
     });
 
     it('should have focus-visible on interactive elements', () => {
@@ -310,7 +285,7 @@ describe('Accessibility Audit - Page Components', () => {
       buttons.forEach(button => {
         expect(button).toHaveClass('focus-visible:outline-none');
         expect(button).toHaveClass('focus-visible:ring-2');
-        expect(button).toHaveClass('focus-visible:ring-primary');
+        expect(button).toHaveClass('focus-visible:ring-[var(--color-accent)]');
       });
     });
   });
@@ -407,8 +382,11 @@ describe('Accessibility Audit - Page Components', () => {
       expect(screen.getByRole('heading', { name: 'Ghost Lab', level: 1 })).toBeInTheDocument();
     });
 
-    it('should have accessible branch selector tabs', () => {
+    it('should have accessible branch selector tabs', async () => {
       render(<GhostLab />);
+      // The branches come from the API, so the test waits for the load
+      // rather than asserting on a list that is written into the page.
+      await screen.findByRole('button', { name: /branch:/i });
       const buttons = screen.getAllByRole('button');
       const branchButtons = buttons.filter(b => b.textContent?.includes('Branch') || b.textContent?.includes('exp-'));
       expect(branchButtons.length).toBeGreaterThan(0);
@@ -430,7 +408,7 @@ describe('Accessibility Audit - Page Components', () => {
       buttons.forEach(button => {
         expect(button).toHaveClass('focus-visible:outline-none');
         expect(button).toHaveClass('focus-visible:ring-2');
-        expect(button).toHaveClass('focus-visible:ring-primary');
+        expect(button).toHaveClass('focus-visible:ring-[var(--color-accent)]');
       });
     });
   });
@@ -484,8 +462,9 @@ describe('Accessibility Audit - Page Components', () => {
 
     it('should have accessible before/after comparison cards', () => {
       render(<VictoryReplay />);
-      expect(screen.getByRole('heading', { name: 'Pre-Patch Digital Twin (Baseline Failure)', level: 2 })).toBeInTheDocument();
-      expect(screen.getByRole('heading', { name: 'Post-Patch Digital Twin (PATCH-001 Applied)', level: 2 })).toBeInTheDocument();
+      // PanelSection uses h3 for titles (Panel uses h2)
+      expect(screen.getByRole('heading', { name: 'Pre-Patch Digital Twin (Baseline Failure)', level: 3 })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Post-Patch Digital Twin (PATCH-001 Applied)', level: 3 })).toBeInTheDocument();
     });
 
     it('should have accessible metrics comparison table', () => {
@@ -497,13 +476,18 @@ describe('Accessibility Audit - Page Components', () => {
       expect(screen.getByRole('columnheader', { name: 'Before Patch' })).toBeInTheDocument();
       expect(screen.getByRole('columnheader', { name: 'After Patch' })).toBeInTheDocument();
       expect(screen.getByRole('columnheader', { name: 'Improvement' })).toBeInTheDocument();
+      // Panel title should be h2
+      expect(screen.getByRole('heading', { name: 'Key Performance & Safety Metrics Comparison', level: 2 })).toBeInTheDocument();
     });
 
     it('should have accessible rollback verification and download buttons', () => {
       render(<VictoryReplay />);
       expect(screen.getByRole('button', { name: /test reversible rollback/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /export replay json/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /download validated patch package/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /download patch package/i })).toBeInTheDocument();
+      // Verify panel titles (PanelSection uses h3)
+      expect(screen.getByRole('heading', { name: 'Rollback Safety Verification', level: 3 })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Download Production Patch', level: 3 })).toBeInTheDocument();
     });
   });
 
@@ -557,7 +541,7 @@ describe('Accessibility Audit - Page Components', () => {
       buttons.forEach(button => {
         expect(button).toHaveClass('focus-visible:outline-none');
         expect(button).toHaveClass('focus-visible:ring-2');
-        expect(button).toHaveClass('focus-visible:ring-primary');
+        expect(button).toHaveClass('focus-visible:ring-[var(--color-accent)]');
       });
     });
 

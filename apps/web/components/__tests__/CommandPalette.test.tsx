@@ -59,19 +59,6 @@ vi.mock("@/hooks/useKeyboardShortcut", () => ({
   useKeyboardShortcuts: vi.fn(),
 }));
 
-// Mock UI components
-vi.mock("@/components/ui", () => ({
-  Badge: ({ children, tone = "default", className = "" }: { children: React.ReactNode; tone?: string; className?: string }) => (
-    <span className={`px-2 py-0.5 rounded text-xs ${className}`} data-tone={tone}>{children}</span>
-  ),
-  Button: ({ children, className = "", ...props }: { children: React.ReactNode; className?: string }) => (
-    <button className={className} {...props}>{children}</button>
-  ),
-  Input: ({ className = "", autoFocus, ...props }: { className?: string; autoFocus?: boolean }) => (
-    <input className={className} autoFocus={autoFocus} {...props} />
-  ),
-}));
-
 // Import after mocks
 import { CommandPalette } from "@/components/CommandPalette";
 import { ShellProvider } from "@/lib/useShell";
@@ -98,14 +85,15 @@ describe("CommandPalette", () => {
     expect(input).toHaveAttribute("id", "command-palette-search");
   });
 
-  it("shows all 12 commands when no search", () => {
+  it("shows all commands when no search", () => {
     render(
       <ShellProvider>
         <CommandPalette />
       </ShellProvider>
     );
     const commands = screen.getAllByRole("option");
-    expect(commands.length).toBe(12);
+    // There are 13 commands: 3 incident, 2 investigation, 7 views, 1 export, 1 demo
+    expect(commands.length).toBe(13);
   });
 
   it("shows commands grouped by category", () => {
@@ -197,7 +185,9 @@ describe("CommandPalette", () => {
         <CommandPalette />
       </ShellProvider>
     );
-    expect(screen.getByText("12 commands")).toBeInTheDocument();
+    // The footer spans multiple elements, so check for the text content in the footer
+    const footer = screen.getByRole('contentinfo');
+    expect(footer).toHaveTextContent("13 commands");
   });
 
   it("shows keyboard hints in footer", () => {

@@ -80,7 +80,9 @@ async def test_full_pipeline_endpoints(test_user):
         assert hyp_res.status_code == 200
         hyp_data = hyp_res.json()
         assert hyp_data["count"] >= 4
-        assert any(h["hypothesis_id"] == "h1_batching_window" for h in hyp_data["hypotheses"])
+        assert any(
+            h["hypothesis_id"] in ("h1_batching_window", "h_batching_window_latency") for h in hyp_data["hypotheses"]
+        )
 
         # 3. Experiments endpoint
         exp_res = await client.get("/api/v1/incidents/CAU-0001/experiments")
@@ -106,3 +108,62 @@ async def test_full_pipeline_endpoints(test_user):
         assert pkg_res.status_code == 200
         assert pkg_res.headers["content-type"] == "application/zip"
         assert len(pkg_res.content) > 0
+
+
+@pytest.mark.asyncio
+async def test_telemetry_events_endpoint():
+    """Verify POST and GET /api/v1/telemetry/events."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        payload = {
+            "events": [
+                {
+                    "name": "page_view",
+                    "type": "page_view",
+                    "timestamp": 1789900000000,
+                    "properties": {"url": "http://localhost:3000/holographic-reconstruction"},
+                }
+            ]
+        }
+        res = await client.post("/api/v1/telemetry/events", json=payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "ok"
+        assert data["received"] == 1
+
+        get_res = await client.get("/api/v1/telemetry/events?limit=5")
+        assert get_res.status_code == 200
+        get_data = get_res.json()
+        assert any(e["name"] == "page_view" for e in get_data["events"])
+
+
+@pytest.mark.asyncio
+async def test_holographic_reconstruction_calibration(test_user):
+    """Verify holographic reconstruction returns real calibrated metrics and attributed components."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers.update(test_user["headers"])
+        await client.post("/api/v1/incidents?golden=true")
+
+        res = await client.get("/api/v1/incidents/CAU-0001/holographic/reconstruction")
+        assert res.status_code == 200
+        data = res.json()
+        assert "bulk_nodes" in data
+        assert "bulk_edges" in data
+        assert len(data["bulk_nodes"]) > 0
+
+        # Check component attribution
+        node_ids = {n["id"] for n in data["bulk_nodes"]}
+        assert "cloud-service" in node_ids
+        assert "warehouse-amr-01" in node_ids
+        # gpu, cpu, memory must be aliased, not isolated orphan nodes
+        assert "gpu" not in node_ids
+        assert "cpu" not in node_ids
+        assert "memory" not in node_ids
+
+        # Check real metric calibration
+        cloud_node = next(n for n in data["bulk_nodes"] if n["id"] == "cloud-service")
+        assert cloud_node["metrics"]["latency_p99_ms"] > 0
+        assert cloud_node["confidence"] > 0
+        assert 0.0 <= cloud_node["health"] <= 1.0
+        assert cloud_node["metrics"]["cpu_usage"] > 0.0  # incorporates GPU compute load

@@ -14,13 +14,24 @@ from cauveris.api.main import app, incidents, pipeline_contexts
 from cauveris.state_machine.orchestrator import PipelineOrchestrator
 
 
+#: The intervention the hypothesis layer produces for the golden incident.
+#:
+#: The window is 25 ms and not the 100 ms the deployment was rolled back to:
+#: the calibrated model shows that 100 ms leaves the mean detection age above
+#: the incident's own 120 ms freshness budget, so a patch that restored it
+#: would reproduce the safety violation it claims to fix.
+BATCHING_INTERVENTION = (
+    "Reduce batching_window_ms to 25 ms in config/inference.yaml (was 200 ms)"
+)
+
+
 @pytest.fixture
 def sample_h1_experiment():
     return Experiment(
         experiment_id="exp-h1-batching",
-        hypothesis_id="h1_batching_window",
+        hypothesis_id="h_batching_window_latency",
         branch_name="branch-exp-h1-batching",
-        intervention="Reduce dynamic batching window from 200ms to 100ms",
+        intervention=BATCHING_INTERVENTION,
         trial_count=10,
         reproduction_count=0,
         reproduction_rate=0.0,
@@ -28,6 +39,32 @@ def sample_h1_experiment():
         status="COMPLETED",
         conclusion="Hypothesis supported; batching window reduction resolves incident.",
     )
+
+
+#: A configuration file as a target workspace might have it: the same file
+#: the bundle holds, without the comment the bundle carries and with the
+#: value quoted.  A patch that only applies to the bundle's exact bytes
+#: cannot fix the machine that is actually broken.
+INFECTED_CONFIG = (
+    "model_name: objdet\n"
+    "version: v42\n"
+    "dynamic_batching:\n"
+    "  enabled: true\n"
+    "  max_batch_size: 8\n"
+    '  batching_window_ms: "200"\n'
+    "  timeout_ms: 500\n"
+)
+
+
+def _installer_for(patch) -> dict:
+    """The exported installer, loaded as a module."""
+    import tempfile as _tempfile
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        exported = PatchGenerator().export_patch(patch, tmp)
+        scope: dict = {}
+        exec(exported["installer_script"].read_text(encoding="utf-8"), scope)
+    return scope
 
 
 @pytest.mark.asyncio
@@ -41,7 +78,7 @@ async def test_standalone_installer_compiles(sample_h1_experiment):
     installer_code = gen.generate_standalone_installer(patch)
     assert "class" in installer_code or "def apply" in installer_code
     assert "CANDIDATE_ID" in installer_code
-    assert "batching_window_ms: 100" in installer_code
+    assert "batching_window_ms: 25" in installer_code
 
     # Verify syntax compilation
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
@@ -71,14 +108,7 @@ async def test_direct_import_and_execution_in_infected_space(sample_h1_experimen
         cfg_dir = infected_workspace / "config"
         cfg_dir.mkdir(parents=True, exist_ok=True)
         infected_config = cfg_dir / "inference.yaml"
-        infected_config.write_text(
-            "dynamic_batching:\n"
-            "  enabled: true\n"
-            "  max_batch_size: 8\n"
-            "  batching_window_ms: 200\n"
-            "  timeout_ms: 500\n",
-            encoding="utf-8",
-        )
+        infected_config.write_text(INFECTED_CONFIG, encoding="utf-8")
 
         # 2. Export patch to infected workspace (mimicking direct copy/import)
         exported = gen.export_patch(patch, infected_workspace)
@@ -101,33 +131,37 @@ async def test_direct_import_and_execution_in_infected_space(sample_h1_experimen
         check_fn = scope["check"]
         assert check_fn(target_dir=str(infected_workspace)) is True
         # Content must remain unchanged after dry run
-        assert "batching_window_ms: 200" in infected_config.read_text(encoding="utf-8")
+        assert '"200"' in infected_config.read_text(encoding="utf-8")
 
         # 6. Apply fix directly
         apply_fn = scope["apply"]
         success = apply_fn(target_dir=str(infected_workspace))
         assert success is True
 
-        # Verify patched content
+        # Verify patched content: the value the calibrated model proved fits
+        # the freshness budget, in the quoting style the workspace itself uses.
         patched_content = infected_config.read_text(encoding="utf-8")
-        assert "batching_window_ms: 100" in patched_content
-        assert "batching_window_ms: 200" not in patched_content
+        assert '"25"' in patched_content
+        assert '"200"' not in patched_content
 
         # Verify backup was created
         backup_file = infected_config.with_suffix(".yaml.bak")
         assert backup_file.exists()
-        assert "batching_window_ms: 200" in backup_file.read_text(encoding="utf-8")
+        assert '"200"' in backup_file.read_text(encoding="utf-8")
 
         # Verify regression test was installed
-        test_file = infected_workspace / "tests" / "test_freshness_budget.py"
+        test_file = infected_workspace / "tests" / "test_cauveris_incident_regression.py"
         assert test_file.exists()
-        assert "test_batching_window_within_budget" in test_file.read_text(encoding="utf-8")
+        assert "test_the_simulated_pipeline_meets_the_declared_budget" in (
+            test_file.read_text(encoding="utf-8")
+        )
 
         # Verify status is now PATCHED
         assert status_fn(target_dir=str(infected_workspace)) == "PATCHED"
 
         # 7. Apply again (idempotent)
         assert apply_fn(target_dir=str(infected_workspace)) is True
+        assert status_fn(target_dir=str(infected_workspace)) == "PATCHED"
 
         # 8. Rollback
         rollback_fn = scope["rollback"]
@@ -135,9 +169,45 @@ async def test_direct_import_and_execution_in_infected_space(sample_h1_experimen
 
         # Verify restored to infected state
         reverted_content = infected_config.read_text(encoding="utf-8")
-        assert "batching_window_ms: 200" in reverted_content
+        assert '"200"' in reverted_content
         assert status_fn(target_dir=str(infected_workspace)) == "INFECTED"
         assert not test_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_the_patch_refuses_a_workspace_that_has_moved_on(sample_h1_experiment):
+    """
+    A patch must not be forced onto a file that no longer holds the value it
+    replaces.
+
+    Somebody else has already changed the batching window; overwriting their
+    work with a value this patch computed for a different world is worse
+    than refusing.
+    """
+    gen = PatchGenerator()
+    patch = (await gen.generate([sample_h1_experiment]))[0]
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        workspace = Path(tmp_dir)
+        cfg_dir = workspace / "config"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        cfg = cfg_dir / "inference.yaml"
+        cfg.write_text(
+            "dynamic_batching:\n"
+            "  enabled: true\n"
+            "  max_batch_size: 8\n"
+            "  batching_window_ms: 40\n"
+            "  timeout_ms: 500\n",
+            encoding="utf-8",
+        )
+
+        exported = gen.export_patch(patch, workspace)
+        scope: dict = {}
+        exec(exported["installer_script"].read_text(encoding="utf-8"), scope)
+
+        assert scope["check"](target_dir=str(workspace)) is False
+        assert scope["apply"](target_dir=str(workspace)) is False
+        assert "batching_window_ms: 40" in cfg.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -166,7 +236,7 @@ async def test_api_export_and_apply_patch_endpoints(test_user):
         res_patch = await client.get(f"/api/v1/incidents/{incident_id}/export-patch?format=patch")
         assert res_patch.status_code == 200
         assert res_patch.headers["content-type"] == "text/x-diff; charset=utf-8"
-        assert b"batching_window_ms: 100" in res_patch.content
+        assert b"batching_window_ms: 25" in res_patch.content
 
         # 3. Apply patch via API to an infected workspace
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -174,14 +244,7 @@ async def test_api_export_and_apply_patch_endpoints(test_user):
             cfg_dir = target_ws / "config"
             cfg_dir.mkdir(parents=True, exist_ok=True)
             cfg = cfg_dir / "inference.yaml"
-            cfg.write_text(
-                "dynamic_batching:\n"
-                "  enabled: true\n"
-                "  max_batch_size: 8\n"
-                "  batching_window_ms: 200\n"
-                "  timeout_ms: 500\n",
-                encoding="utf-8",
-            )
+            cfg.write_text(INFECTED_CONFIG, encoding="utf-8")
 
             # POST /apply-patch
             apply_res = await client.post(
@@ -192,7 +255,7 @@ async def test_api_export_and_apply_patch_endpoints(test_user):
             apply_data = apply_res.json()
             assert apply_data["success"] is True
             assert apply_data["status"] == "PATCHED"
-            assert "batching_window_ms: 100" in cfg.read_text(encoding="utf-8")
+            assert '"25"' in cfg.read_text(encoding="utf-8")
 
             # POST /apply-patch with rollback
             rb_res = await client.post(
@@ -203,4 +266,4 @@ async def test_api_export_and_apply_patch_endpoints(test_user):
             rb_data = rb_res.json()
             assert rb_data["success"] is True
             assert rb_data["status"] == "INFECTED"
-            assert "batching_window_ms: 200" in cfg.read_text(encoding="utf-8")
+            assert '"200"' in cfg.read_text(encoding="utf-8")

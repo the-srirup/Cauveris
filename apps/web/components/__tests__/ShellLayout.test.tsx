@@ -142,22 +142,6 @@ vi.mock("@/hooks/useKeyboardShortcut", () => ({
   useKeyboardShortcuts: vi.fn(),
 }));
 
-// Mock UI components
-vi.mock("@/components/ui", () => ({
-  Badge: ({ children, tone = "default", className = "" }: { children: React.ReactNode; tone?: string; className?: string }) => (
-    <span className={`px-2 py-0.5 rounded text-xs ${className}`} data-tone={tone}>{children}</span>
-  ),
-  Button: ({ children, className = "", ...props }: { children: React.ReactNode; className?: string }) => (
-    <button className={className} {...props}>{children}</button>
-  ),
-  Progress: ({ className = "", value, ...props }: { className?: string; value: number }) => (
-    <div className={className} role="progressbar" aria-valuenow={value} {...props} />
-  ),
-  Input: ({ className = "", ...props }: { className?: string }) => (
-    <input className={className} {...props} />
-  ),
-}));
-
 // Mock Tooltip component
 vi.mock("@/components/Tooltip", () => ({
   Tooltip: ({ children, content }: { children: React.ReactNode; content: React.ReactNode }) => (

@@ -41,6 +41,8 @@
     "node_modules",
     "**/*.test.ts",
     "**/*.test.tsx",
-    "**/__tests__/**"
+    "**/__tests__/**",
+    "vitest.config.ts",
+    "vitest.setup.tsx"
   ]
 }

@@ -1,11 +1,10 @@
 import './globals.css';
+import '@fontsource/geist-sans';
+import '@fontsource/geist-mono';
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import { ShellProvider } from '@/lib/useShell';
 import { AuthProvider } from '@/components/AuthProvider';
 import ShellLayout from '@/components/ShellLayout';
-
-const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'Cauveris - Where Failures Meet Cause',
@@ -61,7 +60,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${inter.className} h-full w-full bg-background text-foreground font-sans antialiased`}>
+      <body className="h-full w-full bg-background text-foreground font-sans antialiased">
         <AuthProvider>
           <ShellProvider>
             <ShellLayout>

@@ -4,7 +4,7 @@ Experiment-related schemas.
 
 from .base import BaseEntity, StatusLabel
 from pydantic import Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 class Experiment(BaseEntity):
@@ -12,8 +12,15 @@ class Experiment(BaseEntity):
 
     experiment_id: str = Field(..., description="Unique identifier for the experiment")
     hypothesis_id: str = Field(..., description="ID of hypothesis being tested")
+    incident_id: Optional[str] = Field(
+        None, description="Incident the hypothesis and the branch belong to"
+    )
     branch_name: str = Field(..., description="Name of the sandbox branch")
     intervention: str = Field(..., description="Applied intervention")
+    proposed_changes: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Machine-readable configuration changes this experiment applies",
+    )
     status: StatusLabel = Field(
         default=StatusLabel.INFERRED, description="Current experiment status"
     )
@@ -25,3 +32,9 @@ class Experiment(BaseEntity):
     metrics_artifact_id: Optional[str] = Field(None, description="ID of metrics artifact")
     replay_artifact_id: Optional[str] = Field(None, description="ID of replay artifact")
     conclusion: Optional[str] = Field(None, description="Experiment conclusion")
+    trajectory: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Representative 2D spatial trajectory points"
+    )
+    trajectories: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Multi-trial trajectory runs"
+    )

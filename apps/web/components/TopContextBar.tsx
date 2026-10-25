@@ -3,10 +3,10 @@
 import { type ReactNode, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { tv } from "tailwind-variants";
 import { Badge, Button, Progress } from "./ui";
 import { Tooltip } from "./Tooltip";
 import { Divider } from "./Divider";
+import { Toolbar, ToolbarGroup, ToolbarSeparator, ToolbarItem, ToolbarSpacer } from "./ui/Toolbar";
 import { useShell } from "@/lib/useShell";
 import { useActiveIncident } from "@/lib/useIncident";
 import { api } from "@/lib/api";
@@ -16,66 +16,10 @@ import { CreateIncidentModal } from "./CreateIncidentModal";
 import { UserMenu } from "./UserMenu";
 import { useAuthStore } from "@/lib/auth";
 
-const topBarStyles = tv({
-  base: `
-    fixed top-0 left-0 right-0 z-40 h-12
-    bg-[var(--theme-background)]/80 backdrop-blur-xl border-b border-[var(--color-border)]
-    flex items-center px-4 gap-3
-    transition-all duration-200 ease-out
-    motion-reduce:transition-none
-  `,
-  variants: {
-    sidebarState: {
-      expanded: "lg:pl-[256px]",
-      collapsed: "lg:pl-[76px]",
-      drawer: "pl-4",
-    },
-  },
-  defaultVariants: {
-    sidebarState: "expanded",
-  },
-});
-
-const sectionStyles = tv({
-  base: "flex items-center gap-2.5",
-  variants: {
-    position: {
-      left: "flex-1 min-w-0 overflow-hidden",
-      center: "hidden",
-      right: "flex-shrink-0 justify-end ml-auto",
-    },
-  },
-});
-
-const pillStyles = tv({
-  base: `
-    inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium
-    border border-[var(--color-border)] transition-all duration-150
-  `,
-  variants: {
-    tone: {
-      default: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]",
-      active: "bg-[var(--color-brand-primary)]/10 text-[var(--color-brand-primary)] border-[var(--color-brand-primary)]/30",
-      warning: "bg-[var(--color-brand-warning)]/10 text-[var(--color-brand-warning)] border-[var(--color-brand-warning)]/30",
-      danger: "bg-[var(--color-brand-danger)]/10 text-[var(--color-brand-danger)] border-[var(--color-brand-danger)]/30",
-      success: "bg-[var(--color-brand-success)]/10 text-[var(--color-brand-success)] border-[var(--color-brand-success)]/30",
-    },
-  },
-  defaultVariants: {
-    tone: "default",
-  },
-});
-
-const iconButtonStyles = tv({
-  base: `
-    relative flex h-8 w-8 items-center justify-center rounded-lg
-    text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-2)]
-    transition-all duration-150
-    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-background)]
-  `,
-});
-
 function MicroProgress({ value, size = 16 }: { value: number; size?: number }) {
+  const radius = (size - 2) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - value / 100);
   return (
     <div
       className="relative flex-shrink-0"
@@ -89,26 +33,26 @@ function MicroProgress({ value, size = 16 }: { value: number; size?: number }) {
         <circle
           cx="8"
           cy="8"
-          r="6.5"
+          r={6.5}
           fill="none"
-          stroke="var(--color-border)"
+          stroke="var(--color-border-default)"
           strokeWidth="1.5"
         />
         <circle
           cx="8"
           cy="8"
-          r="6.5"
+          r={6.5}
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
-          strokeDasharray={40.84}
-          strokeDashoffset={40.84 * (1 - value / 100)}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
           strokeLinecap="round"
-          className="text-[var(--color-accent)] transition-all duration-500"
+          className="text-[var(--color-accent-fg)] transition-all duration-500"
           style={{ transformOrigin: "center" }}
         />
       </svg>
-      <span className="absolute inset-0 flex items-center justify-center text-[9px] font-mono font-semibold text-[var(--color-text-primary)]">
+      <span className="absolute inset-0 flex items-center justify-center text-[9px] font-mono font-semibold text-[var(--color-fg-default)]">
         {Math.round(value)}%
       </span>
     </div>
@@ -117,18 +61,16 @@ function MicroProgress({ value, size = 16 }: { value: number; size?: number }) {
 
 function StatusIndicator({ status, label }: { status: "online" | "degraded" | "offline"; label: string }) {
   const tones = {
-    online: "bg-[var(--color-brand-success)]",
-    degraded: "bg-[var(--color-brand-warning)]",
-    offline: "bg-[var(--color-brand-danger)]",
+    online: "bg-[var(--color-success-emphasis)]",
+    degraded: "bg-[var(--color-attention-emphasis)]",
+    offline: "bg-[var(--color-danger-emphasis)]",
   };
 
   return (
     <Tooltip content={label} position="bottom">
-      <span
-        className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--color-surface-2)] border border-[var(--color-border)]"
-      >
-        <span className={`h-1.5 w-1.5 rounded-full ${tones[status]}`} />
-        <span className="capitalize">{status}</span>
+      <span className="inline-flex items-center gap-1.5 px-2.5 h-7 rounded-[var(--radius-full)] text-xs font-medium bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] shrink-0">
+        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${tones[status]}`} />
+        <span className="capitalize leading-none">{status}</span>
       </span>
     </Tooltip>
   );
@@ -136,17 +78,17 @@ function StatusIndicator({ status, label }: { status: "online" | "degraded" | "o
 
 function ProcessingModeBadge({ mode }: { mode: "autonomous" | "judge" | "engineer" }) {
   const config = {
-    autonomous: { label: "Autonomous", tone: "default" as const, Icon: Bot },
-    judge: { label: "Judge Mode", tone: "warning" as const, Icon: Scale },
-    engineer: { label: "Engineer Mode", tone: "active" as const, Icon: Wrench },
+    autonomous: { label: "Autonomous", variant: "default" as const, Icon: Bot },
+    judge: { label: "Judge Mode", variant: "warning" as const, Icon: Scale },
+    engineer: { label: "Engineer Mode", variant: "primary" as const, Icon: Wrench },
   };
   const c = config[mode];
   return (
     <Tooltip content={`Processing: ${c.label}`} position="bottom">
-      <span className={pillStyles({ tone: c.tone })}>
-        <c.Icon className="h-3 w-3 mr-1" />
-        {c.label}
-      </span>
+      <Badge variant={c.variant} dot className="shrink-0 h-7 px-2.5 inline-flex items-center text-xs">
+        <c.Icon className="h-3.5 w-3.5 mr-1.5 shrink-0" aria-hidden="true" />
+        <span className="leading-none">{c.label}</span>
+      </Badge>
     </Tooltip>
   );
 }
@@ -157,17 +99,6 @@ export function TopContextBar() {
   const router = useRouter();
   const { isSidebarDrawer } = useShellLayout();
   const [isLoadingIncident, setIsLoadingIncident] = useState(false);
-  const sidebarState = isSidebarDrawer
-    ? "drawer"
-    : shellState.isNavCollapsed
-    ? "collapsed"
-    : "expanded";
-
-  // Build incident context for shell
-  // This will be called when incident loads
-  if (incident && !shellState.incidentContext) {
-    // We'll build this in the pages that know pipeline state
-  }
 
   const [showCreateModal, setShowCreateModal] = useState(false);
 
@@ -176,7 +107,7 @@ export function TopContextBar() {
   };
 
   const handleToggleJudgeMode = () => {
-    if (engineerMode) return; // Mutually exclusive
+    if (engineerMode) return;
     const newValue = !judgeMode;
     setJudgeMode(newValue);
     if (newValue) {
@@ -190,7 +121,7 @@ export function TopContextBar() {
   };
 
   const handleToggleEngineerMode = () => {
-    if (judgeMode) return; // Mutually exclusive
+    if (judgeMode) return;
     const newValue = !engineerMode;
     setEngineerMode(newValue);
     if (newValue) {
@@ -241,7 +172,6 @@ export function TopContextBar() {
           message: `Uploading ${files.length} evidence file(s)...`,
           dismissible: false,
         });
-        // TODO: Implement actual upload
         setTimeout(() => {
           addActivity({
             type: "system",
@@ -328,7 +258,6 @@ export function TopContextBar() {
         message: "Demo environment reset",
         dismissible: true,
       });
-      // Reload current page
       window.location.reload();
     } catch (error) {
       addActivity({
@@ -344,18 +273,7 @@ export function TopContextBar() {
     setShowCreateModal(false);
   };
 
-  // Mode toggle handlers
-  const toggleJudgeMode = () => {
-    // Judge mode and engineer mode are mutually exclusive
-    // This would need to be wired to the actual state management
-    // For now, we rely on the existing useActiveIncident hook
-  };
-
-  const toggleEngineerMode = () => {
-    // Engineer mode toggle
-  };
-
-  // Left section: Incident Identity
+  // Incident context from shell
   const incidentId = shellState.incidentContext?.id || incident?.id;
   const incidentTitle = shellState.incidentContext?.title || incident?.title || "No Incident Loaded";
   const incidentState = shellState.incidentContext?.state || "IDLE";
@@ -371,142 +289,167 @@ export function TopContextBar() {
 
   return (
     <>
-    <header
-      className={topBarStyles({ sidebarState })}
-      role="banner"
-      aria-label="Incident context and global actions"
-    >
-      {/* Left: Incident Identity & Context */}
-      <div className={sectionStyles({ position: "left" })} aria-label="Incident identity">
-        <Tooltip content="Incident ID" position="bottom">
-          <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-primary)] shrink-0 tracking-wider">
-            {incidentId || "—"}
-          </span>
-        </Tooltip>
-        <Divider orientation="vertical" className="h-4 opacity-40 shrink-0" />
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-[var(--color-text-primary)] truncate max-w-[140px] sm:max-w-[200px] md:max-w-[300px] xl:max-w-[440px]">
-            {incidentTitle}
-          </h2>
-        </div>
-        <Badge tone={incidentState === "RUNNING" ? "success" : incidentState === "ERROR" ? "danger" : "neutral"} dot className="shrink-0">
-          {incidentState}
-        </Badge>
-        {/* Only show pipeline stage when different from incident state */}
-        {incidentState !== pipelineStage && (
-          <Tooltip content={`Pipeline stage: ${pipelineStage}`} position="bottom">
-            <span className={`${pillStyles({ tone: pipelineStage === "COMPLETE" ? "success" : "active" })} shrink-0`}>
-              {pipelineStage}
-            </span>
-          </Tooltip>
-        )}
-        <div className="shrink-0">
-          <ProcessingModeBadge mode={processingMode} />
-        </div>
-        {/* Cleanly labeled Evidence Coverage Chip */}
-        {incidentId && evidenceCoverage > 0 && (
-          <Tooltip content={`Evidence coverage: ${evidenceCoverage}%`} position="bottom">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0">
-              <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">Evidence</span>
-              <MicroProgress value={evidenceCoverage} size={18} />
+      <header
+        className={`
+          fixed top-0 right-0 z-[var(--z-navbar)]
+          h-[var(--shell-topbar-height)]
+          bg-[var(--color-canvas-inset)] border-b border-[var(--color-border-default)]
+          transition-all duration-200 ease-out
+          left-0 lg:left-[var(--shell-sidebar-current-width,var(--sidebar-expanded-width))]
+        `}
+        role="banner"
+        aria-label="Incident context and global actions"
+      >
+        <Toolbar
+          className="h-full px-4 py-0 flex-nowrap justify-between"
+          bordered={false}
+          aria-label="Global toolbar"
+        >
+          {/* LEFT ZONE: Incident Identity & Context */}
+          <ToolbarGroup aria-label="Incident identity" className="flex-1 min-w-0 h-full flex items-center gap-2">
+            <Tooltip content="Incident ID" position="bottom">
+              <span className="font-mono text-xs font-semibold px-2.5 h-7 inline-flex items-center rounded-[var(--radius-sm)] bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-[var(--color-fg-default)] shrink-0 tracking-wider">
+                {incidentId || "—"}
+              </span>
+            </Tooltip>
+            <Divider orientation="vertical" className="h-4 opacity-40 shrink-0 mx-1" />
+            <div className="min-w-0 flex-1 flex items-center">
+              <h2 className="text-sm font-semibold text-[var(--color-fg-default)] truncate max-w-[140px] sm:max-w-[200px] md:max-w-[300px] xl:max-w-[440px] leading-normal m-0">
+                {incidentTitle}
+              </h2>
             </div>
-          </Tooltip>
-        )}
-      </div>
+            <Badge
+              variant={incidentState === "RUNNING" ? "success" : incidentState === "ERROR" ? "danger" : "muted"}
+              dot
+              className="shrink-0 h-7 px-2.5 inline-flex items-center text-xs ml-1"
+            >
+              {incidentState}
+            </Badge>
+            {incidentState !== pipelineStage && (
+              <Tooltip content={`Pipeline stage: ${pipelineStage}`} position="bottom">
+                <Badge
+                  variant={pipelineStage === "COMPLETE" ? "success" : "primary"}
+                  className="shrink-0 h-7 px-2.5 inline-flex items-center text-xs ml-1"
+                >
+                  {pipelineStage}
+                </Badge>
+              </Tooltip>
+            )}
+          </ToolbarGroup>
 
-      {/* Right: Model Provider + Backend + Mode Toggles + Global Actions */}
-      <div className={sectionStyles({ position: "right" })} aria-label="System status and global actions">
-        <div className="hidden sm:flex items-center gap-2 shrink-0">
-          <Tooltip content={`Model: ${modelProvider}`} position="bottom">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] max-w-[140px] truncate">
-              <span className="truncate">{displayModelProvider}</span>
-            </span>
-          </Tooltip>
-          <StatusIndicator status={backendStatus} label={`Backend: ${backendStatus}`} />
-        </div>
-        <Divider orientation="vertical" className="h-5 opacity-40 mx-0.5 hidden sm:block shrink-0" />
+          {/* CENTER ZONE: Evidence Coverage & Processing Mode */}
+          <ToolbarGroup aria-label="Evidence coverage and processing mode" className="flex-1 min-w-0 justify-center md:justify-start hidden md:flex h-full items-center gap-2">
+            <div className="shrink-0 flex items-center" aria-label="Processing mode">
+              <ProcessingModeBadge mode={processingMode} />
+            </div>
+            {incidentId && (
+              <Tooltip content={`Evidence coverage: ${evidenceCoverage}%`} position="bottom">
+                <span className="inline-flex items-center gap-1.5 px-2.5 h-7 rounded-[var(--radius-full)] text-xs font-medium bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-[var(--color-fg-muted)] shrink-0">
+                  <span className="text-[11px] font-medium text-[var(--color-fg-subtle)] leading-none">Evidence</span>
+                  <MicroProgress value={evidenceCoverage} size={18} />
+                </span>
+              </Tooltip>
+            )}
+          </ToolbarGroup>
 
-        {/* Judge / Engineer Mode Toggles */}
-        <div className="flex items-center gap-1 shrink-0">
-          <Tooltip content={judgeMode ? "Judge Mode: ON (Formal verification gates)" : "Judge Mode: OFF"} position="bottom">
-            <button
-              onClick={handleToggleJudgeMode}
-              disabled={engineerMode}
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-all ${
-                judgeMode
-                  ? "bg-[var(--color-brand-warning)]/20 border-[var(--color-brand-warning)]/40 text-[var(--color-brand-warning)] hover:bg-[var(--color-brand-warning)]/30"
-                  : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-2)]"
-              } disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-background)]`}
-              aria-label="Toggle Judge Mode"
-              aria-pressed={judgeMode}
-            >
-              <Scale className="h-4 w-4" />
-            </button>
-          </Tooltip>
+          {/* RIGHT ZONE: System Status + Mode Toggles + Global Actions + User Menu */}
+          <ToolbarGroup aria-label="System status and global actions" className="flex-1 min-w-0 justify-end h-full items-center">
+            <div className="flex items-center gap-2 shrink-0 h-full">
+              {/* System Status (hidden on mobile) */}
+              <div className="hidden sm:flex items-center gap-2 shrink-0 h-full">
+                <Tooltip content={`Model: ${modelProvider}`} position="bottom">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 h-7 rounded-[var(--radius-full)] text-xs font-medium bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-[var(--color-fg-muted)] max-w-[140px] truncate">
+                    <span className="truncate leading-none">{displayModelProvider}</span>
+                  </span>
+                </Tooltip>
+                <StatusIndicator status={backendStatus} label={`Backend: ${backendStatus}`} />
+              </div>
 
-          <Tooltip content={engineerMode ? "Engineer Mode: ON (Live digital twin studio)" : "Engineer Mode: OFF"} position="bottom">
-            <button
-              onClick={handleToggleEngineerMode}
-              disabled={judgeMode}
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-all ${
-                engineerMode
-                  ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-500 hover:bg-cyan-500/30"
-                  : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-2)]"
-              } disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-background)]`}
-              aria-label="Toggle Engineer Mode"
-              aria-pressed={engineerMode}
-            >
-              <Wrench className="h-4 w-4" />
-            </button>
-          </Tooltip>
-        </div>
+              {/* Judge / Engineer Mode Toggles */}
+              <div className="flex items-center gap-1 shrink-0 h-full">
+                <Tooltip content={judgeMode ? "Judge Mode: ON (Formal verification gates)" : "Judge Mode: OFF"} position="bottom">
+                  <Button
+                    variant={judgeMode ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={handleToggleJudgeMode}
+                    disabled={engineerMode}
+                    aria-label="Toggle Judge Mode"
+                    aria-pressed={judgeMode}
+                    className="h-7 px-2.5 text-xs font-medium inline-flex items-center justify-center"
+                    leadingIcon={<Scale className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                  >
+                    Judge
+                  </Button>
+                </Tooltip>
 
-        <Divider orientation="vertical" className="h-5 opacity-40 mx-0.5 shrink-0" />
-        <div className="flex items-center gap-1 shrink-0">
-          <Tooltip content="Create Incident (C I)" position="bottom">
-            <button
-              onClick={handleCreateIncident}
-              disabled={isLoadingIncident}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-2)] border border-transparent hover:border-[var(--color-border)] transition-all disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-background)]"
-              aria-label="Create new incident"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
-          </Tooltip>
-          <Tooltip content="Load Golden Incident (L G)" position="bottom">
-            <button
-              onClick={handleLoadGolden}
-              disabled={isLoadingIncident}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-2)] border border-transparent hover:border-[var(--color-border)] transition-all disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-background)]"
-              aria-label="Load golden incident"
-            >
-              <Download className="h-4 w-4" />
-            </button>
-          </Tooltip>
-          <Tooltip content="Upload Evidence (U B)" position="bottom">
-            <button
-              onClick={handleUploadEvidence}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-2)] border border-transparent hover:border-[var(--color-border)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-background)]"
-              aria-label="Upload evidence bundle"
-            >
-              <Upload className="h-4 w-4" />
-            </button>
-          </Tooltip>
-          <Tooltip content="Command Palette" position="bottom">
-            <button
-              onClick={toggleCommandPalette}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-2)] border border-transparent hover:border-[var(--color-border)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-background)]"
-              aria-label="Open command palette"
-            >
-              <Search className="h-4 w-4" />
-            </button>
-          </Tooltip>
-          <UserMenu />
-        </div>
-      </div>
-    </header>
+                <Tooltip content={engineerMode ? "Engineer Mode: ON (Live digital twin studio)" : "Engineer Mode: OFF"} position="bottom">
+                  <Button
+                    variant={engineerMode ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={handleToggleEngineerMode}
+                    disabled={judgeMode}
+                    aria-label="Toggle Engineer Mode"
+                    aria-pressed={engineerMode}
+                    className="h-7 px-2.5 text-xs font-medium inline-flex items-center justify-center"
+                    leadingIcon={<Wrench className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                  >
+                    Engineer
+                  </Button>
+                </Tooltip>
+              </div>
 
-    <CreateIncidentModal isOpen={showCreateModal} onClose={handleCreateModalClose} />
+              {/* Global Actions */}
+              <div className="flex items-center gap-1 shrink-0 h-full">
+                <Tooltip content="Create Incident" position="bottom">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCreateIncident}
+                    disabled={isLoadingIncident}
+                    aria-label="Create new incident"
+                    className="h-7 w-7 p-0 inline-flex items-center justify-center"
+                    leadingIcon={<Plus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                  />
+                </Tooltip>
+                <Tooltip content="Load Golden Incident" position="bottom">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleLoadGolden}
+                    disabled={isLoadingIncident}
+                    aria-label="Load golden incident"
+                    className="h-7 w-7 p-0 inline-flex items-center justify-center"
+                    leadingIcon={<Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                  />
+                </Tooltip>
+                <Tooltip content="Upload Evidence" position="bottom">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleUploadEvidence}
+                    aria-label="Upload evidence bundle"
+                    className="h-7 w-7 p-0 inline-flex items-center justify-center"
+                    leadingIcon={<Upload className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                  />
+                </Tooltip>
+                <Tooltip content="Command Palette (⌘K)" position="bottom">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={toggleCommandPalette}
+                    aria-label="Open command palette"
+                    className="h-7 w-7 p-0 inline-flex items-center justify-center"
+                    leadingIcon={<Search className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+                  />
+                </Tooltip>
+                <UserMenu />
+              </div>
+            </div>
+          </ToolbarGroup>
+        </Toolbar>
+      </header>
+
+      <CreateIncidentModal isOpen={showCreateModal} onClose={handleCreateModalClose} />
     </>
   );
 }

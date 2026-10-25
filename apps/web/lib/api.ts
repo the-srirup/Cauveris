@@ -207,6 +207,21 @@ export interface Hypothesis {
   test_result?: string;
 }
 
+export interface TrajectoryPoint {
+  t: number;
+  x: number;
+  y: number;
+  v: number;
+  heading?: number;
+  latency_ms: number;
+  status: string;
+  is_stale: boolean;
+  emergency_stop: boolean;
+  batch_wait_ms?: number;
+  gpu_compute_ms?: number;
+  network_delay_ms?: number;
+}
+
 export interface Experiment {
   id: string;
   experiment_id?: string;
@@ -219,6 +234,78 @@ export interface Experiment {
   result?: boolean;
   failure_oracle?: any;
   metrics?: Record<string, any>;
+  trajectory?: TrajectoryPoint[];
+  trajectories?: any[];
+}
+
+/**
+ * The calibrated incident model.
+ *
+ * `model_status` is the honest answer to "can this model predict?":
+ * `fitted` means the parameters were fitted to this incident's measurements,
+ * `declared-configuration-only` means the bundle declared values that were
+ * never corroborated by a measurement, and `uncalibrated` means there was
+ * nothing to calibrate against.
+ */
+export interface IncidentSystemModel {
+  incident_id: string;
+  bundle_root?: string | null;
+  model_status: "fitted" | "declared-configuration-only" | "uncalibrated";
+  parameters: Record<string, number>;
+  parameter_sources: Record<string, string>;
+  parameters_from_evidence: Record<string, boolean>;
+  budget: {
+    freshness_budget_ms: number;
+    control_deadline_ms: number;
+    required_rate_hz: number;
+    emergency_stop_on_stale: boolean;
+    sources: Record<string, string>;
+  };
+  kinematics: {
+    max_speed_mps: number;
+    nominal_speed_mps: number;
+    acceleration_mps2: number;
+    braking_deceleration_mps2: number;
+    reaction_time_s: number;
+    safety_margin_m: number;
+    sample_count: number;
+    source: string;
+  };
+  calibration?: {
+    params: Record<string, number>;
+    score: number;
+    quality: string;
+    targets: Record<string, number | null>;
+    residuals: Record<string, number | null>;
+    fitted: Record<string, number | null>;
+    compared: Record<string, number | null>;
+    age_measurement_basis: string;
+    worst_target?: string | null;
+    worst_relative_error?: number | null;
+    notes: string[];
+  } | null;
+  latency_distribution: Record<string, number>;
+  baseline_distribution: Record<string, number>;
+  incident_distribution: Record<string, number>;
+  transport_distribution: Record<string, number>;
+  clock_skew_ms: number;
+  observation_window_s: number;
+  simulation_horizon_s: number;
+  change_point_time?: string | null;
+  change_point_evidence: string[];
+  config_deltas: Array<{
+    key: string;
+    role: string;
+    old_value: any;
+    new_value: any;
+    source: string;
+    description: string;
+    file: string;
+    deployment_id: string;
+    deployment_time?: string | null;
+  }>;
+  notes: string[];
+  consistency_findings: Array<Record<string, any>>;
 }
 
 export interface PatchCandidate {
@@ -375,11 +462,18 @@ interface PendingRequest<T> {
   timestamp: number;
 }
 
+// For debounced requests: track pending resolvers per cache key
+interface DebounceState {
+  timer: NodeJS.Timeout;
+  resolvers: Array<(value: any) => void>;
+  rejectors: Array<(reason: any) => void>;
+}
+
 // API Client
 class ApiClient {
   private baseUrl: string;
   private pendingRequests: Map<string, PendingRequest<any>> = new Map();
-  private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
+  private debounceTimers: Map<string, DebounceState> = new Map();
   private readonly REQUEST_CACHE_TTL = 5000; // 5 seconds
   private readonly DEBOUNCE_MS = 150; // 150ms debounce for repeated calls
 
@@ -422,7 +516,7 @@ class ApiClient {
   }
 
   // Deduplicated request - returns cached promise if identical request is in-flight
-  async requestDeduped<T>(endpoint: string, options: FetchRequestInit = {}): Promise<T> {
+  requestDeduped<T>(endpoint: string, options: FetchRequestInit = {}): Promise<T> {
     this.cleanupCache();
 
     // Only deduplicate GET requests
@@ -435,12 +529,24 @@ class ApiClient {
     const existing = this.pendingRequests.get(cacheKey);
 
     if (existing) {
-      // Return existing promise
+      // Return existing promise (callers share the same in-flight request)
       return existing.promise as Promise<T>;
     }
 
     // Create new request
     const abortController = new AbortController();
+
+    // If caller provided a signal, link it to our internal controller
+    // so either can abort the request
+    if (options.signal) {
+      const callerSignal = options.signal;
+      if (callerSignal.aborted) {
+        abortController.abort();
+      } else {
+        callerSignal.addEventListener("abort", () => abortController.abort(), { once: true });
+      }
+    }
+
     const promise = this.request<T>(endpoint, {
       ...options,
       signal: abortController.signal,
@@ -463,18 +569,35 @@ class ApiClient {
     const cacheKey = this.getCacheKey(endpoint, options);
 
     return new Promise<T>((resolve, reject) => {
-      // Clear existing debounce timer
-      const existingTimer = this.debounceTimers.get(cacheKey);
-      if (existingTimer) {
-        clearTimeout(existingTimer);
+      // Get or create debounce state for this key
+      let state = this.debounceTimers.get(cacheKey);
+      if (!state) {
+        state = { timer: null as unknown as NodeJS.Timeout, resolvers: [], rejectors: [] };
+        this.debounceTimers.set(cacheKey, state);
       }
 
-      const timer = setTimeout(() => {
-        this.debounceTimers.delete(cacheKey);
-        this.requestDeduped<T>(endpoint, options).then(resolve).catch(reject);
-      }, debounceMs);
+      // Add this caller's resolve/reject to the list
+      state.resolvers.push(resolve);
+      state.rejectors.push(reject);
 
-      this.debounceTimers.set(cacheKey, timer);
+      // Clear existing debounce timer
+      if (state.timer) {
+        clearTimeout(state.timer);
+      }
+
+      // Set new timer
+      state.timer = setTimeout(() => {
+        this.debounceTimers.delete(cacheKey);
+        // Execute the request once, then resolve/reject ALL pending callers
+        this.requestDeduped<T>(endpoint, options).then(
+          (value) => {
+            for (const r of state.resolvers) r(value);
+          },
+          (reason) => {
+            for (const r of state.rejectors) r(reason);
+          }
+        );
+      }, debounceMs);
     });
   }
 
@@ -495,8 +618,14 @@ class ApiClient {
     }
     this.pendingRequests.clear();
 
-    for (const [, timer] of this.debounceTimers.entries()) {
-      clearTimeout(timer);
+    for (const [, state] of this.debounceTimers.entries()) {
+      if (state.timer) {
+        clearTimeout(state.timer);
+      }
+      // Reject all pending debounced callers
+      for (const reject of state.rejectors) {
+        reject(new DOMException("Cancelled", "AbortError"));
+      }
     }
     this.debounceTimers.clear();
   }
@@ -512,11 +641,11 @@ class ApiClient {
   }
 
   // Incident operations
-  async list(): Promise<{ incidents: Incident[]; count?: number }> {
+  list(): Promise<{ incidents: Incident[]; count?: number }> {
     return this.requestDeduped<{ incidents: Incident[]; count?: number }>("/incidents");
   }
 
-  async get(incidentId: string): Promise<Incident> {
+  get(incidentId: string): Promise<Incident> {
     return this.requestDeduped<Incident>(`/incidents/${incidentId}`);
   }
 
@@ -599,7 +728,7 @@ class ApiClient {
   }
 
   // Temporal analysis
-  async getTemporalAnalysis(incidentId: string): Promise<TemporalAnalysis> {
+  getTemporalAnalysis(incidentId: string): Promise<TemporalAnalysis> {
     return this.requestDeduped<TemporalAnalysis>(`/incidents/${incidentId}/temporal-analysis`);
   }
 
@@ -619,7 +748,7 @@ class ApiClient {
   }
 
   // Get incident hypotheses
-  async getHypotheses(incidentId: string) {
+  getHypotheses(incidentId: string) {
     return this.requestDeduped<{ incident_id: string; count: number; hypotheses: Hypothesis[] }>(`/incidents/${incidentId}/hypotheses`);
   }
 
@@ -637,17 +766,24 @@ class ApiClient {
       hypothesis_supported: boolean;
       failure_oracle: any;
       metrics: any;
+      trajectory?: TrajectoryPoint[];
+      trajectories?: any[];
       message: string;
     }>(`/incidents/${incidentId}/hypotheses/${hypothesisId}/test`, { method: "POST" });
   }
 
   // Get incident experiments
-  async getExperiments(incidentId: string) {
+  getExperiments(incidentId: string) {
     return this.requestDeduped<{ incident_id: string; count: number; experiments: Experiment[] }>(`/incidents/${incidentId}/experiments`);
   }
 
+  // The calibrated incident model - the numbers every prediction is made from
+  getSystemModel(incidentId: string) {
+    return this.requestDeduped<IncidentSystemModel>(`/incidents/${incidentId}/system-model`);
+  }
+
   // Get incident patches
-  async getPatches(incidentId: string) {
+  getPatches(incidentId: string) {
     return this.requestDeduped<{ incident_id: string; count: number; patch_candidates: PatchCandidate[]; verification_reports: VerificationReport[] }>(`/incidents/${incidentId}/patches`);
   }
 
@@ -734,6 +870,8 @@ class ApiClient {
       status: "CONFIRMED" | "REFUTED";
       parameters: any;
       cycles: any[];
+      trajectory?: TrajectoryPoint[];
+      trajectories?: any[];
       message: string;
     }>(`/incidents/${incidentId}/simulate-custom`, {
       method: "POST",
@@ -782,7 +920,7 @@ class ApiClient {
   }
 
   // Get holographic reconstruction data
-  async getHolographicReconstruction(
+  getHolographicReconstruction(
     incidentId: string,
     options: {
       enable_counterfactual?: boolean;

@@ -77,6 +77,23 @@ class GoldenIncidentGenerator:
             "title": "Warehouse robot emergency stop after deployment v42 [DEMO DATA]",
             "description": "Autonomous mobile robot consumes stale object detections from remote GPU inference service after deployment v42 increases dynamic batching window, causing P99 latency to exceed freshness budget.",
             "system_name": "warehouse-amr-01",
+            # Names this bundle uses for the same entity. The evidence names
+            # the inference service "inference-service" in the deployment
+            # manifest, "inference" in the trace span and "cloud-service" in
+            # the log channel; they are one component, and the bundle says so
+            # rather than leaving the resolver to guess.
+            # The host's system log ("system.log") names the component
+            # "system", which is the robot itself, so alias it too.
+            "component_aliases": {
+                "inference-service": "cloud-service",
+                "inference": "cloud-service",
+                "robot": "warehouse-amr-01",
+                "amr-01": "warehouse-amr-01",
+                "system": "warehouse-amr-01",
+                "gpu": "cloud-service",
+                "cpu": "warehouse-amr-01",
+                "memory": "warehouse-amr-01",
+            },
             "is_demonstration": True,
             "demonstration_label": "DEMONSTRATION BENCHMARK (CAU-0001)",
             "deterministic_seed": 42,
@@ -94,6 +111,8 @@ class GoldenIncidentGenerator:
                 "logs/cloud-service.jsonl",
                 "logs/ros-nodes.jsonl",
                 "metrics/gpu.csv",
+                "metrics/cpu.csv",
+                "metrics/memory.csv",
                 "metrics/network.csv",
                 "recordings/robot_run.mcap",
                 "config/inference.yaml",
@@ -327,6 +346,27 @@ class DetectionClient:
 2026-09-20T10:29:50.300Z,18,0.0,4
 """
         (self.bundle_path / "metrics/network.csv").write_text(network_csv, encoding="utf-8")
+
+        # CPU metrics
+        cpu_csv = """timestamp,cpu_utilization_percent,load_avg_1m,load_avg_5m,load_avg_15m,temperature_celsius
+2026-09-20T10:29:58Z,35,0.8,0.9,1.0,55
+2026-09-20T10:29:59Z,42,1.0,1.1,1.2,57
+2026-09-20T10:30:00Z,68,1.5,1.6,1.7,62
+2026-09-20T10:30:01Z,72,1.8,1.9,2.0,65
+2026-09-20T10:30:02Z,65,1.5,1.6,1.7,60
+"""
+        (self.bundle_path / "metrics/cpu.csv").write_text(cpu_csv, encoding="utf-8")
+
+        # Memory metrics.  memory_total_mb is the capacity the used figures
+        # are a fraction of, so the export states the scale itself.
+        memory_csv = """timestamp,memory_total_mb,memory_used_mb,memory_free_mb,memory_utilization_percent,swap_used_mb
+2026-09-20T10:29:58Z,8192,2048,6144,25,512
+2026-09-20T10:29:59Z,8192,2560,5632,31,512
+2026-09-20T10:30:00Z,8192,3072,5120,37,512
+2026-09-20T10:30:01Z,8192,3584,4608,44,512
+2026-09-20T10:30:02Z,8192,3328,4864,41,512
+"""
+        (self.bundle_path / "metrics/memory.csv").write_text(memory_csv, encoding="utf-8")
         logger.debug("Wrote metric files")
 
     def _write_recordings(self):
@@ -585,6 +625,11 @@ perception:
             source_repositories=manifest.get("source_repositories", []),
             commit_hash=manifest.get("commit_hash", ""),
             manifest=manifest,
+            # Where the evidence this incident describes actually lives.  Every
+            # downstream stage - the calibrated model, the sandbox, the patch
+            # forge, the verifier - resolves the bundle from this field, so an
+            # incident that does not record it cannot be investigated.
+            bundle_path=str(self.bundle_path),
             status=StatusLabel.OBSERVED,
             is_demonstration=True,
         )

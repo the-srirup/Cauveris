@@ -1,19 +1,17 @@
 [build-system]
-requires = ["scikit-build-core", "pybind11", "cmake", "ninja"]
+requires = ["scikit-build-core>=0.9", "pybind11>=2.12", "cmake>=3.24", "ninja"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "cauveris-kernels"
-version = "0.1.0"
-description = "GPU-Accelerated Holographic Causal Kernels for Cauveris"
+version = "0.2.0"
+description = "CUDA kernels for the Cauveris holographic causal engine"
 readme = "README.md"
-license = {text = "MIT"}
-authors = [{name = "Cauveris Team"}]
 requires-python = ">=3.10"
+authors = [{name = "Cauveris Team"}]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: C++",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -24,24 +22,30 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 
-dependencies = [
-    "numpy>=1.24",
-    "cupy-cuda12x>=13.0; platform_system != 'Darwin'",
-]
+# The extension itself talks to NumPy arrays (pybind11 converts them), so
+# NumPy is a runtime dependency.  CuPy is deliberately absent: the kernels
+# use the CUDA runtime directly and a second array library would only add a
+# way for the same data to be interpreted differently.
+dependencies = ["numpy>=1.24"]
+
+[project.urls]
+Homepage = "https://github.com/cauveris/cauveris"
+
+[tool.scikit-build]
+# Kept empty on purpose: this distribution ships the compiled extension, not
+# a Python package of its own.
+wheel.packages = []
 
 [tool.scikit-build-core]
-cmake.minimum-version = "3.18"
-cmake.args = [
-    "-DCMAKE_BUILD_TYPE=Release",
-    "-DCMAKE_CUDA_ARCHITECTURES=native",
-]
+cmake.minimum-version = "3.24"
+cmake.version = ">=3.24"
+build-dir = "build/{wheel_tag}"
+wheel.packages = []
+sdist.exclude = ["build", "**/__pycache__"]
 
-[tool.scikit-build-core.metadata]
-license-file = "LICENSE"
+[tool.scikit-build-core.cmake.define]
+CMAKE_BUILD_TYPE = "Release"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["cauveris_kernels*"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+[tool.ruff]
+line-length = 100
+target-version = "py310"

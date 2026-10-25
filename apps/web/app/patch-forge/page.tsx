@@ -1,27 +1,25 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Button, Card, Stat, Badge, PageHeader } from "@/components/ui";
+import { useState, useEffect, useMemo, Suspense, useRef } from "react";
+import { useSearchParams } from "next/navigation";
+import { Button, Badge, PageHeader, Stat, Panel, PanelSection, PanelStack, PanelDivider, PanelCard } from "@/components/ui";
 import { api, PatchCandidate, VerificationReport } from "@/lib/api";
 import { notify } from "@/components/Notification";
 import { useActiveIncident } from "@/lib/useIncident";
 import { useShell } from "@/lib/useShell";
 import type { InspectorData } from "@/lib/useShell";
-import { useAuthStore } from "@/lib/auth";
+import { AuthGate } from "@/components/AuthGate";
 import { readDeepLink } from "@/holographic";
-import { Check, Wrench, Package, Download, ArrowLeft, Loader2 } from "lucide-react";
+import { Check, XCircle, Wrench, Package, Download, ArrowLeft, Loader2 } from "lucide-react";
 
 function PatchForgeContent() {
-  // `useSearchParams` sits with the top-level hooks, above the auth early
-  // returns below: calling it after them would change the hook count between
-  // renders and throw "Rendered more hooks than during the previous render".
+  // `useSearchParams` sits with the top-level hooks: calling it after an
+  // early return would change the hook count between renders and throw
+  // "Rendered more hooks than during the previous render".
   const searchParams = useSearchParams();
   const deepLink = readDeepLink(searchParams);
   const { incidentId, setIncidentId, judgeMode, engineerMode } = useActiveIncident();
   const { openInspector, setIncidentContext } = useShell();
-  const { isAuthenticated, isLoading: authLoading } = useAuthStore();
-  const router = useRouter();
 
   // A link from the reconstruction view names the incident it belongs to.
   // localStorage is same-tab only, so without this a pasted or bookmarked link
@@ -31,36 +29,6 @@ function PatchForgeContent() {
       setIncidentId(deepLink.incidentId);
     }
   }, [deepLink.incidentId, incidentId, setIncidentId]);
-
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login?redirect=/patch-forge');
-    }
-  }, [isAuthenticated, authLoading, router]);
-
-  // Show loading while auth is initializing
-  if (authLoading) {
-    return (
-      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
-        <div className="flex h-8 w-8 animate-spin text-primary">
-          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)]">Loading Patch Forge...</p>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
-        <div className="flex h-8 w-8 animate-spin text-primary">
-          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)]">Redirecting to login...</p>
-      </div>
-    );
-  }
 
   useEffect(() => {
     if (incidentId) {
@@ -86,16 +54,25 @@ function PatchForgeContent() {
 
   // Load patches from backend
   const loadPatches = async (id: string) => {
+    setLoading(true);
+    setError(null);
     try {
       const res = await api.getPatches(id);
-      if (res && res.patch_candidates && res.patch_candidates.length > 0) {
+      if (res && res.patch_candidates) {
         setPatches(res.patch_candidates);
         if (res.verification_reports) {
           setReports(res.verification_reports);
         }
+      } else {
+        setPatches([]);
+        setReports([]);
       }
-    } catch {
-      // Fallback
+    } catch (err: any) {
+      setError(err?.message || "Failed to load patches");
+      setPatches([]);
+      setReports([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -122,60 +99,76 @@ function PatchForgeContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLink.patchId, patches]);
 
-  // Fallback candidate patches if none returned
-  const defaultPatches: PatchCandidate[] = [
-    {
-      id: "patch-exp-h1_batching_window",
-      candidate_id: "patch-exp-h1_batching_window",
-      title: "PATCH-001: Dynamic Batching Window Reduction (Root Cause Fix)",
-      score: 0.97,
-      verified: true,
-      lines_changed: 1,
-      affected_files: ["config/inference.yaml"],
-      unified_diff: `--- a/config/inference.yaml\n+++ b/config/inference.yaml\n@@ -4,3 +4,3 @@\n dynamic_batching:\n   enabled: true\n   max_batch_size: 8\n-  batching_window_ms: 200\n+  batching_window_ms: 100\n   timeout_ms: 500`,
-      applied_cleanly: true,
-      regression_test_passes_after: true,
-      original_failure_not_reproduced: true,
-      existing_tests_pass: true,
-      safety_invariants_pass: true,
-      performance_within_budget: true,
-      forbidden_change_scan_passes: true,
-      rollback_test_passes: true,
-      rationale: "Reduces dynamic batching accumulation delay from ~105ms to ~52ms, ensuring total latency remains 106ms <= 120ms freshness budget."
-    },
-    {
-      id: "patch-exp-h2_qos_stale_messages",
-      candidate_id: "patch-exp-h2_qos_stale_messages",
-      title: "PATCH-002: QoS Queue Depth Clamping",
-      score: 0.42,
-      verified: false,
-      lines_changed: 2,
-      affected_files: ["source/robot-stack/src/detection_client.py"],
-      unified_diff: `--- a/source/robot-stack/src/detection_client.py\n+++ b/source/robot-stack/src/detection_client.py\n@@ -5,2 +5,2 @@\n-        self.qos_depth = 10\n+        self.qos_depth = 1\n         self.keep_last = True`,
-      applied_cleanly: true,
-      regression_test_passes_after: false,
-      original_failure_not_reproduced: false,
-      rationale: "Rejected: Does not resolve upstream inference batching accumulation latency. Emergency stop persists at 100% reproduction."
-    },
-    {
-      id: "patch-exp-h3_clock_skew",
-      candidate_id: "patch-exp-h3_clock_skew",
-      title: "PATCH-003: Clock Skew Tolerance Offset",
-      score: 0.42,
-      verified: false,
-      lines_changed: 3,
-      affected_files: ["source/robot-stack/src/detection_client.py"],
-      unified_diff: `--- a/source/robot-stack/src/detection_client.py\n+++ b/source/robot-stack/src/detection_client.py\n@@ -10,1 +10,2 @@\n-        if age_ms > self.freshness_budget_ms:\n+        if age_ms > (self.freshness_budget_ms + 50):\n`,
-      applied_cleanly: true,
-      regression_test_passes_after: false,
-      original_failure_not_reproduced: false,
-      rationale: "Rejected: Invariant safety violation. Weakens detection freshness budget from 120ms to 170ms without physical safety justification."
-    }
+  // 9-Point Invariant Verification Checklist Definition
+  const INVARIANT_CHECKS = [
+    { id: 1, title: "Applies Cleanly to Target Space", description: "Patch applies without conflicts to the target repository state" },
+    { id: 2, title: "Regression Test Fails Before Patch", description: "A failing test exists that reproduces the original incident" },
+    { id: 3, title: "Regression Test Passes After Patch", description: "The regression test passes after the patch is applied" },
+    { id: 4, title: "Original Failure Not Reproduced (0% fails)", description: "The original failure scenario no longer occurs in simulation" },
+    { id: 5, title: "Existing System Test Suite Passes", description: "All pre-existing tests continue to pass after the patch" },
+    { id: 6, title: "Safety Invariant Budget Maintained", description: "Total latency remains within budget (106ms <= 120ms freshness)" },
+    { id: 7, title: "Performance Within Compute Allocation", description: "GPU/CPU utilization stays within allocated thresholds" },
+    { id: 8, title: "Forbidden Change Scan Passed", description: "No secrets, credentials, or safety bypasses introduced" },
+    { id: 9, title: "Reversible Zero-Impact Rollback Confirmed", description: "Patch can be cleanly reverted without side effects" },
   ];
 
-  // Use actual patches from API (remove hardcoded fallback for production use)
+  // Generate annotated source view (before/after comparison) - returns JSX
+  const generateAnnotatedSource = (patch: PatchCandidate) => {
+    const lines = (patch.unified_diff || patch.diff || "").split("\n");
+    if (lines.length === 0) return <span className="text-[var(--color-fg-muted)]">No diff available</span>;
+
+    return (
+      <>
+        {lines.map((line, i) => (
+          <div key={i} className={`whitespace-pre-wrap ${
+            line.startsWith("-") ? "text-[var(--color-danger-fg)]" :
+            line.startsWith("+") ? "text-[var(--color-success-fg)]" :
+            line.startsWith("@@") ? "text-[var(--color-accent-fg)]" :
+            line.startsWith("---") || line.startsWith("+++") ? "text-[var(--color-warning-fg)]" :
+            "text-[var(--color-fg-default)]"
+          }`}>
+            {line}
+          </div>
+        ))}
+      </>
+    );
+  };
+
   const activePatches = patches;
   const verifiedCount = activePatches.filter(p => p.verified).length;
+  const [selectedPatch, setSelectedPatch] = useState<PatchCandidate | null>(null);
+
+  useEffect(() => {
+    if (activePatches.length > 0 && !selectedPatch) {
+      setSelectedPatch(activePatches[0]);
+    } else if (activePatches.length === 0) {
+      setSelectedPatch(null);
+    }
+  }, [activePatches, selectedPatch]);
+
+  const reportByPatch = useMemo(() => {
+    const map = new Map<string, VerificationReport>();
+    for (const r of reports) {
+      if (r.patch_candidate_id) {
+        map.set(r.patch_candidate_id, r);
+      }
+    }
+    return map;
+  }, [reports]);
+  const paneRefs = useRef<(HTMLPreElement | HTMLDivElement | null)[]>([null, null, null]);
+
+  const handleScroll = (index: number, e: React.UIEvent<HTMLPreElement | HTMLDivElement>) => {
+    const target = e.currentTarget as HTMLPreElement | HTMLDivElement;
+    const { scrollTop, scrollLeft } = target;
+
+    // Sync to other panes
+    paneRefs.current.forEach((ref: HTMLPreElement | HTMLDivElement | null, i: number) => {
+      if (ref && i !== index) {
+        ref.scrollTop = scrollTop;
+        ref.scrollLeft = scrollLeft;
+      }
+    });
+  };
 
   // Generate candidates
   const handleGenerateCandidates = async () => {
@@ -212,6 +205,7 @@ function PatchForgeContent() {
 
   // Open inspector for patch candidate
   const handleOpenPatchInspector = (patch: PatchCandidate) => {
+    setSelectedPatch(patch);
     const data: InspectorData = {
       mode: "patch",
       patchId: patch.candidate_id || patch.id,
@@ -254,7 +248,7 @@ function PatchForgeContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--theme-background)] text-[var(--theme-foreground)] p-6">
+    <div className="w-full space-y-5">
       {/* Header */}
       <PageHeader
         title="Patch Forge"
@@ -275,15 +269,15 @@ function PatchForgeContent() {
       {deepLink.componentId && (
         <div
           role="status"
-          className="mb-6 flex flex-wrap items-start gap-3 rounded-xl border border-sky-500/25 bg-sky-500/10 px-4 py-3 text-xs"
+          className="flex flex-wrap items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)] px-4 py-3 text-xs"
         >
-          <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" />
+          <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-fg-muted)]" />
           <div className="min-w-0 flex-1">
-            <p className="font-semibold text-sky-200">
+            <p className="font-semibold text-[var(--color-fg-default)]">
               Opened for component{" "}
               <span className="font-mono">{deepLink.componentId}</span>
             </p>
-            <p className="mt-0.5 leading-relaxed text-[var(--color-text-muted)]">
+            <p className="mt-0.5 leading-relaxed text-[var(--color-fg-muted)]">
               Patch candidates are keyed by the files they touch, not by
               component id, so none has been preselected on this component&apos;s
               behalf. Read it as the component the patches below are meant to
@@ -293,7 +287,7 @@ function PatchForgeContent() {
           </div>
           <a
             href="/holographic-reconstruction"
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-950/40 px-2.5 py-1.5 font-semibold text-sky-200 transition hover:bg-sky-900/50"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius-sm)] border border-[var(--color-border-default)] bg-[var(--color-canvas-inset)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-fg-default)] transition hover:bg-[var(--color-canvas-subtle)]"
           >
             <ArrowLeft className="h-3 w-3" />
             Back to reconstruction
@@ -303,153 +297,228 @@ function PatchForgeContent() {
 
       {/* Error Message */}
       {error && (
-        <div className="mb-6 p-4 bg-[var(--color-brand-danger)]/10 border border-[var(--color-brand-danger)]/25 rounded-xl text-[var(--color-brand-danger)] text-sm flex items-center justify-between">
+        <div className="p-4 bg-[var(--color-danger-muted)] border border-[var(--color-danger-muted)]/30 rounded-[var(--radius-md)] text-[var(--color-danger-fg)] text-sm flex items-center justify-between">
           <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-[var(--color-brand-danger)] hover:text-[var(--color-text-primary)] text-xs font-semibold uppercase">Dismiss</button>
+          <button onClick={() => setError(null)} className="text-[var(--color-danger-fg)] hover:text-[var(--color-fg-default)] text-xs font-semibold uppercase">Dismiss</button>
         </div>
       )}
 
-      {/* Main Content */}
-      <div className="grid gap-8 lg:grid-cols-[2fr_1fr]">
-        {/* Left: Patch Cards */}
-        <div className="space-y-6">
-          <Card title="Synthesized Patch Candidates">
-            <div className="space-y-6">
-              {activePatches.map((patch, idx) => (
-                <div
-                  key={patch.candidate_id || patch.id || idx}
-                  onClick={() => handleOpenPatchInspector(patch)}
-                  className={`p-5 rounded-xl border transition-all cursor-pointer ${
-                    patch.verified
-                      ? "bg-[var(--color-brand-success)]/5 border-[var(--color-brand-success)]/30 shadow-lg shadow-[var(--color-brand-success)]/5"
-                      : "bg-[var(--color-brand-danger)]/5 border-[var(--color-brand-danger)]/20 opacity-80"
-                  } hover:ring-2 hover:ring-[var(--color-brand-primary)]/50`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-bold text-[var(--color-text-primary)] text-base">
-                        {patch.title || patch.candidate_id}
-                      </h3>
-                      <div className="flex items-center gap-2 mt-1 text-xs text-[var(--color-text-muted)]">
-                        <span>Score: <strong className="font-mono text-[var(--color-text-primary)]">{patch.score}</strong></span>
-                        <span>•</span>
-                        <span>Files: <strong className="font-mono text-[var(--color-text-primary)]">{patch.affected_files?.join(", ") || "1 file"}</strong></span>
-                        <span>•</span>
-                        <span>Lines: <strong className="font-mono text-[var(--color-text-primary)]">±{patch.lines_changed || 1}</strong></span>
-                      </div>
-                    </div>
-                    <Badge tone={patch.verified ? "success" : "danger"} dot={true}>
-                      {patch.verified ? "VERIFIED" : "REJECTED"}
-                    </Badge>
+      {/* Main Content - Three Pane Layout */}
+      <PanelStack space="md">
+        {/* Panes Header */}
+        <Panel title="Patch Candidate List" subtitle={activePatches.length > 0 ? `${activePatches.length} candidates synthesized${verifiedCount > 0 ? ` • ${verifiedCount} verified` : ""}` : "No candidates generated yet"}>
+          <PanelSection>
+          <div className="space-y-3">
+            {activePatches.map((patch, idx) => (
+              <PanelCard
+                key={patch.candidate_id || patch.id || idx}
+                title={patch.title || patch.candidate_id}
+                subtitle={
+                  <div className="flex items-center gap-3 text-xs text-[var(--color-fg-muted)]">
+                    <span>Score: <strong className="font-mono text-[var(--color-fg-default)]">{patch.score}</strong></span>
+                    <span>•</span>
+                    <span>Files: <strong className="font-mono text-[var(--color-fg-default)]">{patch.affected_files?.join(", ") || "1 file"}</strong></span>
+                    <span>•</span>
+                    <span>Lines: <strong className="font-mono text-[var(--color-fg-default)]">±{patch.lines_changed || 1}</strong></span>
                   </div>
-
-                  {/* Unified Diff */}
-                  <div className="mt-4">
-                    <span className="text-[10px] uppercase font-bold text-[var(--color-text-muted)] tracking-wider block mb-1">
-                      Universal Unified Diff
-                    </span>
-                    <pre className="p-3 rounded-lg bg-[var(--theme-background)]/60 border border-[var(--color-border)] text-xs font-mono text-[var(--color-text-primary)] overflow-x-auto leading-relaxed">
-                      {patch.unified_diff || patch.diff}
-                    </pre>
-                  </div>
-
-                  {/* Rationale */}
-                  {patch.rationale && (
-                    <p className={`mt-3 text-xs ${patch.verified ? "text-[var(--color-text-muted)]" : "text-[var(--color-brand-danger)]"}`}>
-                      {patch.rationale}
-                    </p>
-                  )}
-
-                  {/* 9-Point Verification Checklist (for verified patch) */}
-                  {patch.verified && (
-                    <div className="mt-4 pt-4 border-t border-[var(--color-border)]">
-                      <h4 className="text-xs font-bold text-[var(--color-brand-primary)] uppercase tracking-wider mb-2">
-                        9-Point Invariant Verification Checklist
-                      </h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                        {[
-                          "1. Applies Cleanly to Target Space",
-                          "2. Regression Test Fails Before Patch",
-                          "3. Regression Test Passes After Patch",
-                          "4. Original Failure Not Reproduced (0% fails)",
-                          "5. Existing System Test Suite Passes",
-                          "6. Safety Invariant Budget Maintained (106ms <= 120ms)",
-                          "7. Performance Within Compute Allocation",
-                          "8. Forbidden Change Scan Passed (No secrets/bypasses)",
-                          "9. Reversible Zero-Impact Rollback Confirmed"
-                        ].map((check, i) => (
-                          <div key={i} className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
-                            <Check className="h-3.5 w-3.5 text-[var(--color-brand-success)] flex-shrink-0" />
-                            <span className="text-[var(--color-brand-success)] font-bold font-mono">PASS</span>
-                            <span className="truncate">{check}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                }
+                trailing={
+                  <Badge tone={patch.verified ? "success" : "danger"} dot={true}>
+                    {patch.verified ? "VERIFIED" : "REJECTED"}
+                  </Badge>
+                }
+                hoverable
+                selected={selectedPatch?.candidate_id === patch.candidate_id}
+                onClick={() => handleOpenPatchInspector(patch)}
+              >
+                <div className="mt-2 flex items-center gap-2 text-[10px] text-[var(--color-fg-muted)]">
+                  <span className="font-mono text-xs px-2 py-0.5 rounded bg-[var(--color-canvas)]/40">Unified Diff Available</span>
+                  {patch.verified && <span className="text-[var(--color-success-fg)] font-bold">✓ 9/9 Gates</span>}
                 </div>
+              </PanelCard>
+            ))}
+            {activePatches.length === 0 && (
+              <div className="p-8 text-center text-[var(--color-fg-muted)]">
+                <span>No patch candidates generated yet. Click "Generate Candidates" to start.</span>
+              </div>
+            )}
+          </div>
+        </PanelSection>
+      </Panel>
+
+      <PanelDivider label="Three-Pane Diff View" />
+
+        {/* Three Synchronized Pane Panels */}
+        <Panel title="Synchronized Patch Review Panes" subtitle="Unified Diff • Annotated Source • Invariants Checklist">
+          {selectedPatch ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Pane 1: Unified Diff */}
+              <PanelSection title="Universal Unified Diff">
+                <div className="relative">
+                  <span className="text-[10px] uppercase font-bold text-[var(--color-fg-muted)] tracking-wider block mb-2">
+                    {selectedPatch.affected_files?.[0] || "config/inference.yaml"}
+                  </span>
+                  <pre
+                    ref={(el) => { paneRefs.current[0] = el; }}
+                    onScroll={(e) => handleScroll(0, e)}
+                    className="p-3 h-96 max-h-96 rounded-[var(--radius-md)] bg-[var(--color-canvas)]/60 border border-[var(--color-border-default)] text-xs font-mono text-[var(--color-fg-default)] overflow-auto leading-relaxed whitespace-pre-wrap"
+                  >
+                    {selectedPatch.unified_diff || selectedPatch.diff || "No diff available"}
+                  </pre>
+                </div>
+              </PanelSection>
+
+              {/* Pane 2: Annotated Source */}
+              <PanelSection title="Annotated Source (Before/After)">
+                <div className="relative">
+                  <span className="text-[10px] uppercase font-bold text-[var(--color-fg-muted)] tracking-wider block mb-2">
+                    {selectedPatch.affected_files?.[0] || "config/inference.yaml"} - Annotated
+                  </span>
+                  <div
+                    ref={(el) => { paneRefs.current[1] = el; }}
+                    onScroll={(e) => handleScroll(1, e)}
+                    className="p-3 h-96 max-h-96 rounded-[var(--radius-md)] bg-[var(--color-canvas)]/60 border border-[var(--color-border-default)] text-xs font-mono text-[var(--color-fg-default)] overflow-auto leading-relaxed whitespace-pre-wrap font-mono"
+                  >
+                    {generateAnnotatedSource(selectedPatch)}
+                  </div>
+                </div>
+              </PanelSection>
+
+              {/* Pane 3: Invariants Checklist */}
+              <PanelSection title="9-Point Invariant Verification Checklist">
+                <div
+                  ref={(el) => { paneRefs.current[2] = el; }}
+                  onScroll={(e) => handleScroll(2, e)}
+                  className="h-96 max-h-96 overflow-auto"
+                >
+                  {(() => {
+                    const rep = reportByPatch.get(selectedPatch.candidate_id || selectedPatch.id);
+                    const gateResults: Record<number, boolean> = {
+                      1: Boolean(rep?.applies_cleanly ?? selectedPatch.applied_cleanly ?? (selectedPatch as any).applies_cleanly ?? false),
+                      2: Boolean(rep?.regression_test_fails_before ?? selectedPatch.regression_test_fails_before ?? false),
+                      3: Boolean(rep?.regression_test_passes_after ?? selectedPatch.regression_test_passes_after ?? false),
+                      4: Boolean(rep?.original_failure_not_reproduced ?? selectedPatch.original_failure_not_reproduced ?? false),
+                      5: Boolean(rep?.existing_tests_pass ?? selectedPatch.existing_tests_pass ?? false),
+                      6: Boolean(rep?.safety_invariants_pass ?? selectedPatch.safety_invariants_pass ?? false),
+                      7: Boolean(rep?.performance_within_budget ?? selectedPatch.performance_within_budget ?? false),
+                      8: Boolean(rep?.forbidden_change_scan_passes ?? selectedPatch.forbidden_change_scan_passes ?? false),
+                      9: Boolean(rep?.rollback_test_passes ?? selectedPatch.rollback_test_passes ?? false),
+                    };
+
+                    return (
+                      <div className="space-y-3">
+                        {INVARIANT_CHECKS.map((check, i) => {
+                          const passed = Boolean(gateResults[check.id]);
+                          return (
+                            <div
+                              key={i}
+                              className={`flex items-start gap-3 p-3 rounded-[var(--radius-sm)] ${
+                                passed
+                                  ? "bg-[var(--color-success-muted)]/10 border border-[var(--color-success-muted)]/20"
+                                  : "bg-[var(--color-danger-muted)]/10 border border-[var(--color-danger-muted)]/20"
+                              }`}
+                            >
+                              {passed ? (
+                                <Check className="h-5 w-5 text-[var(--color-success-fg)] flex-shrink-0 mt-0.5" />
+                              ) : (
+                                <XCircle className="h-5 w-5 text-[var(--color-danger-fg)] flex-shrink-0 mt-0.5" />
+                              )}
+                              <div>
+                                <div className="font-medium text-sm text-[var(--color-fg-default)]">{check.title}</div>
+                                <div className="text-xs text-[var(--color-fg-muted)] mt-0.5">{check.description}</div>
+                                <div className="flex items-center gap-2 mt-2">
+                                  <span
+                                    className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                                      passed
+                                        ? "text-[var(--color-success-fg)] bg-[var(--color-success-muted)]/20"
+                                        : "text-[var(--color-danger-fg)] bg-[var(--color-danger-muted)]/20"
+                                    }`}
+                                  >
+                                    {passed ? "PASS" : "FAIL"}
+                                  </span>
+                                  <span className="text-xs text-[var(--color-fg-muted)]">Gate {i + 1} / 9</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </PanelSection>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {[1, 2, 3].map((i) => (
+                <PanelSection key={i} title={`Pane ${i}: ${["Universal Unified Diff", "Annotated Source", "9-Point Invariant Verification Checklist"][i - 1]}`}>
+                  <div className="h-96 max-h-96 flex items-center justify-center text-[var(--color-fg-muted)] text-sm">
+                    Select a patch candidate to view diff
+                  </div>
+                </PanelSection>
               ))}
             </div>
-          </Card>
-        </div>
+          )}
+        </Panel>
 
-        {/* Right: Controls & Summary */}
-        <div className="space-y-6">
-          <Card title="Verification Controls">
-            <div className="space-y-6">
-              {/* Summary Stats */}
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <Stat label="Total Generated" value={activePatches.length} sub="Experiment branches" trend="flat" />
-                  <Stat label="Verified" value={verifiedCount} sub="Passed 9/9 gates" trend="success" />
-                  <Stat label="Rejected" value={activePatches.length - verifiedCount} sub="Failed safety gates" trend="danger" />
-                  <Stat label="Top Score" value="0.97" sub="patch-exp-h1" trend="success" />
-                </div>
-              </div>
+        <PanelDivider label="Verification Controls" />
 
-              {/* Action Buttons */}
-              <div className="space-y-3 pt-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleGenerateCandidates}
-                    disabled={loading}
-                    className="w-full"
-                  >
-                    <Wrench className="h-3.5 w-3.5" />
-                    <span>{loading ? "Synthesizing..." : "Generate Candidates"}</span>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleCreatePatchPackage}
-                    disabled={loading}
-                    className="w-full"
-                  >
-                    <Package className="h-3.5 w-3.5" />
-                    <span>{loading ? "Assembling..." : "Create Package"}</span>
-                  </Button>
-                </div>
+        {/* Summary & Actions */}
+        <Panel title="Verification Controls & Summary" subtitle="Candidate statistics and patch package operations">
+          <div className="space-y-5">
+            {/* Summary Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Stat label="Total Generated" value={activePatches.length} sub="Experiment branches" trend="flat" />
+              <Stat label="Verified" value={verifiedCount} sub="Passed 9/9 gates" trend="success" />
+              <Stat label="Rejected" value={activePatches.length - verifiedCount} sub="Failed safety gates" trend="danger" />
+              <Stat label="Top Score" value={activePatches.length > 0 ? activePatches[0].score : "0.97"} sub={activePatches.length > 0 ? activePatches[0].candidate_id : "patch-exp-h1"} trend="success" />
+            </div>
+
+            {/* Action Buttons */}
+            <div className="pt-1">
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleGenerateCandidates}
+                  disabled={loading}
+                  aria-label="Generate new candidates"
+                  className="h-8 px-3.5 text-xs font-medium"
+                >
+                  <Wrench className="h-3.5 w-3.5" />
+                  <span>{loading ? "Synthesizing..." : "Generate Candidates"}</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCreatePatchPackage}
+                  disabled={loading}
+                  aria-label="Create patch package"
+                  className="h-8 px-3.5 text-xs font-medium"
+                >
+                  <Package className="h-3.5 w-3.5" />
+                  <span>{loading ? "Assembling..." : "Create Package"}</span>
+                </Button>
                 <Button
                   variant="success"
                   size="sm"
                   onClick={handleDownloadPatch}
                   disabled={loading}
-                  className="w-full"
+                  aria-label="Download verified patch"
+                  className="h-8 px-3.5 text-xs font-medium"
                 >
                   <Download className="h-3.5 w-3.5" />
                   <span>{loading ? "Downloading..." : "Download Verified Patch"}</span>
                 </Button>
               </div>
-
-              <div className="p-3 rounded-lg bg-[var(--color-surface)]/50 border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] leading-relaxed">
-                The verified patch package includes zero-dependency executable <code className="text-[var(--color-brand-primary)] font-mono">apply_patch.py</code>, standard universal unified diff <code className="text-[var(--color-brand-primary)] font-mono">fix.patch</code>, safety rollback script, and automated reviewer verification checklist.
-              </div>
             </div>
-          </Card>
-        </div>
-      </div>
+
+            <div className="p-3 rounded-[var(--radius-lg)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)] text-xs text-[var(--color-fg-muted)] leading-relaxed">
+              The verified patch package includes zero-dependency executable <code className="text-[var(--color-accent-fg)] font-mono">apply_patch.py</code>, standard universal unified diff <code className="text-[var(--color-accent-fg)] font-mono">fix.patch</code>, safety rollback script, and automated reviewer verification checklist.
+            </div>
+          </div>
+        </Panel>
+      </PanelStack>
     </div>
   );
 }
@@ -462,14 +531,16 @@ function PatchForgeContent() {
  */
 export default function PatchForge() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center bg-[var(--theme-background)] p-4">
-          <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand-primary)]" />
-        </div>
-      }
-    >
-      <PatchForgeContent />
-    </Suspense>
+    <AuthGate redirect="/patch-forge" loadingLabel="Loading Patch Forge...">
+      <Suspense
+        fallback={
+          <div className="min-h-screen flex items-center justify-center bg-[var(--color-canvas)] p-4">
+            <Loader2 className="h-8 w-8 animate-spin text-[var(--color-accent-fg)]" />
+          </div>
+        }
+      >
+        <PatchForgeContent />
+      </Suspense>
+    </AuthGate>
   );
 }

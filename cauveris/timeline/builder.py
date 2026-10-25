@@ -5,12 +5,23 @@ Timeline builder for normalizing and aligning evidence.
 import logging
 import json
 import csv
+import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import re
 from cauveris.schemas.incident import Incident
 from cauveris.config import get_settings
+from cauveris.attribution import (
+    DECLARED_ATTRIBUTE,
+    FILE_CHANNEL,
+    SPAN_NAME,
+    SYSTEM_RECORDING,
+    canonical_component,
+    load_component_aliases,
+    resolve_attribution,
+    span_component,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +51,50 @@ class TimelineBuilder:
                 return candidate
         return None
 
+    def _system_component(self, bundle_path: Path) -> Optional[str]:
+        """The component name the bundle gives to the system under study."""
+        manifest = bundle_path / "manifest.yaml"
+        if manifest.exists():
+            try:
+                data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+                name = data.get("system_name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+            except Exception as exc:
+                logger.debug(f"Could not read system name from {manifest}: {exc}")
+
+        params = bundle_path / "config" / "robot_params.yaml"
+        if params.exists():
+            try:
+                data = yaml.safe_load(params.read_text(encoding="utf-8")) or {}
+                name = data.get("robot_name")
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+            except Exception as exc:
+                logger.debug(f"Could not read robot name from {params}: {exc}")
+
+        return None
+
+    def _stamp_components(self, events: List[Dict[str, Any]], bundle_path: Path) -> None:
+        """Resolve the component each observation describes.
+
+        Parsers stamp the owner when the evidence states it directly; this
+        pass attributes whatever is left using the canonical resolver and the
+        bundle's declared aliases, so equivalent names collapse onto one
+        component.
+        """
+        aliases = load_component_aliases(bundle_path)
+        for event in events:
+            stamped = event.get("component")
+            if isinstance(stamped, str) and stamped.strip():
+                event["component"] = canonical_component(stamped, aliases) or stamped
+                continue
+            attribution = resolve_attribution(event, aliases)
+            if attribution.component:
+                event["component"] = attribution.component
+                event["component_source"] = attribution.method
+                event["component_confidence"] = attribution.confidence
+
     async def build(self, incident: Incident) -> Incident:
         """
         Build a synchronized timeline from evidence.
@@ -59,6 +114,11 @@ class TimelineBuilder:
             return incident
 
         timeline_events = []
+
+        # The component the system's own runtime evidence belongs to: the
+        # robot, as the bundle names it.
+        system_component = self._system_component(bundle_path)
+        aliases = load_component_aliases(bundle_path)
 
         # 1. Parse OpenTelemetry traces
         parsed_trace_files = set()
@@ -125,14 +185,24 @@ class TimelineBuilder:
         # 5. Parse operator observation note
         note_path = bundle_path / "observations" / "operator_note.md"
         if note_path.exists():
-            note_events = await self._parse_operator_note(note_path, bundle_path)
+            note_events = await self._parse_operator_note(
+                note_path, bundle_path, system_component=system_component
+            )
             timeline_events.extend(note_events)
 
         # 6. Parse MCAP recording (ROS 2 physical AI channels)
         mcap_path = bundle_path / "recordings" / "robot_run.mcap"
         if mcap_path.exists():
-            mcap_events = await self._parse_mcap_recording(mcap_path, bundle_path)
+            mcap_events = await self._parse_mcap_recording(
+                mcap_path, bundle_path, system_component=system_component
+            )
             timeline_events.extend(mcap_events)
+
+        # 7. Attribute every observation to the component it describes.
+        # Parsers stamp the owner when the evidence states it; this pass fills
+        # in the rest, using the bundle's declared aliases so equivalent
+        # names collapse onto one component.
+        self._stamp_components(timeline_events, bundle_path)
 
         # Perform clock-offset estimation across domains (cloud, host, robot, simulation)
         clock_offsets = self._estimate_clock_offsets(bundle_path, timeline_events)
@@ -218,6 +288,17 @@ class TimelineBuilder:
                 if "attributes" in span and isinstance(span["attributes"], dict):
                     event["attributes"].update(span["attributes"])
 
+                # A span names the operation it performed; only a resource
+                # attribute names the service that performed it.
+                span_service = event["attributes"].get("service.name")
+                component = span_service or span_component(span_name)
+                if component:
+                    event["component"] = component
+                    event["component_source"] = (
+                        DECLARED_ATTRIBUTE if span_service else SPAN_NAME
+                    )
+                    event["component_confidence"] = 0.9 if span_service else 0.45
+
                 events.append(event)
 
         except Exception as e:
@@ -297,13 +378,13 @@ class TimelineBuilder:
                             or log_entry.get("lvl")
                             or "INFO"
                         ).upper()
-                        node = str(
+                        declared_owner = (
                             log_entry.get("node")
                             or log_entry.get("service")
                             or log_entry.get("component")
                             or log_entry.get("app")
-                            or log_path.stem
                         )
+                        node = str(declared_owner or log_path.stem)
                         message = str(
                             log_entry.get("message")
                             or log_entry.get("msg")
@@ -338,6 +419,11 @@ class TimelineBuilder:
                             "source": str(log_path.relative_to(bundle_path)).replace("\\", "/"),
                             "message": f"[{node}] {message}",
                             "attributes": {"level": level, "node": node, "line_number": line_num},
+                            "component": node,
+                            "component_source": DECLARED_ATTRIBUTE
+                            if declared_owner
+                            else FILE_CHANNEL,
+                            "component_confidence": 0.9 if declared_owner else 0.7,
                             "confidence": 0.9,
                             "status": level,
                         }
@@ -395,6 +481,9 @@ class TimelineBuilder:
                         "source": str(log_path.relative_to(bundle_path)).replace("\\", "/"),
                         "message": line,
                         "attributes": {"line_number": line_num, "log_file": log_path.name},
+                        "component": log_path.stem,
+                        "component_source": FILE_CHANNEL,
+                        "component_confidence": 0.7,
                         "confidence": 0.8,
                     }
                     events.append(event)
@@ -460,13 +549,7 @@ class TimelineBuilder:
                                         "original_timestamp": ts_str,
                                         "event_type": "metric_sample",
                                         "source_type": "csv_metrics",
-                                        "lane": "gpu_queue"
-                                        if "gpu" in column.lower() or "queue" in column.lower()
-                                        else (
-                                            "network"
-                                            if "network" in str(csv_path).lower()
-                                            else "cloud_requests"
-                                        ),
+                                        "lane": csv_path.stem,
                                         "source": str(csv_path.relative_to(bundle_path)).replace(
                                             "\\", "/"
                                         ),
@@ -476,6 +559,9 @@ class TimelineBuilder:
                                             "metric_value": num_val,
                                             "unit": self._get_metric_unit(column),
                                         },
+                                        "component": csv_path.stem,
+                                        "component_source": FILE_CHANNEL,
+                                        "component_confidence": 0.7,
                                         "confidence": 0.95,
                                     }
                                     events.append(event)
@@ -517,6 +603,9 @@ class TimelineBuilder:
                         "changes": data.get("changes", []),
                         "author": data.get("author", ""),
                     },
+                    "component": service,
+                    "component_source": DECLARED_ATTRIBUTE,
+                    "component_confidence": 0.9,
                     "confidence": 1.0,
                     "status": "DEPLOYED",
                 }
@@ -526,7 +615,10 @@ class TimelineBuilder:
         return events
 
     async def _parse_operator_note(
-        self, note_path: Path, bundle_path: Path
+        self,
+        note_path: Path,
+        bundle_path: Path,
+        system_component: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Parse operator observation note."""
         events = []
@@ -538,6 +630,20 @@ class TimelineBuilder:
                 dt = datetime.fromisoformat(time_str)
                 timestamp_ns = int(dt.timestamp() * 1_000_000_000)
 
+                robot_id = self._note_field(content, "Robot ID")
+                location = self._note_field(content, "Location")
+                observation = self._note_field(content, "Observation")
+
+                lowered = content.lower()
+                if "emergency stop" in lowered or "e-stop" in lowered:
+                    status = "EMERGENCY_STOP"
+                else:
+                    status = "OBSERVATION"
+
+                message = (
+                    f"Operator observation: {observation}" if observation else "Operator observation"
+                )
+
                 event = {
                     "timestamp_ns": timestamp_ns,
                     "original_timestamp": match.group(1),
@@ -545,28 +651,63 @@ class TimelineBuilder:
                     "source_type": "operator_note",
                     "lane": "safety_state",
                     "source": str(note_path.relative_to(bundle_path)).replace("\\", "/"),
-                    "message": "Operator observed AMR-01 sudden emergency stop in aisle B",
-                    "attributes": {"robot_id": "AMR-01", "location": "Aisle B, Warehouse 3"},
+                    "message": message,
+                    "attributes": {
+                        "robot_id": robot_id,
+                        "location": location,
+                        "observation": observation,
+                    },
+                    "component": robot_id or system_component,
+                    "component_source": DECLARED_ATTRIBUTE if robot_id else SYSTEM_RECORDING,
+                    "component_confidence": 0.9 if robot_id else 0.7,
                     "confidence": 0.9,
-                    "status": "EMERGENCY_STOP",
+                    "status": status,
                 }
                 events.append(event)
         except Exception as e:
             logger.error(f"Failed to parse operator note: {e}")
         return events
 
-    def _is_significant_metric(self, column_name: str) -> bool:
-        """Determine if a metric column is significant."""
-        c = column_name.lower()
-        return any(
-            k in c for k in ["latency", "utilization", "queue", "delay", "loss", "jitter", "error"]
+    @staticmethod
+    @staticmethod
+    def _note_field(content: str, field_name: str) -> str:
+        """Read one labelled field out of a markdown incident note."""
+        match = re.search(
+            rf"\*\*{re.escape(field_name)}\*\*:\s*(.+?)(?=\n\n|\n\*\*|\Z)",
+            content,
+            re.DOTALL,
         )
+        if not match:
+            return ""
+        return " ".join(match.group(1).split())
+
+    def _is_significant_metric(self, column_name: str) -> bool:
+        """Whether a metric column carries an observation worth keeping.
+
+        Every numeric column an exporter writes is an observation: the
+        capacity it reports (``memory_total_mb``) is what makes the used
+        figures meaningful, and the load average is what says the host was
+        busy.  Whether a column constrains a state dimension is decided
+        later, by the calibration profile, which knows the incident's own
+        scales.  Deciding here would throw away evidence the calibration
+        needed.
+        """
+        c = column_name.lower()
+        return bool(c) and not c.startswith("timestamp")
 
     def _get_metric_unit(self, column_name: str) -> str:
         """Get unit for a metric column."""
         c = column_name.lower()
-        if "latency" in c or "delay" in c:
+        if c.endswith("_ns"):
+            return "ns"
+        if c.endswith("_ms") or "latency" in c or "delay" in c:
             return "ms"
+        if c.endswith("_mb"):
+            return "MB"
+        if c.endswith("_hz"):
+            return "Hz"
+        if c.endswith("_percent") or c.endswith("_pct"):
+            return "%"
         if "utilization" in c or "percent" in c:
             return "%"
         if "loss" in c:
@@ -574,7 +715,10 @@ class TimelineBuilder:
         return ""
 
     async def _parse_mcap_recording(
-        self, mcap_path: Path, bundle_path: Path
+        self,
+        mcap_path: Path,
+        bundle_path: Path,
+        system_component: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Parse MCAP recording for robot events (TF, detection arrival, control commands, safety)."""
         events = []
@@ -610,6 +754,13 @@ class TimelineBuilder:
                         elif channel.topic == "/detections":
                             summary = f"Received {len(payload.get('detections', []))} detections (age: {payload.get('age_ms', 0)}ms)"
 
+                    # The recording belongs to the system under study; a
+                    # payload that names its publisher is more precise.
+                    publisher = ""
+                    if isinstance(payload, dict):
+                        publisher = str(payload.get("name") or payload.get("node") or "")
+                    component = publisher or system_component
+
                     events.append(
                         {
                             "timestamp_ns": message.log_time,
@@ -624,6 +775,11 @@ class TimelineBuilder:
                                 "schema_name": schema.name if schema else "",
                                 "payload": payload,
                             },
+                            "component": component,
+                            "component_source": DECLARED_ATTRIBUTE
+                            if publisher
+                            else SYSTEM_RECORDING,
+                            "component_confidence": 0.9 if publisher else 0.7,
                             "confidence": 1.0,
                             "status": "OBSERVED",
                         }

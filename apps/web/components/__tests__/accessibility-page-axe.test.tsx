@@ -1,8 +1,13 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { ShellProvider } from '@/lib/useShell';
+import { afterEach } from 'vitest';
 
 expect.extend(toHaveNoViolations);
+
+afterEach(() => {
+  cleanup();
+});
 
 // Mock lucide-react
 vi.mock('lucide-react', () => {
@@ -16,6 +21,7 @@ vi.mock('lucide-react', () => {
     'Palette', 'Bell', 'Keyboard', 'Command', 'Globe', 'Moon', 'Sun', 'Monitor', 'Key', 'Server',
     'Sliders', 'Copy',
     'Magnet', 'ZoomIn', 'ZoomOut', 'Maximize', 'ArrowLeft', 'ArrowRight', 'SkipBack', 'SkipForward', 'Timer', 'Package', 'Wrench',
+  'ShieldAlert', 'ShieldCheck',
   ];
   const mocks: Record<string, any> = {};
   icons.forEach(name => {

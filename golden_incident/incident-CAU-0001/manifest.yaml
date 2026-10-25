@@ -1,5 +1,14 @@
 approximate_time: '2026-09-20T10:30:00Z'
 commit_hash: a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0
+component_aliases:
+  amr-01: warehouse-amr-01
+  cpu: warehouse-amr-01
+  gpu: cloud-service
+  inference: cloud-service
+  inference-service: cloud-service
+  memory: warehouse-amr-01
+  robot: warehouse-amr-01
+  system: warehouse-amr-01
 demonstration_label: DEMONSTRATION BENCHMARK (CAU-0001)
 description: Autonomous mobile robot consumes stale object detections from remote
   GPU inference service after deployment v42 increases dynamic batching window, causing
@@ -15,6 +24,8 @@ required_evidence:
 - logs/cloud-service.jsonl
 - logs/ros-nodes.jsonl
 - metrics/gpu.csv
+- metrics/cpu.csv
+- metrics/memory.csv
 - metrics/network.csv
 - recordings/robot_run.mcap
 - config/inference.yaml

@@ -12,11 +12,19 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from cauveris.attribution import resolve_attribution
+from .calibration import CalibrationProfile, extract_measurements
+
 logger = logging.getLogger(__name__)
+
+# How much a directly measured quantity is trusted to constrain its dimension.
+# A metric export names the dimension it measures, so the only question is
+# how much of the reconstructed state it determines - not whether it applies.
+_MEASUREMENT_CONFIDENCE = 0.8
 
 
 class BoundaryLayer(str, Enum):
@@ -71,6 +79,12 @@ class HolographicEvidenceUnit:
     encoded_dimensions: Dict[str, float] = field(default_factory=dict)
     # e.g., {"memory_pressure": 0.7, "cpu_contention": 0.3, "network_latency": 0.9}
 
+    # The normalised observation this HEU carries per dimension, in [0,1].
+    # Weighted keywords say *that* a dimension is implicated; these say *how
+    # far* along that dimension the system was, calibrated against the
+    # incident's own declared budgets.
+    observations: Dict[str, float] = field(default_factory=dict)
+
     # Reconstruction metadata
     reconstruction_weight: float = 1.0  # How much this HEU constrains reconstruction
     ambiguity_score: float = 0.0  # 0=unambiguous, 1=highly ambiguous
@@ -118,6 +132,7 @@ class HolographicEvidenceUnit:
             "source_instance": self.source_instance,
             "payload": self.payload,
             "encoded_dimensions": self.encoded_dimensions,
+            "observations": self.observations,
             "reconstruction_weight": self.reconstruction_weight,
             "ambiguity_score": self.ambiguity_score,
             "cross_layer_correlations": self.cross_layer_correlations,
@@ -136,6 +151,7 @@ class HolographicEvidenceUnit:
             source_instance=data["source_instance"],
             payload=data["payload"],
             encoded_dimensions=data.get("encoded_dimensions", {}),
+            observations=data.get("observations", {}),
             reconstruction_weight=data.get("reconstruction_weight", 1.0),
             ambiguity_score=data.get("ambiguity_score", 0.0),
             cross_layer_correlations=data.get("cross_layer_correlations", []),
@@ -183,16 +199,24 @@ def _map_source_type_to_layer(source_type: str) -> BoundaryLayer:
 def _compute_encoded_dimensions(
     event: Dict[str, Any],
     raw_signals: Dict[str, Any],
+    calibration: Optional[CalibrationProfile] = None,
 ) -> Dict[str, float]:
     """
     Compute which bulk state dimensions this event informs.
 
-    Analyzes event attributes to determine relevance to different
-    internal state dimensions (CPU, memory, network, error, etc.).
+    Two kinds of evidence are combined:
+
+    * keyword evidence - the event's wording, status and type implicate a
+      dimension (a WARNING implicates error_rate, a deployment implicates
+      config_change);
+    * quantitative evidence - the event carries a measured value, which is
+      direct evidence about the dimension that value maps to once it has been
+      calibrated against the incident's declared budgets.
 
     Args:
         event: Timeline event dictionary.
         raw_signals: Raw signals from RawSignalExtractor.
+        calibration: Scale reference for measured values (optional).
 
     Returns:
         Dictionary mapping dimension names to relevance weights [0,1].
@@ -216,17 +240,6 @@ def _compute_encoded_dimensions(
     # Also check attributes for cpu-related keys (e.g., cpu_pressure, cpu_usage)
     if any(k in attr_str for k in ["cpu_pressure", "cpu_usage", "cpu_util", "throttl"]):
         cpu_score = max(cpu_score, 0.7)
-    if cpu_score > 0:
-        dimensions["cpu_pressure"] = min(1.0, cpu_score)
-
-    # CPU pressure indicators
-    cpu_score = 0.0
-    if "cpu" in message:
-        cpu_score += 0.5
-    if "throttl" in message:
-        cpu_score += 0.3
-    if source_type == "csv_metrics" and "cpu" in str(attributes).lower():
-        cpu_score += 0.4
     if cpu_score > 0:
         dimensions["cpu_pressure"] = min(1.0, cpu_score)
 
@@ -265,9 +278,28 @@ def _compute_encoded_dimensions(
 
     # Error/Anomaly indicators
     error_score = 0.0
-    if any(kw in message for kw in ["error", "fail", "exception", "crash", "panic", "fatal"]):
+    if any(
+        kw in message
+        for kw in [
+            "error",
+            "fail",
+            "exception",
+            "crash",
+            "panic",
+            "fatal",
+            "emergency stop",
+            "emergency_stop",
+            "e-stop",
+        ]
+    ):
         error_score += 0.6
-    if event.get("status", "").lower() in ("error", "failed", "fatal"):
+    if event.get("status", "").lower() in (
+        "error",
+        "failed",
+        "fatal",
+        "emergency_stop",
+        "critical",
+    ):
         error_score += 0.4
     if source_type == "jsonl_log":
         level = attributes.get("level", "").upper()
@@ -311,16 +343,94 @@ def _compute_encoded_dimensions(
     if dep_score > 0:
         dimensions["service_dependency"] = min(1.0, dep_score)
 
-    # Resource contention (generic)
+    # Resource contention (generic). Only evidence that actually indicates
+    # contention counts here - a metric export does not imply contention just
+    # because it is a metric export.
     resource_score = 0.0
     if any(kw in message for kw in ["contention", "bottleneck", "saturat", "queue", "backlog"]):
         resource_score += 0.4
-    if source_type == "csv_metrics":
-        resource_score += 0.2
     if resource_score > 0:
         dimensions["resource_contention"] = min(1.0, resource_score)
 
+    # Quantitative evidence: a measured value constrains the dimension it maps
+    # to, whether or not the wording mentions it.
+    if calibration is not None:
+        for metric_name, value, unit in extract_measurements(event):
+            normalised = calibration.normalise(metric_name, value, unit)
+            if normalised is None:
+                continue
+            dimension, _pressure = normalised
+            dimensions[dimension] = max(dimensions.get(dimension, 0.0), _MEASUREMENT_CONFIDENCE)
+
     return dimensions
+
+
+def _compute_observations(
+    event: Dict[str, Any],
+    calibration: Optional[CalibrationProfile],
+) -> Dict[str, float]:
+    """
+    Compute the normalised observation this event carries per dimension.
+
+    A measured value becomes a calibrated pressure in [0,1].  Dimensions the
+    event implicates without measuring fall back to the relevance weight
+    computed from the event's wording and status.
+    """
+    observations: Dict[str, float] = {}
+    dimensions = _compute_encoded_dimensions(event, {}, calibration)
+
+    if calibration is not None:
+        for metric_name, value, unit in extract_measurements(event):
+            normalised = calibration.normalise(metric_name, value, unit)
+            if normalised is None:
+                continue
+            dimension, pressure = normalised
+            observations[dimension] = max(observations.get(dimension, 0.0), pressure)
+
+    # Error severity is observable without a numeric measurement.
+    if "error_rate" in dimensions and "error_rate" not in observations:
+        observations["error_rate"] = _severity_observation(event, dimensions["error_rate"])
+
+    for dimension, weight in dimensions.items():
+        observations.setdefault(dimension, weight)
+
+    return observations
+
+
+def _severity_observation(event: Dict[str, Any], fallback: float) -> float:
+    """Map an event's severity onto an error-rate observation."""
+    attributes = event.get("attributes", {})
+    level = str(attributes.get("level", "")).upper()
+    status = str(event.get("status", "")).lower()
+
+    level_map = {
+        "DEBUG": 0.05,
+        "INFO": 0.05,
+        "NOTICE": 0.1,
+        "WARN": 0.35,
+        "WARNING": 0.35,
+        "ERROR": 0.75,
+        "FATAL": 0.95,
+        "CRITICAL": 1.0,
+    }
+    status_map = {
+        "ok": 0.0,
+        "success": 0.0,
+        "info": 0.05,
+        "warning": 0.35,
+        "warn": 0.35,
+        "degraded": 0.5,
+        "error": 0.75,
+        "failed": 0.85,
+        "fatal": 0.95,
+        "emergency_stop": 1.0,
+    }
+
+    if level in level_map:
+        return level_map[level]
+    if status in status_map:
+        return status_map[status]
+    return float(min(1.0, fallback))
 
 
 def _compute_phase_vector(
@@ -329,6 +439,8 @@ def _compute_phase_vector(
     causal_depth: int = 0,
     max_causal_depth: int = 1,
     service_dependency_count: int = 0,
+    calibration: Optional[CalibrationProfile] = None,
+    observations: Optional[Dict[str, float]] = None,
 ) -> np.ndarray:
     """
     Compute 8D holographic phase vector for an event.
@@ -364,20 +476,24 @@ def _compute_phase_vector(
     if max_causal_depth > 0:
         phase[1] = min(1.0, causal_depth / max_causal_depth)
 
-    # Dimensions 2-7: Derived from encoded dimensions
-    encoded = _compute_encoded_dimensions(event, {})
+    # Dimensions 2-7: Derived from encoded dimensions.  Where the event
+    # carries a calibrated measurement, the measurement is the phase; the
+    # keyword weight is only the fallback.
+    encoded = _compute_encoded_dimensions(event, {}, calibration)
+    observed = observations if observations is not None else {}
+
+    def _signal(dimension: str) -> float:
+        return float(observed.get(dimension, encoded.get(dimension, 0.0)))
 
     phase[2] = (
-        encoded.get("cpu_pressure", 0.0)
-        + encoded.get("memory_pressure", 0.0)
-        + encoded.get("resource_contention", 0.0)
+        _signal("cpu_pressure") + _signal("memory_pressure") + _signal("resource_contention")
     )
     phase[2] = min(1.0, phase[2])
 
-    phase[3] = encoded.get("error_rate", 0.0)
-    phase[4] = encoded.get("config_change", 0.0)
-    phase[5] = encoded.get("deployment_activity", 0.0)
-    phase[6] = encoded.get("network_latency", 0.0)
+    phase[3] = _signal("error_rate")
+    phase[4] = _signal("config_change")
+    phase[5] = _signal("deployment_activity")
+    phase[6] = _signal("network_latency")
     phase[7] = min(1.0, service_dependency_count / 10.0)  # Normalize to ~10 max deps
 
     return phase
@@ -404,6 +520,8 @@ def convert_timeline_to_heus(
     timeline_events: List[Dict[str, Any]],
     raw_signals: Dict[str, Any],
     incident_duration_ns: int,
+    calibration: Optional[CalibrationProfile] = None,
+    aliases: Optional[Dict[str, str]] = None,
 ) -> List[HolographicEvidenceUnit]:
     """
     Convert Cauveris timeline events to Holographic Evidence Units.
@@ -415,12 +533,17 @@ def convert_timeline_to_heus(
         timeline_events: Sorted timeline events from TimelineBuilder.
         raw_signals: Raw signals from RawSignalExtractor.
         incident_duration_ns: Total incident window in nanoseconds.
+        calibration: Scale reference for measured values (optional).
+        aliases: Component aliases the bundle declares (optional).
 
     Returns:
         List of HEUs with phase vectors and encoded dimensions.
     """
     if not timeline_events:
         return []
+
+    if calibration is None:
+        calibration = CalibrationProfile()
 
     # First pass: compute causal depths for all events
     causal_depths = _compute_causal_depths(timeline_events)
@@ -440,14 +563,12 @@ def convert_timeline_to_heus(
         source = event.get("source", "unknown")
         layer = _map_source_type_to_layer(source_type)
 
-        # Get component/instance from attributes (including OTel standard attributes)
+        # Which component this observation describes.  The same resolver the
+        # topology builder uses, so evidence and topology cannot disagree
+        # about which component is being measured.
+        attribution = resolve_attribution(event, aliases)
+        component = attribution.component or ""
         attributes = event.get("attributes", {})
-        component = (
-            attributes.get("service")
-            or attributes.get("component")
-            or attributes.get("service.name")
-            or source
-        )
         instance = attributes.get("instance") or attributes.get("host") or "unknown"
 
         seq = seq_counters[(source_type, source)]
@@ -455,7 +576,8 @@ def convert_timeline_to_heus(
 
         heu_id = _synthesize_heu_id(layer, component, instance, event.get("timestamp_ns", 0), seq)
 
-        encoded_dims = _compute_encoded_dimensions(event, raw_signals)
+        encoded_dims = _compute_encoded_dimensions(event, raw_signals, calibration)
+        observations = _compute_observations(event, calibration)
 
         phase = _compute_phase_vector(
             event,
@@ -463,6 +585,8 @@ def convert_timeline_to_heus(
             causal_depth=causal_depths.get(event.get("event_id", ""), 0),
             max_causal_depth=max_depth,
             service_dependency_count=dep_counts.get(component, 0),
+            calibration=calibration,
+            observations=observations,
         )
 
         # Compute reconstruction weight based on layer informativeness
@@ -470,6 +594,10 @@ def convert_timeline_to_heus(
 
         # Compute ambiguity score
         ambiguity = _compute_ambiguity_score(event, layer, encoded_dims)
+
+        # Evidence attributed by a weaker method constrains the state less.
+        if attribution.method != "explicit":
+            ambiguity = min(1.0, ambiguity + (1.0 - attribution.confidence) * 0.3)
 
         heu = HolographicEvidenceUnit(
             heu_id=heu_id,
@@ -479,6 +607,7 @@ def convert_timeline_to_heus(
             source_instance=instance,
             payload=event,
             encoded_dimensions=encoded_dims,
+            observations=observations,
             reconstruction_weight=weight,
             ambiguity_score=ambiguity,
             phase_vector=phase,

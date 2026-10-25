@@ -5,6 +5,7 @@ Provides user authentication, JWT token management, session handling, and RBAC.
 
 import asyncio
 import hashlib
+import hmac
 import secrets
 import uuid
 from abc import ABC, abstractmethod
@@ -31,12 +32,63 @@ def hash_password(password: str) -> str:
     return f"sha256${salt}${hash_val}"
 
 
+try:
+    # NOTE: passlib 1.7.4 cannot detect the backend of bcrypt >= 4.1 and
+    # raises "password cannot be longer than 72 bytes" for every input, so the
+    # bcrypt library is used directly instead of through passlib.
+    import bcrypt as _bcrypt
+
+    _BCRYPT_MAX_BYTES = 72
+
+    def _bcrypt_hash(secret: str) -> str:
+        return _bcrypt.hashpw(
+            secret.encode("utf-8")[:_BCRYPT_MAX_BYTES], _bcrypt.gensalt()
+        ).decode("ascii")
+
+    def _bcrypt_verify(secret: str, hashed: str) -> bool:
+        try:
+            return bool(
+                _bcrypt.checkpw(
+                    secret.encode("utf-8")[:_BCRYPT_MAX_BYTES], hashed.encode("ascii")
+                )
+            )
+        except (ValueError, TypeError):
+            return False
+
+except Exception:  # pragma: no cover - bcrypt is an optional hardening
+    _bcrypt = None  # type: ignore[assignment]
+
+    def _bcrypt_hash(secret: str) -> str:  # type: ignore[misc]
+        return hash_password(secret)
+
+    def _bcrypt_verify(secret: str, hashed: str) -> bool:  # type: ignore[misc]
+        return verify_password(secret, hashed)
+
+
+_BCRYPT_PREFIXES = ("$2a$", "$2b$", "$2y$", "$2x$")
+
+
 def verify_password(password: str, password_hash: str) -> bool:
-    """Verify password against hash."""
-    if not password_hash.startswith("sha256$"):
+    """Verify a secret against a stored hash.
+
+    Supports the built-in salted SHA-256 format (``sha256$salt$hash``) as well
+    as bcrypt hashes (``$2b$...``) produced for API keys.
+    """
+    if not password_hash:
         return False
-    _, salt, hash_val = password_hash.split("$", 2)
-    return hashlib.sha256((password + salt).encode()).hexdigest() == hash_val
+    if password_hash.startswith("sha256$"):
+        parts = password_hash.split("$", 2)
+        if len(parts) != 3:
+            return False
+        _, salt, hash_val = parts
+        if not salt or not hash_val:
+            return False
+        return hmac.compare_digest(
+            hashlib.sha256((password + salt).encode()).hexdigest(), hash_val
+        )
+    if password_hash.startswith(_BCRYPT_PREFIXES):
+        return _bcrypt_verify(password, password_hash)
+    return False
 
 
 # Create a mock context for compatibility
@@ -48,7 +100,18 @@ class MockPwdContext:
         return verify_password(password, password_hash)
 
 
+class BcryptPwdContext:
+    """Hashing context for high-entropy API keys."""
+
+    def hash(self, password: str) -> str:
+        return _bcrypt_hash(password)
+
+    def verify(self, password: str, password_hash: str) -> bool:
+        return verify_password(password, password_hash)
+
+
 pwd_context = MockPwdContext()
+api_key_pwd_context = BcryptPwdContext()
 
 
 class UserRole(str, Enum):
@@ -79,162 +142,188 @@ class AuthMethod(str, Enum):
 
 
 # Role permission matrix
+_VIEWER_PERMISSIONS: Set[str] = {
+    "incident:read",
+    "incident:list",
+    "timeline:read",
+    "hypothesis:read",
+    "experiment:read",
+    "patch:read",
+    "report:read",
+    "evidence:read",
+    "job_queue:read",
+    "concurrency:read",
+}
+
+_ANALYST_PERMISSIONS: Set[str] = {
+    "incident:read",
+    "incident:list",
+    "incident:create",
+    "incident:update_own",
+    "incident:validate",
+    "timeline:read",
+    "hypothesis:read",
+    "hypothesis:create",
+    "experiment:read",
+    "experiment:create",
+    "patch:read",
+    "report:read",
+    "evidence:read",
+    "evidence:upload",
+    "evidence:validate",
+    "pipeline:start",
+    "pipeline:cancel_own",
+    "job_queue:read",
+    "job_queue:submit",
+    "concurrency:read",
+}
+
+_ENGINEER_PERMISSIONS: Set[str] = {
+    "incident:read",
+    "incident:list",
+    "incident:create",
+    "incident:update_own",
+    "incident:reconstruct",
+    "incident:cancel",
+    "incident:reset",
+    "incident:retry",
+    "incident:validate",
+    "timeline:read",
+    "hypothesis:read",
+    "hypothesis:create",
+    "hypothesis:test",
+    "experiment:read",
+    "experiment:create",
+    "experiment:run",
+    "patch:read",
+    "patch:create",
+    "patch:apply",
+    "patch:download",
+    "patch:export",
+    "report:read",
+    "evidence:read",
+    "evidence:upload",
+    "evidence:validate",
+    "pipeline:start",
+    "pipeline:cancel_own",
+    "simulation:run",
+    "engineer_mode:access",
+    "job_queue:read",
+    "job_queue:submit",
+    "job_queue:cancel",
+    "concurrency:read",
+}
+
+# Permissions that only administrators hold.
+_ADMIN_PERMISSIONS: Set[str] = {
+    "incident:*",
+    "incident:update_any",
+    "incident:delete_any",
+    "user:read",
+    "user:create",
+    "user:update",
+    "user:delete",
+    "org:read",
+    "org:create",
+    "org:update",
+    "org:delete",
+    "quota:override",
+    "audit:read",
+    "system:config",
+    "api_key:manage",
+    "job_queue:*",
+    "job_queue:manage_any",
+    "concurrency:*",
+    "concurrency:manage",
+}
+
 ROLE_PERMISSIONS: Dict[UserRole, Set[str]] = {
-    UserRole.VIEWER: {
-        "incident:read",
-        "incident:list",
-        "timeline:read",
-        "hypothesis:read",
-        "experiment:read",
-        "patch:read",
-        "report:read",
-        "evidence:read",
-        "job_queue:read",
-        "concurrency:read",
-    },
-    UserRole.ANALYST: {
-        "incident:read",
-        "incident:list",
-        "incident:create",
-        "incident:update_own",
-        "incident:validate",
-        "timeline:read",
-        "hypothesis:read",
-        "hypothesis:create",
-        "experiment:read",
-        "experiment:create",
-        "patch:read",
-        "report:read",
-        "evidence:read",
-        "evidence:upload",
-        "evidence:validate",
-        "pipeline:start",
-        "pipeline:cancel_own",
-        "job_queue:read",
-        "job_queue:submit",
-        "concurrency:read",
-    },
-    UserRole.ENGINEER: {
-        "incident:read",
-        "incident:list",
-        "incident:create",
-        "incident:update_own",
-        "incident:reconstruct",
-        "incident:cancel",
-        "incident:reset",
-        "incident:validate",
-        "timeline:read",
-        "hypothesis:read",
-        "hypothesis:create",
-        "hypothesis:test",
-        "experiment:read",
-        "experiment:create",
-        "experiment:run",
-        "patch:read",
-        "patch:create",
-        "patch:apply",
-        "patch:download",
-        "patch:export",
-        "report:read",
-        "evidence:read",
-        "evidence:upload",
-        "evidence:validate",
-        "pipeline:start",
-        "pipeline:cancel_own",
-        "simulation:run",
-        "engineer_mode:access",
-        "job_queue:read",
-        "job_queue:submit",
-        "job_queue:cancel",
-        "concurrency:read",
-    },
-    UserRole.ADMIN: {
-        # All analyst + engineer permissions plus:
-        "incident:*",
-        "user:read",
-        "user:create",
-        "user:update",
-        "user:delete",
-        "org:read",
-        "org:create",
-        "org:update",
-        "org:delete",
-        "quota:override",
-        "audit:read",
-        "system:config",
-        "api_key:manage",
-        "job_queue:*",
-        "concurrency:*",
-    },
+    UserRole.VIEWER: set(_VIEWER_PERMISSIONS),
+    UserRole.ANALYST: set(_ANALYST_PERMISSIONS),
+    UserRole.ENGINEER: set(_ENGINEER_PERMISSIONS),
+    UserRole.ADMIN: (
+        # All analyst + engineer permissions plus the admin-only ones.
+        _ANALYST_PERMISSIONS | _ENGINEER_PERMISSIONS | _ADMIN_PERMISSIONS
+    ),
     UserRole.SUPER_ADMIN: {
         "*",  # All permissions
     },
 }
 
+# Canonical list of concrete permissions. Wildcards are expanded against this
+# set, so every permission string used anywhere in the codebase should be
+# listed here.
+ALL_PERMISSIONS: Set[str] = {
+    "incident:read",
+    "incident:list",
+    "incident:create",
+    "incident:update_own",
+    "incident:update_any",
+    "incident:delete_any",
+    "incident:reconstruct",
+    "incident:cancel",
+    "incident:reset",
+    "incident:retry",
+    "incident:validate",
+    "timeline:read",
+    "hypothesis:read",
+    "hypothesis:create",
+    "hypothesis:test",
+    "experiment:read",
+    "experiment:create",
+    "experiment:run",
+    "patch:read",
+    "patch:create",
+    "patch:apply",
+    "patch:download",
+    "patch:export",
+    "report:read",
+    "evidence:read",
+    "evidence:upload",
+    "evidence:validate",
+    "pipeline:start",
+    "pipeline:cancel_own",
+    "pipeline:cancel_any",
+    "simulation:run",
+    "engineer_mode:access",
+    "user:read",
+    "user:create",
+    "user:update",
+    "user:delete",
+    "org:read",
+    "org:create",
+    "org:update",
+    "org:delete",
+    "quota:override",
+    "audit:read",
+    "system:config",
+    "api_key:manage",
+    "job_queue:read",
+    "job_queue:submit",
+    "job_queue:cancel",
+    "job_queue:manage_any",
+    "concurrency:read",
+    "concurrency:manage",
+}
+
 
 def expand_permissions(perms: Set[str]) -> Set[str]:
-    """Expand wildcard permissions."""
-    expanded = set()
+    """Expand wildcard permissions into concrete permission names.
+
+    ``*`` grants every known permission and is itself retained so callers that
+    test for the literal wildcard keep working. ``namespace:*`` grants every
+    known permission in that namespace and the wildcard form is retained so
+    namespace checks still work for permissions added later.
+    """
+    expanded: Set[str] = set()
     for perm in perms:
         if perm == "*":
-            # Add all known permissions
-            expanded.update(
-                [
-                    "incident:read",
-                    "incident:list",
-                    "incident:create",
-                    "incident:update_own",
-                    "incident:update_any",
-                    "incident:delete_any",
-                    "incident:reconstruct",
-                    "incident:cancel",
-                    "incident:reset",
-                    "incident:validate",
-                    "timeline:read",
-                    "hypothesis:read",
-                    "hypothesis:create",
-                    "hypothesis:test",
-                    "experiment:read",
-                    "experiment:create",
-                    "experiment:run",
-                    "patch:read",
-                    "patch:create",
-                    "patch:apply",
-                    "patch:download",
-                    "patch:export",
-                    "report:read",
-                    "evidence:read",
-                    "evidence:upload",
-                    "evidence:validate",
-                    "pipeline:start",
-                    "pipeline:cancel_own",
-                    "pipeline:cancel_any",
-                    "simulation:run",
-                    "engineer_mode:access",
-                    "user:read",
-                    "user:create",
-                    "user:update",
-                    "user:delete",
-                    "org:read",
-                    "org:create",
-                    "org:update",
-                    "org:delete",
-                    "quota:override",
-                    "audit:read",
-                    "system:config",
-                    "api_key:manage",
-                    "job_queue:read",
-                    "job_queue:submit",
-                    "job_queue:cancel",
-                    "concurrency:read",
-                    "concurrency:manage",
-                ]
-            )
+            expanded.update(ALL_PERMISSIONS)
+            expanded.add("*")
         elif perm.endswith(":*"):
             prefix = perm[:-2]
-            # Add all permissions starting with prefix
-            all_perms = set().union(*ROLE_PERMISSIONS.values())
-            expanded.update(p for p in all_perms if p.startswith(prefix))
+            expanded.update(p for p in ALL_PERMISSIONS if p.startswith(prefix))
+            expanded.add(perm)
         else:
             expanded.add(perm)
     return expanded
@@ -270,8 +359,18 @@ class User:
         self.password_hash = pwd_context.hash(password)
 
     def has_permission(self, permission: str) -> bool:
+        """Check whether the role grants a permission.
+
+        Honours the global ``*`` wildcard (super admin) as well as namespace
+        wildcards such as ``incident:*``.
+        """
         perms = expand_permissions(ROLE_PERMISSIONS.get(self.role, set()))
-        return permission in perms or "*" in perms
+        if "*" in perms:
+            return True
+        if permission in perms:
+            return True
+        namespace = permission.split(":", 1)[0]
+        return f"{namespace}:*" in perms
 
     def has_any_permission(self, permissions: List[str]) -> bool:
         return any(self.has_permission(p) for p in permissions)
@@ -331,10 +430,12 @@ class Session:
         self.is_revoked = True
 
 
+API_KEY_PREFIX_LENGTH = 8
+
+
 @dataclass
 class APIKey:
     """API key for service-to-service authentication."""
-
     id: str = field(default_factory=lambda: f"key_{uuid.uuid4().hex[:16]}")
     name: str = ""
     org_id: str = ""
@@ -350,11 +451,11 @@ class APIKey:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def verify_key(self, raw_key: str) -> bool:
-        return pwd_context.verify(raw_key, self.key_hash)
+        return api_key_pwd_context.verify(raw_key, self.key_hash)
 
     def set_key(self, raw_key: str) -> None:
-        self.key_hash = pwd_context.hash(raw_key)
-        self.key_prefix = raw_key[:8]
+        self.key_hash = api_key_pwd_context.hash(raw_key)
+        self.key_prefix = raw_key[:API_KEY_PREFIX_LENGTH]
 
 
 @dataclass
@@ -459,6 +560,24 @@ class AuthStore(ABC):
     ) -> int:
         pass
 
+    async def revoke_sessions_by_id(self, session_ids: List[str]) -> int:
+        """
+        Revoke the given sessions. Returns the number of sessions revoked.
+
+        The default implementation works with any backend that supports
+        ``get_session``/``update_session``; backends that keep additional
+        token indexes should override it.
+        """
+        revoked = 0
+        for session_id in session_ids:
+            session = await self.get_session(session_id)
+            if session is None or session.is_revoked:
+                continue
+            session.revoke()
+            await self.update_session(session)
+            revoked += 1
+        return revoked
+
     @abstractmethod
     async def list_user_sessions(self, user_id: str) -> List[Session]:
         pass
@@ -517,7 +636,7 @@ class InMemoryAuthStore(AuthStore):
         self._sessions_by_access: Dict[str, str] = {}
         self._sessions_by_refresh: Dict[str, str] = {}
         self._api_keys: Dict[str, APIKey] = {}
-        self._api_keys_by_prefix: Dict[str, str] = {}
+        self._api_keys_by_prefix: Dict[str, List[str]] = {}
         self._audit_logs: List[AuditLogEntry] = []
         self._lock = asyncio.Lock()
 
@@ -622,6 +741,19 @@ class InMemoryAuthStore(AuthStore):
     async def update_session(self, session: Session) -> Session:
         async with self._lock:
             session.last_activity = datetime.now(timezone.utc)
+            # Update token indexes - the session may have rotated its refresh token
+            # Remove old refresh token from index if present (by checking all entries for this session)
+            old_refresh_tokens = [
+                token for token, sid in self._sessions_by_refresh.items() if sid == session.id
+            ]
+            for old_token in old_refresh_tokens:
+                self._sessions_by_refresh.pop(old_token, None)
+            # Add the current refresh token
+            if session.refresh_token:
+                self._sessions_by_refresh[session.refresh_token] = session.id
+            # Also update access token index
+            if session.access_token:
+                self._sessions_by_access[session.access_token] = session.id
             self._sessions[session.id] = session
         return session
 
@@ -647,18 +779,50 @@ class InMemoryAuthStore(AuthStore):
                     count += 1
         return count
 
+    async def revoke_sessions_by_id(self, session_ids: List[str]) -> int:
+        async with self._lock:
+            count = 0
+            for session_id in session_ids:
+                session = self._sessions.get(session_id)
+                if session is None or session.is_revoked:
+                    continue
+                session.revoke()
+                self._sessions_by_access.pop(session.access_token, None)
+                self._sessions_by_refresh.pop(session.refresh_token, None)
+                count += 1
+        return count
+
     async def create_api_key(self, api_key: APIKey) -> APIKey:
         async with self._lock:
             self._api_keys[api_key.id] = api_key
-            self._api_keys_by_prefix[api_key.key_prefix] = api_key.id
+            # Several keys can legitimately share the same short prefix, so
+            # every candidate is kept; otherwise a new key would shadow an
+            # existing one and make it permanently unusable.
+            self._api_keys_by_prefix.setdefault(api_key.key_prefix, []).append(api_key.id)
         return api_key
 
     async def get_api_key(self, key_id: str) -> Optional[APIKey]:
         return self._api_keys.get(key_id)
 
     async def get_api_key_by_prefix(self, prefix: str) -> Optional[APIKey]:
-        key_id = self._api_keys_by_prefix.get(prefix)
-        return self._api_keys.get(key_id) if key_id else None
+        for key_id in self._api_keys_by_prefix.get(prefix) or []:
+            key = self._api_keys.get(key_id)
+            if key is not None:
+                return key
+        return None
+
+    async def get_api_key_by_raw_key(self, raw_key: str) -> Optional[APIKey]:
+        """Resolve an API key from its raw secret.
+
+        The stored prefix is only a short, collision-prone label, so every
+        candidate sharing the prefix is verified before one is returned.
+        """
+        prefix = raw_key[:API_KEY_PREFIX_LENGTH]
+        for key_id in self._api_keys_by_prefix.get(prefix) or []:
+            key = self._api_keys.get(key_id)
+            if key is not None and key.verify_key(raw_key):
+                return key
+        return None
 
     async def list_api_keys(self, org_id: str, user_id: Optional[str] = None) -> List[APIKey]:
         keys = [k for k in self._api_keys.values() if k.org_id == org_id]
@@ -668,14 +832,26 @@ class InMemoryAuthStore(AuthStore):
 
     async def update_api_key(self, api_key: APIKey) -> APIKey:
         async with self._lock:
+            previous = self._api_keys.get(api_key.id)
             self._api_keys[api_key.id] = api_key
+            if previous is not None and previous.key_prefix != api_key.key_prefix:
+                candidates = self._api_keys_by_prefix.get(previous.key_prefix) or []
+                if api_key.id in candidates:
+                    candidates.remove(api_key.id)
+                if not candidates:
+                    self._api_keys_by_prefix.pop(previous.key_prefix, None)
+                self._api_keys_by_prefix.setdefault(api_key.key_prefix, []).append(api_key.id)
         return api_key
 
     async def delete_api_key(self, key_id: str) -> bool:
         async with self._lock:
             key = self._api_keys.pop(key_id, None)
             if key:
-                self._api_keys_by_prefix.pop(key.key_prefix, None)
+                candidates = self._api_keys_by_prefix.get(key.key_prefix) or []
+                if key_id in candidates:
+                    candidates.remove(key_id)
+                if not candidates:
+                    self._api_keys_by_prefix.pop(key.key_prefix, None)
                 return True
         return False
 

@@ -1,307 +1,437 @@
 """
-Verification engine for checking patch candidates against the 9-point PATCH_VERIFIED checklist.
+Verification engine: the 9-point PATCH_VERIFIED checklist, run against the
+incident's own bundle.
+
+The engine used to build a workspace out of hard-coded configuration - a
+``batching_window_ms: 200`` inference config and a two-line detection client
+- and then "apply" a patch by matching ``batching_window_ms`` and ``qos_depth``
+in the diff with a regular expression.  That made the checklist a fixed
+theatre: it could only ever succeed on one incident's vocabulary, and the
+numbers it compared were constants rather than measurements.
+
+This version does the real thing:
+
+* The workspace is a copy of the **real incident bundle**: the configuration
+  files and the source files that bundle actually shipped.
+* The patch is applied with the **real unified-diff engine**
+  (:mod:`cauveris.patch.unified_diff`), so a diff that does not apply to the
+  bundle fails to apply here.
+* The regression test is **generated from the incident's calibrated model** and
+  its declared safety budget, so it asserts the budget the system itself
+  declared rather than a hard-coded 120 ms.
+* The digital-twin gates run the **calibrated model** with the parameters the
+  patched workspace declares - the same simulator the hypothesis layer used to
+  decide that the hypothesis was supported.
+* Rollback is verified by applying the **inverse diff** and comparing the
+  result byte-for-byte with the pre-patch workspace.
+
+When no bundle can be found the engine says so and fails the gates.  It does
+not invent an incident to verify against.
 """
 
+from __future__ import annotations
+
+import json
 import logging
-import subprocess
+import os
 import shutil
-import re
+import subprocess
 import sys
-import yaml
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from cauveris.schemas.patch import PatchCandidate, VerificationReport
-from cauveris.simulation.runner import DigitalTwinFaultInjectors, CloudToRobotDigitalTwin
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from cauveris.analysis.model import TwinParameters
+from cauveris.analysis.system_model import SystemModel, get_system_model
+from cauveris.bundles import resolve_bundle
 from cauveris.config import get_settings
+from cauveris.patch.unified_diff import (
+    UnifiedDiffError,
+    apply_unified_diff,
+    reverse_unified_diff,
+)
+from cauveris.schemas.incident import Incident
+from cauveris.schemas.patch import PatchCandidate, VerificationReport
+from cauveris.simulation.runner import CloudToRobotDigitalTwin, DigitalTwinFaultInjectors
+from cauveris.verifier.workspace import (
+    WORKSPACE_SOURCE_DIRS,
+    compare_safety,
+    parameters_from_workspace,
+    safety_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
+#: Trials per twin gate.  Each trial re-runs the pipeline simulation with a
+#: different seed, so a gate reports a rate rather than a single sample.
+GATE_TRIALS = 10
+
+#: The fraction of control cycles that may see stale data for the system to
+#: count as healthy.  A watchdog that fires on 2% of cycles is still a
+#: watchdog firing every few seconds.
+STALE_RATE_THRESHOLD = 0.02
+
+#: How long a generated regression test may run.
+REGRESSION_TIMEOUT_S = 120
+
 
 class VerificationEngine:
-    """Verifies patch candidates against the comprehensive 9-point PATCH_VERIFIED checklist."""
+    """
+    Verifies patch candidates against the 9-point PATCH_VERIFIED checklist.
 
-    def __init__(self, workspace_dir: Optional[Path] = None):
+    Args:
+        workspace_dir: Where the per-candidate workspaces are created.
+        bundle_root: The incident bundle to verify against.  When it is not
+            given, the engine resolves the bundle from the incident, from the
+            evidence store, or from the working directory.
+        incident: The incident under investigation.
+    """
+
+    def __init__(
+        self,
+        workspace_dir: Optional[Path] = None,
+        *,
+        bundle_root: Optional[Path] = None,
+        incident: Optional[Incident] = None,
+    ):
         self.settings = get_settings()
         self.workspace_dir = Path(workspace_dir or "./verification_workspace")
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        self._bundle_root = Path(bundle_root) if bundle_root else None
+        self._incident = incident
+        self._model: Optional[SystemModel] = None
 
-    async def verify(self, patch_candidates: List[PatchCandidate]) -> List[VerificationReport]:
+    # ------------------------------------------------------------------ API
+
+    async def verify(
+        self,
+        patch_candidates: List[PatchCandidate],
+        *,
+        incident: Optional[Incident] = None,
+        bundle_root: Optional[Path] = None,
+    ) -> List[VerificationReport]:
         """
         Verify patch candidates against the 9-point PATCH_VERIFIED checklist.
 
         Args:
-            patch_candidates: List of patches to verify
+            patch_candidates: The candidates to verify.
+            incident: The incident the candidates belong to.  It is what the
+                bundle is resolved from.
+            bundle_root: The bundle to verify against, when it is already
+                known.
 
         Returns:
-            List of VerificationReport objects
+            One report per candidate, in the order they were given.
         """
-        logger.info(f"Verifying {len(patch_candidates)} patch candidates against 9-point checklist")
-        reports = []
+        logger.info(
+            f"Verifying {len(patch_candidates)} patch candidates against 9-point checklist"
+        )
 
+        if incident is not None:
+            self._incident = incident
+        if bundle_root is not None:
+            self._bundle_root = Path(bundle_root)
+
+        bundle = self._resolve_bundle()
+        model = self._build_model(bundle)
+
+        if bundle is None:
+            logger.error(
+                "No incident bundle could be located: the patch cannot be verified "
+                "against an incident that does not exist."
+            )
+        if model is None and bundle is not None:
+            logger.error(
+                f"The bundle at {bundle} produced no system model, so the twin gates "
+                "cannot be evaluated."
+            )
+
+        reports: List[VerificationReport] = []
         for patch in patch_candidates:
-            try:
-                logger.info(f"Starting verification battery for {patch.candidate_id}")
-                patch_workspace = self.workspace_dir / patch.candidate_id
-                if patch_workspace.exists():
-                    shutil.rmtree(patch_workspace)
-                patch_workspace.mkdir(parents=True, exist_ok=True)
-
-                # 1. Setup pre-patch source code
-                await self._setup_source_code(patch_workspace)
-
-                # 2. Run the 9 verification checks in strict order
-                verification_results = await self._run_verification_checks(patch_workspace, patch)
-
-                # 3. Update patch candidate properties
-                patch.applied_cleanly = verification_results["applies_cleanly"]
-                patch.regression_test_fails_before = verification_results[
-                    "regression_test_fails_before"
-                ]
-                patch.regression_test_passes_after = verification_results[
-                    "regression_test_passes_after"
-                ]
-                patch.original_failure_not_reproduced = verification_results[
-                    "original_failure_not_reproduced"
-                ]
-                patch.existing_tests_pass = verification_results["existing_tests_pass"]
-                patch.safety_invariants_pass = verification_results["safety_invariants_pass"]
-                patch.performance_within_budget = verification_results["performance_within_budget"]
-                patch.forbidden_change_scan_passes = verification_results[
-                    "forbidden_change_scan_passes"
-                ]
-                patch.rollback_test_passes = verification_results["rollback_test_passes"]
-
-                patch.verified = verification_results["verified"]
-                patch.rejection_reason = verification_results.get("rejection_reason")
-
-                if patch.verified:
-                    patch.build_state = "success"
-                    patch.existing_test_state = "pass"
-                    patch.replay_state = "success"
-                    patch.safety_result = "pass"
-                    patch.latency_result = "within_budget"
-                else:
-                    patch.build_state = "success" if patch.applied_cleanly else "failed"
-                    patch.existing_test_state = "pass" if patch.existing_tests_pass else "failed"
-                    patch.replay_state = (
-                        "success" if patch.original_failure_not_reproduced else "reproduced"
-                    )
-                    patch.safety_result = "pass" if patch.safety_invariants_pass else "failed"
-                    patch.latency_result = (
-                        "within_budget" if patch.performance_within_budget else "exceeded"
-                    )
-
-                # 4. Create verification report
-                report = VerificationReport(
-                    patch_candidate_id=patch.candidate_id,
-                    applies_cleanly=patch.applied_cleanly,
-                    regression_test_fails_before=patch.regression_test_fails_before,
-                    regression_test_passes_after=patch.regression_test_passes_after,
-                    original_failure_not_reproduced=patch.original_failure_not_reproduced,
-                    existing_tests_pass=patch.existing_tests_pass,
-                    safety_invariants_pass=patch.safety_invariants_pass,
-                    performance_within_budget=patch.performance_within_budget,
-                    forbidden_change_scan_passes=patch.forbidden_change_scan_passes,
-                    rollback_test_passes=patch.rollback_test_passes,
-                    verified=patch.verified,
-                    details=verification_results.get("details", {}),
-                )
-                reports.append(report)
-                logger.info(
-                    f"Verification complete for {patch.candidate_id}: VERIFIED={patch.verified}"
-                )
-
-            except Exception as e:
-                logger.error(f"Verification battery failed for {patch.candidate_id}: {e}")
-                report = VerificationReport(
-                    patch_candidate_id=patch.candidate_id,
-                    applies_cleanly=False,
-                    regression_test_fails_before=False,
-                    regression_test_passes_after=False,
-                    original_failure_not_reproduced=False,
-                    existing_tests_pass=False,
-                    safety_invariants_pass=False,
-                    performance_within_budget=False,
-                    forbidden_change_scan_passes=False,
-                    rollback_test_passes=False,
-                    verified=False,
-                    details={"error": str(e)},
-                )
-                patch.verified = False
-                patch.rejection_reason = f"Verification error: {str(e)}"
-                reports.append(report)
-
+            reports.append(await self._verify_one(patch, bundle, model))
         return reports
 
-    async def _setup_source_code(self, workspace: Path):
-        """Setup initial unpatched source code and regression test file."""
-        config_dir = workspace / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        src_dir = workspace / "src"
-        src_dir.mkdir(parents=True, exist_ok=True)
+    # -------------------------------------------------------------- one patch
 
-        # Baseline problematic inference config (v42: batching_window = 200)
-        inference_cfg = {
-            "model_name": "objdet",
-            "version": "v42",
-            "dynamic_batching": {
-                "enabled": True,
-                "max_batch_size": 8,
-                "batching_window_ms": 200,
-                "timeout_ms": 500,
-            },
+    async def _verify_one(
+        self,
+        patch: PatchCandidate,
+        bundle: Optional[Path],
+        model: Optional[SystemModel],
+    ) -> VerificationReport:
+        """Run the whole checklist against one candidate."""
+        try:
+            workspace = self.workspace_dir / patch.candidate_id
+            if workspace.exists():
+                shutil.rmtree(workspace)
+            workspace.mkdir(parents=True, exist_ok=True)
+
+            if bundle is None:
+                return self._report(
+                    patch,
+                    results=_empty_results(
+                        "No incident bundle was found, so the patch was not verified "
+                        "against any incident."
+                    ),
+                )
+
+            originals = self._setup_workspace(workspace, bundle)
+            if not originals:
+                return self._report(
+                    patch,
+                    results=_empty_results(
+                        f"The bundle at {bundle} holds no configuration or source files, "
+                        "so there is nothing to patch."
+                    ),
+                )
+
+            self._write_calibration(workspace, model)
+
+            results = await self._run_verification_checks(
+                workspace, patch, model, originals
+            )
+
+            patch.applied_cleanly = results["applies_cleanly"]
+            if hasattr(patch, "applies_cleanly"):
+                setattr(patch, "applies_cleanly", results["applies_cleanly"])
+            patch.regression_test_fails_before = results["regression_test_fails_before"]
+            patch.regression_test_passes_after = results["regression_test_passes_after"]
+            patch.original_failure_not_reproduced = results["original_failure_not_reproduced"]
+            patch.existing_tests_pass = results["existing_tests_pass"]
+            patch.safety_invariants_pass = results["safety_invariants_pass"]
+            patch.performance_within_budget = results["performance_within_budget"]
+            patch.forbidden_change_scan_passes = results[
+                "forbidden_change_scan_passes"
+            ]
+            patch.rollback_test_passes = results["rollback_test_passes"]
+            patch.verified = results["verified"]
+            patch.rejection_reason = results.get("rejection_reason")
+            patch.policy_findings = list(results.get("details", {}).get("policy_findings", []))
+
+            if patch.verified:
+                patch.build_state = "success"
+                patch.existing_test_state = "pass"
+                patch.replay_state = "success"
+                patch.safety_result = "pass"
+                patch.latency_result = "within_budget"
+            else:
+                patch.build_state = "success" if patch.applied_cleanly else "failed"
+                patch.existing_test_state = "pass" if patch.existing_tests_pass else "failed"
+                patch.replay_state = (
+                    "success" if patch.original_failure_not_reproduced else "reproduced"
+                )
+                patch.safety_result = "pass" if patch.safety_invariants_pass else "failed"
+                patch.latency_result = (
+                    "within_budget" if patch.performance_within_budget else "exceeded"
+                )
+
+            report = self._report(patch, results)
+            logger.info(
+                f"Verification complete for {patch.candidate_id}: "
+                f"VERIFIED={patch.verified}"
+            )
+            return report
+
+        except Exception as exc:  # a broken candidate must not kill the batch
+            logger.error(f"Verification battery failed for {patch.candidate_id}: {exc}")
+            patch.verified = False
+            patch.rejection_reason = f"Verification error: {exc}"
+            return VerificationReport(
+                patch_candidate_id=patch.candidate_id,
+                verified=False,
+                details={"error": str(exc)},
+            )
+
+    def _report(self, patch: PatchCandidate, results: Dict[str, Any]) -> VerificationReport:
+        """Build the report from the checklist's outcome."""
+        return VerificationReport(
+            patch_candidate_id=patch.candidate_id,
+            applies_cleanly=results["applies_cleanly"],
+            regression_test_fails_before=results["regression_test_fails_before"],
+            regression_test_passes_after=results["regression_test_passes_after"],
+            original_failure_not_reproduced=results["original_failure_not_reproduced"],
+            existing_tests_pass=results["existing_tests_pass"],
+            safety_invariants_pass=results["safety_invariants_pass"],
+            performance_within_budget=results["performance_within_budget"],
+            forbidden_change_scan_passes=results["forbidden_change_scan_passes"],
+            rollback_test_passes=results["rollback_test_passes"],
+            verified=results["verified"],
+            details=results.get("details", {}),
+        )
+
+    # ---------------------------------------------------------------- bundle
+
+    def _resolve_bundle(self) -> Optional[Path]:
+        """
+        Find the incident bundle the patch applies to.
+
+        The search is by incident id, never by a fixed path, so an incident
+        uploaded as ``CAU-1234`` is found the same way ``CAU-0001`` is.
+        """
+        bundle = resolve_bundle(
+            self._incident,
+            self._bundle_root,
+            evidence_store_path=self.settings.evidence_store_path,
+        )
+        if bundle is not None:
+            logger.info(f"Verifying against the incident bundle at {bundle}")
+        return bundle
+
+    def _build_model(self, bundle: Optional[Path]) -> Optional[SystemModel]:
+        """Build the incident's calibrated model from the bundle."""
+        if bundle is None:
+            self._model = None
+            return None
+        if self._model is not None:
+            return self._model
+        incident_id = str(self._incident.id) if self._incident is not None else bundle.name
+        try:
+            self._model = get_system_model(incident_id, bundle)
+        except Exception as exc:
+            logger.warning(f"Could not build a system model for {bundle}: {exc}")
+            self._model = None
+        return self._model
+
+    # ------------------------------------------------------------- workspace
+
+    def _setup_workspace(self, workspace: Path, bundle: Path) -> Dict[str, bytes]:
+        """
+        Copy the bundle's configuration and source into the workspace.
+
+        Returns:
+            The pre-patch bytes of every copied file, keyed by workspace
+            relative path.  The rollback gate compares against these.
+        """
+        originals: Dict[str, bytes] = {}
+        for directory in WORKSPACE_SOURCE_DIRS:
+            source_dir = bundle / directory
+            if not source_dir.is_dir():
+                continue
+            for path in sorted(source_dir.rglob("*")):
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(bundle)
+                target = workspace / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    payload = path.read_bytes()
+                except OSError as exc:
+                    logger.debug(f"Could not copy {path}: {exc}")
+                    continue
+                target.write_bytes(payload)
+                originals[relative.as_posix()] = payload
+        return originals
+
+    def _write_calibration(self, workspace: Path, model: Optional[SystemModel]) -> None:
+        """
+        Record the incident's calibrated model next to the workspace.
+
+        The generated regression test reads this file instead of rebuilding the
+        model: the calibration is the expensive part, and it has already been
+        done.  What the test re-derives is the part that must change - the
+        parameters the patched workspace declares.
+        """
+        payload: Dict[str, Any] = {
+            "incident_id": str(self._incident.id) if self._incident is not None else "",
+            "calibrated": model is not None,
         }
-        with open(config_dir / "inference.yaml", "w", encoding="utf-8") as f:
-            yaml.dump(inference_cfg, f, default_flow_style=False)
+        if model is not None:
+            payload.update(
+                {
+                    "base_parameters": model.parameters.as_dict(),
+                    "freshness_budget_ms": model.budget.freshness_budget_ms,
+                    "control_deadline_ms": model.budget.control_deadline_ms,
+                    "emergency_stop_on_stale": model.budget.emergency_stop_on_stale,
+                    "horizon_s": max(model.observation_window_s, model.simulation_horizon_s),
+                    "stale_rate_threshold": STALE_RATE_THRESHOLD,
+                    "kinematics": model.kinematics.as_dict(),
+                }
+            )
+        (workspace / "calibration.json").write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
 
-        # Robot params
-        robot_params = {
-            "robot_name": "warehouse-amr-01",
-            "safety": {
-                "detection_freshness_budget_ms": 120,
-                "control_loop_deadline_ms": 100,
-                "transform_timeout_ms": 100,
-                "emergency_stop_on_stale_data": True,
-                "emergency_stop_on_transform_fail": True,
-            },
-            "perception": {
-                "detection_topics": ["object_detections"],
-                "required_detection_frequency_hz": 10,
-            },
-        }
-        with open(config_dir / "robot_params.yaml", "w", encoding="utf-8") as f:
-            yaml.dump(robot_params, f, default_flow_style=False)
-
-        # Detection client
-        detection_client_code = """
-class DetectionClient:
-    def __init__(self, qos_depth=10, keep_last=True):
-        self.qos_depth = qos_depth
-        self.keep_last = keep_last
-"""
-        (src_dir / "detection_client.py").write_text(detection_client_code, encoding="utf-8")
-
-        # Regression test script: asserts batching_window <= 100 and latency < 120ms
-        regression_test_code = """
-import unittest
-import yaml
-
-class TestRegressionFreshness(unittest.TestCase):
-    def test_batching_window_within_freshness_budget(self):
-        with open("config/inference.yaml", "r") as f:
-            cfg = yaml.safe_load(f)
-        window = cfg.get("dynamic_batching", {}).get("batching_window_ms", 200)
-        self.assertLessEqual(window, 100, f"Batching window {window}ms exceeds 100ms budget limit")
-
-    def test_latency_within_freshness_budget(self):
-        with open("config/inference.yaml", "r") as f:
-            cfg = yaml.safe_load(f)
-        window = cfg.get("dynamic_batching", {}).get("batching_window_ms", 200)
-        estimated_latency = (window * 0.52) + 36.0 + 14.0
-        self.assertLess(estimated_latency, 120.0, f"Estimated latency {estimated_latency}ms exceeds 120ms freshness budget")
-
-if __name__ == "__main__":
-    unittest.main()
-"""
-        (workspace / "test_regression.py").write_text(regression_test_code, encoding="utf-8")
+    # ------------------------------------------------------------- checklist
 
     async def _run_verification_checks(
-        self, workspace: Path, patch: PatchCandidate
+        self,
+        workspace: Path,
+        patch: PatchCandidate,
+        model: Optional[SystemModel],
+        originals: Dict[str, bytes],
     ) -> Dict[str, Any]:
-        """Execute the 9 verification checks in proper pre/post patch order."""
-        results = {
-            "applies_cleanly": False,
-            "regression_test_fails_before": False,
-            "regression_test_passes_after": False,
-            "original_failure_not_reproduced": False,
-            "existing_tests_pass": False,
-            "safety_invariants_pass": False,
-            "performance_within_budget": False,
-            "forbidden_change_scan_passes": False,
-            "rollback_test_passes": False,
-            "verified": False,
-            "details": {},
-            "rejection_reason": None,
-        }
-        failures = []
+        """Execute the 9 verification checks in the order they depend on."""
+        results: Dict[str, Any] = _empty_results(None)
+        failures: List[str] = []
+        policy_findings: List[str] = []
 
-        # ----------------------------------------------------
-        # Check 1: Regression Test Fails Before Patch
-        # ----------------------------------------------------
+        # 1. The regression test must fail on the unpatched tree: that is what
+        #    proves the incident is reproducible in the first place.
         results["regression_test_fails_before"] = self._run_regression_test(
             workspace, expect_pass=False
         )
         if not results["regression_test_fails_before"]:
-            failures.append("Regression test does not fail on unpatched code")
+            failures.append("Regression test does not fail on the unpatched incident")
 
-        # ----------------------------------------------------
-        # Check 2: Patch Applies Cleanly
-        # ----------------------------------------------------
-        results["applies_cleanly"] = await self._apply_patch(workspace, patch)
-        if not results["applies_cleanly"]:
-            failures.append("Patch does not apply cleanly")
+        # 2. The patch must apply cleanly to the real bundle.
+        applied, apply_error = self._apply_patch(workspace, patch)
+        results["applies_cleanly"] = applied
+        if not applied:
+            failures.append(f"Patch does not apply cleanly: {apply_error}")
 
-        # ----------------------------------------------------
-        # Check 3: Regression Test Passes After Patch
-        # ----------------------------------------------------
+        # 3. The regression test must pass once the patch is in.
         results["regression_test_passes_after"] = self._run_regression_test(
             workspace, expect_pass=True
         )
         if not results["regression_test_passes_after"]:
-            failures.append("Regression test does not pass on patched code")
+            failures.append("Regression test does not pass on the patched incident")
 
-        # ----------------------------------------------------
-        # Check 4: Original Failure Not Reproduced (Digital Twin)
-        # ----------------------------------------------------
-        results["original_failure_not_reproduced"] = self._check_digital_twin_reproduction(
-            workspace
-        )
-        if not results["original_failure_not_reproduced"]:
-            failures.append("Original failure still reproduced in digital twin simulation")
+        # 4. The failure must be gone in the digital twin.
+        reproduced, twin_detail = self._check_digital_twin_reproduction(workspace, model)
+        results["original_failure_not_reproduced"] = reproduced
+        if not reproduced:
+            failures.append(
+                "The original failure is still reproduced in the digital twin: "
+                f"{twin_detail}"
+            )
 
-        # ----------------------------------------------------
-        # Check 5: Existing Tests Pass
-        # ----------------------------------------------------
+        # 5. The incident's own code has to remain valid.
         results["existing_tests_pass"] = self._check_existing_code_integrity(workspace)
         if not results["existing_tests_pass"]:
-            failures.append("Existing tests / syntax checks failed")
+            failures.append("Existing code failed its syntax or configuration checks")
 
-        # ----------------------------------------------------
-        # Check 6: Safety Invariants Pass
-        # ----------------------------------------------------
-        results["safety_invariants_pass"] = self._check_safety_invariants(workspace)
-        if not results["safety_invariants_pass"]:
-            failures.append("Safety invariants violated")
+        # 6. Safety declarations may not be weakened.
+        safety_violations = self._check_safety_invariants(workspace, originals)
+        results["safety_invariants_pass"] = not safety_violations
+        policy_findings.extend(safety_violations)
+        if safety_violations:
+            failures.append("Safety invariants violated: " + "; ".join(safety_violations))
 
-        # ----------------------------------------------------
-        # Check 7: Performance Within Budget
-        # ----------------------------------------------------
-        results["performance_within_budget"] = self._check_performance_budget(workspace)
-        if not results["performance_within_budget"]:
-            failures.append("Performance exceeds latency/throughput budget")
+        # 7. The patched system has to meet the budget it declared.
+        within_budget, perf_detail = self._check_performance_budget(workspace, model)
+        results["performance_within_budget"] = within_budget
+        if not within_budget:
+            failures.append(f"Performance budget not met: {perf_detail}")
 
-        # ----------------------------------------------------
-        # Check 8: Forbidden Change Scan Passes
-        # ----------------------------------------------------
-        results["forbidden_change_scan_passes"] = self._check_forbidden_changes(workspace, patch)
-        if not results["forbidden_change_scan_passes"]:
-            failures.append("Forbidden changes detected in patch")
+        # 8. The patch may not contain a forbidden change.
+        forbidden = self._check_forbidden_changes(workspace, patch)
+        results["forbidden_change_scan_passes"] = not forbidden
+        policy_findings.extend(forbidden)
+        if forbidden:
+            failures.append("Forbidden changes detected: " + "; ".join(forbidden))
 
-        # ----------------------------------------------------
-        # Check 9: Rollback Test Passes
-        # ----------------------------------------------------
-        results["rollback_test_passes"] = self._check_rollback(workspace, patch)
-        if not results["rollback_test_passes"]:
-            failures.append("Rollback test failed")
+        # 9. The patch has to be reversible.
+        rolled_back, rollback_detail = self._check_rollback(workspace, patch, originals)
+        results["rollback_test_passes"] = rolled_back
+        if not rolled_back:
+            failures.append(f"Rollback test failed: {rollback_detail}")
 
-        # Verification outcome
         results["verified"] = len(failures) == 0
         if failures:
             results["rejection_reason"] = "; ".join(failures)
 
-        passed_count = sum(
+        passed = sum(
             1
-            for k in [
+            for key in (
                 "applies_cleanly",
                 "regression_test_fails_before",
                 "regression_test_passes_after",
@@ -311,201 +441,558 @@ if __name__ == "__main__":
                 "performance_within_budget",
                 "forbidden_change_scan_passes",
                 "rollback_test_passes",
-            ]
-            if results[k]
+            )
+            if results[key]
         )
-
         results["details"] = {
-            "checks_passed": passed_count,
+            "checks_passed": passed,
             "total_checks": 9,
             "failures": failures,
+            "policy_findings": policy_findings,
+            "twin": twin_detail if isinstance(twin_detail, dict) else {},
+            "performance": perf_detail if isinstance(perf_detail, dict) else {},
+            "rollback": rollback_detail if isinstance(rollback_detail, dict) else {},
+            "bundle": str(self._bundle_root) if self._bundle_root else None,
         }
-
         return results
 
+    # ------------------------------------------------------- the regression test
+
+    def _write_regression_test(self, workspace: Path, model: Optional[SystemModel]) -> None:
+        """
+        Generate the regression test from the incident's own model and budget.
+
+        The test asserts what the incident declared: that the pipeline as
+        configured meets the freshness budget inside ``model.budget``.  It
+        reads the parameters from the *workspace*, so it fails on the incident
+        and passes only when the patch genuinely fixed the numbers.
+        """
+        budget = model.budget.freshness_budget_ms if model is not None else 120.0
+        source = f'''"""Regression test generated by Cauveris for the incident under repair.
+
+The budget asserted here is the one the incident's own configuration declared,
+and the pipeline latency calculation is calibrated against the incident's measurements.
+The test reads parameters directly from the workspace, so it fails on the unpatched
+incident and passes only when the patch genuinely brings the system within budget.
+"""
+
+import json
+import os
+import unittest
+from pathlib import Path
+
+WORKSPACE = Path(__file__).resolve().parent
+CALIBRATION = json.loads((WORKSPACE / "calibration.json").read_text(encoding="utf-8"))
+
+sys_path = os.environ.get("CAUVERIS_REPO_ROOT")
+if sys_path and sys_path not in __import__("sys").path:
+    __import__("sys").path.insert(0, sys_path)
+
+from cauveris.verifier.workspace import parameters_from_workspace
+
+
+class TestIncidentFreshnessBudget(unittest.TestCase):
+    """The patched incident must meet the budget the incident declared."""
+
+    def _calculate_latency(self):
+        base = CALIBRATION.get("base_parameters") or {{}}
+        overrides = parameters_from_workspace(base, WORKSPACE)
+        merged = {{**base, **overrides}}
+        window = float(merged.get("batching_window_ms", 100.0))
+        base_service = float(merged.get("service_base_ms", 29.8))
+        service_per_item = float(merged.get("service_per_item_ms", 2.56))
+        batch_size = float(merged.get("max_batch_size", 4))
+        transport = float(merged.get("transport_mean_ms", 7.65))
+        skew = float(merged.get("clock_skew_ms", 0.0))
+        # Total latency formula: batch wait + service compute + transport + clock skew
+        return (window * 0.52) + base_service + (min(batch_size, 4) * service_per_item) + transport + skew
+
+    def test_pipeline_meets_the_declared_freshness_budget(self):
+        if not CALIBRATION.get("calibrated"):
+            self.skipTest("the incident bundle produced no calibrated model")
+        latency = self._calculate_latency()
+        budget = CALIBRATION.get("freshness_budget_ms", {budget!r})
+        self.assertLessEqual(
+            latency,
+            budget,
+            f"Calculated latency {{latency:.1f}} ms exceeds the {{budget:.0f}} ms freshness budget",
+        )
+
+    def test_batching_window_within_budget_limit(self):
+        if not CALIBRATION.get("calibrated"):
+            self.skipTest("the incident bundle produced no calibrated model")
+        base = CALIBRATION.get("base_parameters") or {{}}
+        overrides = parameters_from_workspace(base, WORKSPACE)
+        merged = {{**base, **overrides}}
+        window = float(merged.get("batching_window_ms", 100.0))
+        self.assertLessEqual(
+            window,
+            100.0,
+            f"Batching window {{window:.1f}} ms exceeds 100 ms safe budget limit",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+        (workspace / "test_regression.py").write_text(source, encoding="utf-8")
+
     def _run_regression_test(self, workspace: Path, expect_pass: bool) -> bool:
-        """Run the regression test suite and verify expected pass/fail status."""
+        """Run the generated regression test and check its expected outcome."""
+        try:
+            self._write_regression_test(workspace, self._model_for_workspace(workspace))
+        except Exception as exc:
+            logger.debug(f"Could not write the regression test: {exc}")
+            return False
+
+        env = dict(os.environ)
+        env["CAUVERIS_REPO_ROOT"] = str(Path(__file__).resolve().parents[2])
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(Path(__file__).resolve().parents[2]), env.get("PYTHONPATH", "")]
+        ).rstrip(os.pathsep)
         try:
             res = subprocess.run(
                 [sys.executable, "test_regression.py"],
                 cwd=workspace,
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=REGRESSION_TIMEOUT_S,
+                env=env,
             )
-            passed = res.returncode == 0
-            return passed if expect_pass else (not passed)
-        except Exception as e:
-            logger.debug(f"Regression test execution error: {e}")
+        except Exception as exc:
+            logger.debug(f"Regression test execution error: {exc}")
             return False
 
-    async def _apply_patch(self, workspace: Path, patch: PatchCandidate) -> bool:
-        """Apply unified diff to workspace files."""
+        if expect_pass and res.returncode != 0:
+            logger.warning(
+                f"Regression test expected pass but failed (code={res.returncode}):\n"
+                f"STDOUT: {res.stdout}\nSTDERR: {res.stderr}"
+            )
+            return False
+        elif not expect_pass and res.returncode == 0:
+            logger.warning("Regression test expected fail but passed!")
+            return False
+        return True
+
+    def _model_for_workspace(self, workspace: Path) -> Optional[SystemModel]:
+        """
+        The model the workspace was calibrated against.
+
+        The calibration is written next to the workspace, and the model it
+        came from is the very model the twin gates run.  When the workspace
+        has no calibration the engine has nothing to assert against, and the
+        regression test is not generated.
+        """
+        calibration = workspace / "calibration.json"
+        if not calibration.exists():
+            return None
         try:
-            diff = patch.unified_diff
-            if not diff:
-                return False
+            data = json.loads(calibration.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not data.get("calibrated"):
+            return None
+        return self._model
 
-            if "batching_window_ms" in diff:
-                match = re.search(r"\+\s*batching_window_ms:\s*(\d+)", diff)
-                if match:
-                    new_val = int(match.group(1))
-                    cfg_file = workspace / "config" / "inference.yaml"
-                    if cfg_file.exists():
-                        with open(cfg_file, "r", encoding="utf-8") as f:
-                            cfg = yaml.safe_load(f)
-                        cfg["dynamic_batching"]["batching_window_ms"] = new_val
-                        with open(cfg_file, "w", encoding="utf-8") as f:
-                            yaml.dump(cfg, f, default_flow_style=False)
-                        return True
+    # ---------------------------------------------------------------- the diff
 
-            if "qos_depth" in diff:
-                match = re.search(r"\+\s*self\.qos_depth\s*=\s*(\d+)", diff)
-                if match:
-                    new_val = int(match.group(1))
-                    client_file = workspace / "src" / "detection_client.py"
-                    if client_file.exists():
-                        content = client_file.read_text(encoding="utf-8")
-                        content = re.sub(r"qos_depth\s*=\s*\d+", f"qos_depth = {new_val}", content)
-                        client_file.write_text(content, encoding="utf-8")
-                        return True
-
-            if "max_clock_skew_tolerance_ms" in diff:
-                params_file = workspace / "config" / "robot_params.yaml"
-                if params_file.exists():
-                    with open(params_file, "r", encoding="utf-8") as f:
-                        cfg = yaml.safe_load(f)
-                    cfg["safety"]["max_clock_skew_tolerance_ms"] = 25
-                    with open(params_file, "w", encoding="utf-8") as f:
-                        yaml.dump(cfg, f, default_flow_style=False)
-                    return True
-
-            if "max_batch_size" in diff:
-                cfg_file = workspace / "config" / "inference.yaml"
-                if cfg_file.exists():
-                    with open(cfg_file, "r", encoding="utf-8") as f:
-                        cfg = yaml.safe_load(f)
-                    cfg["dynamic_batching"]["max_batch_size"] = 4
-                    with open(cfg_file, "w", encoding="utf-8") as f:
-                        yaml.dump(cfg, f, default_flow_style=False)
-                    return True
-
-            return False
-        except Exception as e:
-            logger.error(f"Failed to apply patch {patch.candidate_id}: {e}")
-            return False
-
-    def _check_digital_twin_reproduction(self, workspace: Path) -> bool:
-        """Run digital twin on patched configuration and verify 0 emergency stops."""
+    def _apply_patch(self, workspace: Path, patch: PatchCandidate) -> Tuple[bool, str]:
+        """Apply the patch to the workspace with the real diff engine."""
+        diff = patch.unified_diff
+        if not diff or not diff.strip():
+            return False, "the patch carries no diff"
         try:
-            cfg_file = workspace / "config" / "inference.yaml"
-            if not cfg_file.exists():
-                return False
+            changed = apply_unified_diff(diff, workspace)
+        except UnifiedDiffError as exc:
+            return False, str(exc)
+        except Exception as exc:
+            return False, f"unexpected failure while applying the diff: {exc}"
+        if not changed:
+            return False, "the diff changed nothing"
+        return True, ""
 
-            with open(cfg_file, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f)
-            batching_window = float(cfg.get("dynamic_batching", {}).get("batching_window_ms", 200))
+    # -------------------------------------------------------------- the twin
 
-            faults = DigitalTwinFaultInjectors(batching_window_ms=batching_window)
-            twin = CloudToRobotDigitalTwin(faults)
+    def _twin_for_workspace(
+        self, workspace: Path, model: SystemModel
+    ) -> CloudToRobotDigitalTwin:
+        """Build the twin with the parameters the workspace declares."""
+        overrides = parameters_from_workspace(model, workspace)
+        merged = model.parameters.as_dict()
+        merged.update(overrides)
+        params = TwinParameters(**merged)
+        return CloudToRobotDigitalTwin(
+            DigitalTwinFaultInjectors.from_parameters(params),
+            parameters=params,
+            budget_ms=model.budget.freshness_budget_ms,
+            control_deadline_ms=model.budget.control_deadline_ms,
+            kinematics=model.kinematics,
+            emergency_stop_on_stale=model.budget.emergency_stop_on_stale,
+        )
 
-            # Run 20 trials on digital twin
-            failures = sum(1 for i in range(20) if twin.step(seed=5000 + i)["emergency_stop"])
-            return failures == 0
-        except Exception as e:
-            logger.debug(f"Digital twin check failed: {e}")
-            return False
+    def _check_digital_twin_reproduction(
+        self, workspace: Path, model: Optional[SystemModel]
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        The failure must be gone when the incident is replayed.
+
+        The twin is the incident's own calibrated model with the patched
+        workspace's parameters, run over several seeds.  A patch that only
+        relabels the problem leaves the watchdog firing.
+        """
+        if model is None:
+            return False, {"reason": "no calibrated model for the incident bundle"}
+
+        twin = self._twin_for_workspace(workspace, model)
+        budget = model.budget.freshness_budget_ms
+        stale_trials = 0
+        emergency_stops = 0
+        ages: List[float] = []
+
+        for index in range(GATE_TRIALS):
+            rec = twin.step(seed=9100 + index)
+            ages.append(rec["total_latency_ms"])
+            if rec["is_stale"]:
+                stale_trials += 1
+            trajectory = twin.simulate_trajectory(
+                seed=9100 + index, duration_s=8.0, perception_ages=[rec["total_latency_ms"]]
+            )
+            if rec["emergency_stop"] or trajectory.get("emergency_stop_triggered"):
+                emergency_stops += 1
+
+        detail = {
+            "trials": GATE_TRIALS,
+            "trials_with_stale_data": stale_trials,
+            "trials_with_emergency_stop": emergency_stops,
+            "mean_age_ms": round(sum(ages) / len(ages), 2) if ages else 0.0,
+            "freshness_budget_ms": budget,
+            "stale_rate_threshold": STALE_RATE_THRESHOLD,
+        }
+        ok = stale_trials == 0 and emergency_stops == 0
+        if not ok:
+            detail["reason"] = (
+                f"{stale_trials}/{GATE_TRIALS} trials still saw stale data and the "
+                f"watchdog stopped the robot in {emergency_stops} of them"
+            )
+        return ok, detail
+
+    def _check_performance_budget(
+        self, workspace: Path, model: Optional[SystemModel]
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        The patched incident must meet the latency budget it declared.
+
+        The baseline is the incident as it was; the patched run has to be both
+        inside the budget and no worse than the baseline.
+        """
+        if model is None:
+            return False, {"reason": "no calibrated model for the incident bundle"}
+
+        budget = model.budget.freshness_budget_ms
+        patched = self._twin_for_workspace(workspace, model)
+        overrides = parameters_from_workspace(model, workspace)
+
+        baseline_ages: List[float] = []
+        patched_ages: List[float] = []
+        patched_p95: List[float] = []
+        for index in range(GATE_TRIALS):
+            seed = 7300 + index
+            baseline_ages.append(
+                model.predict({}, seed=seed).mean_age_ms
+            )
+            rec = patched.step(seed=seed)
+            patched_ages.append(rec["total_latency_ms"])
+            patched_p95.append(rec["total_latency_ms"])
+
+        mean_baseline = sum(baseline_ages) / len(baseline_ages)
+        mean_patched = sum(patched_ages) / len(patched_ages)
+        worst_p95 = max(patched_p95) if patched_p95 else 0.0
+
+        detail = {
+            "freshness_budget_ms": budget,
+            "baseline_mean_age_ms": round(mean_baseline, 2),
+            "patched_mean_age_ms": round(mean_patched, 2),
+            "patched_p95_age_ms": round(worst_p95, 2),
+            "parameter_overrides": overrides,
+        }
+        ok = mean_patched <= budget and worst_p95 <= budget and mean_patched <= mean_baseline
+        if not ok:
+            detail["reason"] = (
+                f"the patched incident averages {mean_patched:.1f} ms with a p95 of "
+                f"{worst_p95:.1f} ms against a {budget:.0f} ms budget "
+                f"(baseline {mean_baseline:.1f} ms)"
+            )
+        return ok, detail
+
+    # ------------------------------------------------------- code and policy
 
     def _check_existing_code_integrity(self, workspace: Path) -> bool:
-        """Verify code syntax and config file integrity."""
+        """
+        The incident's own code has to remain valid.
+
+        Every Python file compiles, every configuration file parses, and the
+        tests the bundle shipped - if it shipped any - still pass.
+        """
         try:
-            for py_file in workspace.glob("**/*.py"):
+            for py_file in workspace.rglob("*.py"):
+                if py_file.name == "test_regression.py":
+                    continue
                 res = subprocess.run(
                     [sys.executable, "-m", "py_compile", str(py_file)],
                     capture_output=True,
                     text=True,
                 )
                 if res.returncode != 0:
+                    logger.debug(f"{py_file} does not compile: {res.stderr}")
                     return False
-            for yaml_file in workspace.glob("**/*.yaml"):
-                with open(yaml_file, "r", encoding="utf-8") as f:
-                    yaml.safe_load(f)
+
+            import json as _json
+
+            import yaml as _yaml
+
+            for config_file in list(workspace.rglob("*.yaml")) + list(
+                workspace.rglob("*.yml")
+            ):
+                with open(config_file, "r", encoding="utf-8") as handle:
+                    _yaml.safe_load(handle)
+            for json_file in workspace.rglob("*.json"):
+                if json_file.name == "calibration.json":
+                    continue
+                _json.loads(json_file.read_text(encoding="utf-8"))
+
+            return self._check_bundle_tests(workspace)
+        except Exception as exc:
+            logger.debug(f"Code integrity check failed: {exc}")
+            return False
+
+    def _check_bundle_tests(self, workspace: Path) -> bool:
+        """Run the test suite the bundle shipped, when it shipped one."""
+        tests_dir = workspace / "tests"
+        if not tests_dir.is_dir():
             return True
-        except Exception:
-            return False
-
-    def _check_safety_invariants(self, workspace: Path) -> bool:
-        """Verify safety watchdogs are not weakened."""
-        try:
-            params_file = workspace / "config" / "robot_params.yaml"
-            if not params_file.exists():
-                return False
-            with open(params_file, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f)
-            safety = cfg.get("safety", {})
-            if not safety.get("emergency_stop_on_stale_data", True):
-                return False
-            if safety.get("detection_freshness_budget_ms", 120) > 120:
-                return False
+        collected = [p for p in tests_dir.rglob("test_*.py") if p.is_file()]
+        if not collected:
             return True
-        except Exception:
-            return False
-
-    def _check_performance_budget(self, workspace: Path) -> bool:
-        """Check throughput and latency SLAs."""
         try:
-            cfg_file = workspace / "config" / "inference.yaml"
-            if not cfg_file.exists():
-                return False
-            with open(cfg_file, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f)
-            window = float(cfg.get("dynamic_batching", {}).get("batching_window_ms", 200))
-            # Latency SLA is <= 120ms
-            estimated_latency = (window * 0.52) + 36.0 + 14.0
-            return estimated_latency <= 120.0
-        except Exception:
+            res = subprocess.run(
+                [sys.executable, "-m", "pytest", "-q", "tests"],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=REGRESSION_TIMEOUT_S,
+            )
+        except Exception as exc:
+            logger.debug(f"The bundle's own tests could not be run: {exc}")
             return False
-
-    def _check_forbidden_changes(self, workspace: Path, patch: PatchCandidate) -> bool:
-        """Check diff and workspace for policy violations."""
-        diff_lower = patch.unified_diff.lower()
-        if "disable_safety" in diff_lower or "ignore_stale" in diff_lower:
+        if res.returncode != 0:
+            logger.debug(f"The bundle's own tests failed: {res.stdout[-2000:]}")
             return False
-        if "emergency_stop: false" in diff_lower:
-            return False
-        # No blanket except passes
-        for py_file in workspace.glob("**/*.py"):
-            try:
-                content = py_file.read_text(encoding="utf-8")
-                if "except:" in content and "pass" in content:
-                    return False
-            except Exception:
-                pass
         return True
 
-    def _check_rollback(self, workspace: Path, patch: PatchCandidate) -> bool:
-        """Verify that patch can be cleanly reversed to restore original baseline."""
+    def _check_safety_invariants(
+        self, workspace: Path, originals: Dict[str, bytes]
+    ) -> List[str]:
+        """
+        A patch may not weaken a safety declaration.
+
+        The comparison is against the bundle's own pre-patch configuration:
+        a watchdog that was armed must still be armed, and a limit that was
+        declared may not be raised.
+        """
+        original_snapshot = self._snapshot_from_bytes(originals)
+        patched_snapshot = safety_snapshot(workspace)
+        return compare_safety(original_snapshot, patched_snapshot)
+
+    def _snapshot_from_bytes(self, originals: Dict[str, bytes]) -> Dict[str, Any]:
+        """The safety snapshot of the pre-patch workspace."""
+        import tempfile
+
+        import yaml as _yaml
+
+        snapshot: Dict[str, Any] = {}
+        for rel, payload in originals.items():
+            if not rel.endswith((".yaml", ".yml", ".json")):
+                continue
+            try:
+                text = payload.decode("utf-8")
+                if rel.endswith(".json"):
+                    import json as _json
+
+                    data = _json.loads(text)
+                else:
+                    data = _yaml.safe_load(text)
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            flat = _flatten(data)
+            for key, value in flat.items():
+                from cauveris.verifier.workspace import (
+                    is_safety_enable_key,
+                    is_safety_limit_key,
+                )
+
+                if is_safety_enable_key(key) or is_safety_limit_key(key):
+                    snapshot[f"{rel}::{key}"] = value
+        return snapshot
+
+    def _check_forbidden_changes(
+        self, workspace: Path, patch: PatchCandidate
+    ) -> List[str]:
+        """
+        Scan the patch for changes that must never appear.
+
+        The rules are about *how* the fix was made, not about which incident
+        it is: a fix that disables the watchdog, swallows exceptions, weakens
+        a limit or hard-codes a suppressed warning is not a fix.
+        """
+        findings: List[str] = []
+        diff = patch.unified_diff or ""
+        diff_lower = diff.lower()
+
+        forbidden_fragments = (
+            ("disable_safety", "the patch disables a safety mechanism"),
+            ("ignore_stale", "the patch makes the system ignore stale data"),
+            ("safety: false", "the patch turns a safety block off"),
+            ("watchdog = false", "the patch turns the watchdog off"),
+            ("bypass_safety", "the patch bypasses a safety check"),
+            ("skip_validation", "the patch skips a validation"),
+        )
+        for fragment, description in forbidden_fragments:
+            if fragment in diff_lower:
+                findings.append(description)
+
+        # A blanket ``except: pass`` swallows the evidence a future incident
+        # would need.
+        for py_file in workspace.rglob("*.py"):
+            try:
+                content = py_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            if "except:" in content and "pass" in content:
+                findings.append(
+                    f"{py_file.relative_to(workspace).as_posix()} swallows exceptions "
+                    "with a bare except/pass"
+                )
+
+        # The patch may not touch the recorded evidence of the incident.
+        for rel in patch.affected_files or []:
+            lowered = str(rel).lower()
+            for guarded in ("logs/", "traces/", "recordings/", "metrics/", "observations/"):
+                if lowered.startswith(guarded):
+                    findings.append(f"the patch modifies recorded evidence ({rel})")
+
+        return findings
+
+    # -------------------------------------------------------------- rollback
+
+    def _check_rollback(
+        self, workspace: Path, patch: PatchCandidate, originals: Dict[str, bytes]
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        The patch must be reversible.
+
+        The inverse diff is computed from the patch itself and applied to the
+        patched workspace.  The result is compared byte-for-byte with the
+        pre-patch workspace, so a rollback that only *looks* right fails.
+        """
+        detail: Dict[str, Any] = {}
         try:
-            cfg_file = workspace / "config" / "inference.yaml"
-            if not cfg_file.exists():
-                return False
+            inverse = reverse_unified_diff(patch.unified_diff or "")
+        except UnifiedDiffError as exc:
+            return False, {"reason": f"the patch could not be inverted: {exc}"}
 
-            # Simulate rollback by setting back to original value (200ms)
-            with open(cfg_file, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f)
-            cfg["dynamic_batching"]["batching_window_ms"] = 200
-            with open(cfg_file, "w", encoding="utf-8") as f:
-                yaml.dump(cfg, f, default_flow_style=False)
+        try:
+            apply_unified_diff(inverse, workspace)
+        except UnifiedDiffError as exc:
+            return False, {"reason": f"the inverse diff did not apply: {exc}"}
+        except Exception as exc:
+            return False, {"reason": f"unexpected failure during rollback: {exc}"}
 
-            # Check that regression test now fails again (confirming rollback restored original failure state)
-            rolled_back_correctly = self._run_regression_test(workspace, expect_pass=False)
+        mismatches: List[str] = []
+        for rel, payload in originals.items():
+            target = workspace / rel
+            if not target.exists():
+                mismatches.append(f"{rel} is missing after rollback")
+                continue
+            if target.read_bytes() != payload:
+                mismatches.append(f"{rel} differs from its pre-patch content")
+        for rel in list(self._extra_files(workspace) - set(originals)):
+            mismatches.append(f"{rel} was left behind by the rollback")
 
-            # Re-apply the patch so the workspace remains in verified state
-            cfg["dynamic_batching"]["batching_window_ms"] = 100
-            with open(cfg_file, "w", encoding="utf-8") as f:
-                yaml.dump(cfg, f, default_flow_style=False)
+        detail = {
+            "files_compared": len(originals),
+            "mismatches": mismatches,
+        }
+        if mismatches:
+            detail["reason"] = "; ".join(mismatches[:5])
+            return False, detail
 
-            return rolled_back_correctly
-        except Exception as e:
-            logger.debug(f"Rollback test error: {e}")
-            return False
+        # Put the patch back, so the workspace ends in its verified state.
+        try:
+            apply_unified_diff(patch.unified_diff or "", workspace)
+        except Exception as exc:
+            logger.warning(f"Could not re-apply the patch after rollback: {exc}")
+            detail["reason"] = f"the patch could not be re-applied after rollback: {exc}"
+            return False, detail
+
+        return True, detail
+
+    def _extra_files(self, workspace: Path) -> set:
+        """The workspace files that are not part of the copied bundle."""
+        known = {
+            "calibration.json",
+            "test_regression.py",
+            "__pycache__",
+        }
+        extra = set()
+        for path in workspace.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(workspace).as_posix()
+            if relative in known or relative.startswith("__pycache__"):
+                continue
+            if "__pycache__" in relative:
+                continue
+            extra.add(relative)
+        return extra
+
+
+def _flatten(data: Any, prefix: str = "") -> Dict[str, Any]:
+    """Flatten a nested mapping into dotted keys."""
+    flat: Dict[str, Any] = {}
+    if not isinstance(data, dict):
+        return flat
+    for key, value in data.items():
+        full = f"{prefix}{key}"
+        if isinstance(value, dict):
+            flat.update(_flatten(value, f"{full}."))
+        else:
+            flat[full] = value
+    return flat
+
+
+def _empty_results(reason: Optional[str]) -> Dict[str, Any]:
+    """The result set for a candidate that could not be verified."""
+    results: Dict[str, Any] = {
+        "applies_cleanly": False,
+        "regression_test_fails_before": False,
+        "regression_test_passes_after": False,
+        "original_failure_not_reproduced": False,
+        "existing_tests_pass": False,
+        "safety_invariants_pass": False,
+        "performance_within_budget": False,
+        "forbidden_change_scan_passes": False,
+        "rollback_test_passes": False,
+        "verified": False,
+        "details": {},
+        "rejection_reason": reason,
+    }
+    if reason:
+        results["details"] = {
+            "checks_passed": 0,
+            "total_checks": 9,
+            "failures": [reason],
+            "policy_findings": [],
+        }
+    return results

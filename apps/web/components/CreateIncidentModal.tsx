@@ -10,44 +10,44 @@ import { useRouter } from "next/navigation";
 
 const modalStyles = tv({
   base: `
-    fixed inset-0 z-50 flex items-center justify-center
-    bg-[var(--color-overlay)] backdrop-blur-sm
+    fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6
+    bg-black/60
     animate-fade-in
   `,
 });
 
 const panelStyles = tv({
   base: `
-    w-full max-w-2xl rounded-2xl border border-[var(--color-border)]
-    bg-[var(--theme-background)]/95 backdrop-blur-xl shadow-2xl
-    overflow-hidden flex flex-col max-h-[90vh]
+    w-full max-w-2xl rounded-[var(--radius-lg)] border border-[var(--color-border-default)]
+    bg-[var(--color-canvas-inset)] shadow-[var(--shadow-xl)]
+    overflow-hidden flex flex-col max-h-[90vh] h-full
     animate-scale-in
   `,
 });
 
 const headerStyles = tv({
   base: `
-    flex items-center gap-3 px-6 py-4 border-b border-[var(--color-border)]
-    bg-[var(--color-surface)]/60 backdrop-blur-sm
+    flex items-center gap-3 px-6 py-4 border-b border-[var(--color-border-default)]
+    bg-[var(--color-canvas-subtle)] flex-shrink-0
   `,
 });
 
 const contentStyles = tv({
   base: `
-    px-6 py-6 space-y-5 overflow-y-auto flex-1 min-h-0
+    px-6 py-6 space-y-5 overflow-y-auto flex-1 min-h-0 overscroll-contain bg-[var(--color-canvas-inset)]
   `,
 });
 
 const footerStyles = tv({
   base: `
-    flex items-center justify-between gap-3 px-6 py-4 border-t border-[var(--color-border)]
-    bg-[var(--color-surface)]/60 backdrop-blur-sm flex-shrink-0
+    flex items-center justify-between gap-3 px-6 py-4 border-t border-[var(--color-border-default)]
+    bg-[var(--color-canvas-subtle)] flex-shrink-0
   `,
 });
 
 const footerHintStyles = tv({
   base: `
-    text-[11px] text-[var(--color-text-muted)]/70 self-center
+    text-[11px] text-[var(--color-fg-muted)] self-center
   `,
 });
 
@@ -59,20 +59,20 @@ const fieldStyles = tv({
 
 const helperTextStyles = tv({
   base: `
-    text-xs text-[var(--color-text-muted)]
+    text-xs text-[var(--color-fg-muted)]
   `,
 });
 
 const errorTextStyles = tv({
   base: `
-    text-xs text-brand-danger flex items-center gap-1.5
+    text-xs text-[var(--color-danger-fg)] flex items-center gap-1.5
   `,
 });
 
 const sectionDividerStyles = tv({
   base: `
-    flex items-center gap-3 text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]
-    py-2
+    flex items-center gap-3 text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)]
+    py-2 border-b border-[var(--color-border-default)]/40
   `,
 });
 
@@ -205,16 +205,16 @@ export function CreateIncidentModal({ isOpen, onClose }: { isOpen: boolean; onCl
       <div className={panelStyles()} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <header className={headerStyles()}>
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-accent)]/10 text-[var(--color-accent)]">
-            <Zap className="h-6 w-6" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)] border border-[var(--color-border-default)]">
+            <Zap className="h-4.5 w-4.5" />
           </div>
-          <div className="flex-1">
-            <h2 id="create-incident-title" className="font-semibold text-[var(--color-text-primary)]">Create New Incident</h2>
-            <p className="text-[11px] text-[var(--color-text-muted)]">Define the incident details to begin investigation</p>
+          <div className="flex-1 min-w-0">
+            <h2 id="create-incident-title" className="text-sm font-semibold text-[var(--color-fg-default)]">Create New Incident</h2>
+            <p className="text-xs text-[var(--color-fg-muted)]">Define the incident details to begin investigation</p>
           </div>
           <button
             onClick={() => !isLoading && onClose()}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)] transition-colors border border-transparent hover:border-[var(--color-border)]"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--color-canvas)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-fg)]"
             aria-label="Close modal"
             disabled={isLoading}
           >
@@ -223,7 +223,7 @@ export function CreateIncidentModal({ isOpen, onClose }: { isOpen: boolean; onCl
         </header>
 
         {/* Form */}
-        <form id="create-incident-form" onSubmit={handleSubmit}>
+        <form id="create-incident-form" onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
           <div className={contentStyles()}>
             {success && (
               <div className="p-4 rounded-xl bg-[var(--color-brand-success)]/10 border border-success/30 flex items-center gap-3 animate-fade-in">
@@ -377,10 +377,10 @@ export function CreateIncidentModal({ isOpen, onClose }: { isOpen: boolean; onCl
                 <div className={fieldStyles()}>
                   <div className="relative">
                     <div
-                      className={`border-2 border-dashed rounded-xl p-6 text-center transition-all ${
+                      className={`border-2 border-dashed rounded-[var(--radius-md)] p-6 text-center transition-colors cursor-pointer ${
                         formData.evidenceFiles.length > 0
-                          ? "border-[var(--color-brand-success)]/50 bg-[var(--color-brand-success)]/5"
-                          : "border-[var(--color-border)] hover:border-[var(--color-brand-primary)]/30 hover:bg-[var(--color-surface)]"
+                          ? "border-[var(--color-success-fg)] bg-[var(--color-success-muted)]"
+                          : "border-[var(--color-border-default)] hover:border-[var(--color-accent-fg)] bg-[var(--color-canvas)]"
                       }`}
                       onClick={() => fileInputRef.current?.click()}
                     >
@@ -396,26 +396,26 @@ export function CreateIncidentModal({ isOpen, onClose }: { isOpen: boolean; onCl
                       {formData.evidenceFiles.length > 0 ? (
                         <>
                           <div className="flex items-center justify-center gap-2 mb-2">
-                            <span className="text-sm font-medium text-[var(--color-brand-success)]">
+                            <span className="text-sm font-medium text-[var(--color-success-fg)]">
                               {formData.evidenceFiles.length} file(s) selected
                             </span>
                             <Badge tone="success" className="text-xs">
                               Ready
                             </Badge>
                           </div>
-                          <ul className="text-xs text-[var(--color-text-muted)] space-y-1 text-left max-h-24 overflow-y-auto">
+                          <ul className="text-xs text-[var(--color-fg-muted)] space-y-1 text-left max-h-24 overflow-y-auto">
                             {formData.evidenceFiles.map((f, i) => (
                               <li key={i} className="flex items-center gap-2">
-                                <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-brand-success)]" />
-                                {f.name} ({(f.size / 1024).toFixed(1)} KB)
+                                <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success-fg)]" />
+                                <span className="font-mono text-xs">{f.name}</span> ({(f.size / 1024).toFixed(1)} KB)
                               </li>
                             ))}
                           </ul>
                         </>
                       ) : (
                         <>
-                          <div className="text-[var(--color-text-muted)] mb-2">Click or drag to upload evidence files</div>
-                          <div className="text-[11px] text-[var(--color-text-muted)]/70">Supported: .zip, .json, .tar.gz</div>
+                          <div className="text-xs font-medium text-[var(--color-fg-default)] mb-1">Click or drag to upload evidence files</div>
+                          <div className="text-[11px] text-[var(--color-fg-muted)] font-mono">Supported: .zip, .json, .tar.gz</div>
                         </>
                       )}
                     </div>

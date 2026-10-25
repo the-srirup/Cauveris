@@ -149,6 +149,7 @@ class TelemetryClient {
   };
   private initialized = false;
   private sessionId: string;
+  private eventBuffer: TelemetryEvent[] = [];
 
   constructor() {
     this.sessionId = generateId();
@@ -179,12 +180,18 @@ class TelemetryClient {
 
     if (Math.random() > this.config.sampleRate) return;
 
-    this.backend.trackEvent({
+    const fullEvent: TelemetryEvent = {
       ...event,
       timestamp: Date.now(),
       sessionId: this.sessionId,
       correlationId: getCorrelationId(),
-    });
+    };
+
+    this.backend.trackEvent(fullEvent);
+    this.eventBuffer.push(fullEvent);
+    if (this.eventBuffer.length >= 25) {
+      void this.flush();
+    }
   }
 
   trackMetric(name: string, value: number, unit?: string, tags?: Record<string, string>): void {
@@ -219,9 +226,27 @@ class TelemetryClient {
 
   async flush(): Promise<void> {
     await this.backend.flush();
+    if (this.eventBuffer.length === 0) return;
+    const toSend = [...this.eventBuffer];
+    this.eventBuffer = [];
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+      if (typeof window !== "undefined" && typeof fetch !== "undefined") {
+        await fetch(`${baseUrl}/telemetry/events`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ events: toSend }),
+        });
+      }
+    } catch (err) {
+      if (this.config.debug) {
+        console.warn("[Telemetry] Failed to flush events to server:", err);
+      }
+    }
   }
 
   async shutdown(): Promise<void> {
+    await this.flush();
     await this.backend.shutdown();
     this.initialized = false;
   }

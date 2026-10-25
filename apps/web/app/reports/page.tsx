@@ -1,9 +1,21 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { PageHeader, Card, Badge, Button, Stat, Divider, Select, Input } from "@/components/ui";
+import {
+  PageHeader,
+  Badge,
+  Button,
+  Divider,
+  Select,
+  Input,
+  Panel,
+  PanelSection,
+  PanelStack,
+  PanelHeader,
+  PanelFooter,
+  PanelCard,
+} from "@/components/ui";
 import { Tooltip } from "@/components/Tooltip";
 import {
   FileText,
@@ -22,38 +34,13 @@ import {
   ExternalLink,
   Shield,
   Plus,
-  Sparkles
+  Sparkles,
 } from "lucide-react";
 import { tv } from "tailwind-variants";
 import { api } from "@/lib/api";
 import { useActiveIncident } from "@/lib/useIncident";
 import { useShell } from "@/lib/useShell";
-import { useAuthStore } from "@/lib/auth";
-
-const tableStyles = tv({
-  base: `
-    w-full border-collapse
-  `,
-});
-
-const rowStyles = tv({
-  base: `
-    border-b border-[var(--color-border)] hover:bg-[var(--color-surface)]/50 transition-colors
-    cursor-pointer
-  `,
-});
-
-const emptyStyles = tv({
-  base: `
-    flex flex-col items-center justify-center py-[var(--space-16)] px-[var(--space-6)] gap-[var(--space-4)] text-center text-[var(--color-text-muted)]
-  `,
-});
-
-const filterStyles = tv({
-  base: `
-    flex items-center gap-[var(--space-3)] p-[var(--space-4)] bg-[var(--color-surface)]/50 border border-[var(--color-border)] rounded-xl flex-wrap
-  `,
-});
+import { AuthGate } from "@/components/AuthGate";
 
 export interface Report {
   id: string;
@@ -66,85 +53,17 @@ export interface Report {
   type: "investigation" | "executive" | "technical" | "compliance";
 }
 
-const MOCK_REPORTS: Report[] = [
-  {
-    id: "rpt-001",
-    incident_id: "CAU-0001",
-    title: "Full Investigation Report",
-    generated_at: new Date(Date.now() - 86400000).toISOString(),
-    size_bytes: 245760,
-    format: "json",
-    status: "ready",
-    type: "investigation",
-  },
-  {
-    id: "rpt-002",
-    incident_id: "CAU-0001",
-    title: "Executive Summary",
-    generated_at: new Date(Date.now() - 43200000).toISOString(),
-    size_bytes: 12288,
-    format: "pdf",
-    status: "ready",
-    type: "executive",
-  },
-  {
-    id: "rpt-003",
-    incident_id: "CAU-0001",
-    title: "Technical Deep Dive",
-    generated_at: new Date(Date.now() - 21600000).toISOString(),
-    size_bytes: 512000,
-    format: "html",
-    status: "ready",
-    type: "technical",
-  },
-  {
-    id: "rpt-004",
-    incident_id: "CAU-0002",
-    title: "Compliance Report",
-    generated_at: new Date(Date.now() - 10800000).toISOString(),
-    size_bytes: 81920,
-    format: "pdf",
-    status: "ready",
-    type: "compliance",
-  },
-];
-
 export function ReportsPage() {
+  return (
+    <AuthGate redirect="/reports" loadingLabel="Loading reports...">
+      <ReportsPageContent />
+    </AuthGate>
+  );
+}
+
+function ReportsPageContent() {
   const { incident, incidentId, judgeMode, engineerMode } = useActiveIncident();
   const { addActivity, setIncidentContext } = useShell();
-  const { isAuthenticated, isLoading: authLoading } = useAuthStore();
-  const router = useRouter();
-
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login?redirect=/reports');
-    }
-  }, [isAuthenticated, authLoading, router]);
-
-  // Show loading while auth is initializing
-  if (authLoading) {
-    return (
-      <div className="flex flex-col gap-[var(--space-4)] min-h-screen items-center justify-center">
-        <div className="flex h-8 w-8 animate-spin text-primary">
-          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)]">Loading reports...</p>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    router.push('/login?redirect=/reports');
-    return (
-      <div className="flex flex-col gap-[var(--space-4)] min-h-screen items-center justify-center">
-        <div className="flex h-8 w-8 animate-spin text-primary">
-          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)]">Redirecting to login...</p>
-      </div>
-    );
-  }
 
   useEffect(() => {
     if (incidentId) {
@@ -164,9 +83,7 @@ export function ReportsPage() {
     }
   }, [incidentId, judgeMode, engineerMode]);
 
-  const [reports, setReports] = useState<Report[]>(() =>
-    MOCK_REPORTS.filter((r) => !incident || r.incident_id === incident.id)
-  );
+  const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(false);
   const [filterType, setFilterType] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -203,25 +120,21 @@ export function ReportsPage() {
       try {
         if (incident?.id && typeof api?.listReports === "function") {
           const res = await api.listReports(incident.id);
-          if (mounted && res && res.reports && res.reports.length > 0) {
+          if (mounted && res && res.reports) {
             setReports(res.reports as Report[]);
             return;
           }
         }
-        if (mounted) {
-          setReports(MOCK_REPORTS.filter((r) => !incident || r.incident_id === incident.id));
-        }
       } catch (error) {
-        if (mounted) {
-          setReports(MOCK_REPORTS.filter((r) => !incident || r.incident_id === incident.id));
-        }
+        console.warn("Failed to load reports:", error);
       }
+      if (mounted) setReports([]);
     };
     loadReports();
     return () => {
       mounted = false;
     };
-  }, [incident]);
+  }, [incident?.id]);
 
   const filteredReports = reports.filter((r) => {
     if (filterType !== "all" && r.type !== filterType) return false;
@@ -232,114 +145,38 @@ export function ReportsPage() {
     return true;
   });
 
-  const handleGenerate = async (type: Report["type"]) => {
-    const currentIncidentId = incident?.id || "CAU-0001";
-    setGenerating(type);
+  const handleGenerate = async (_type?: Report["type"]) => {
+    const currentIncidentId = incident?.id;
+    if (!currentIncidentId) {
+      addActivity({ type: "error", message: "Select an incident before generating a report", dismissible: true });
+      return;
+    }
+    setGenerating("investigation");
+    addActivity({ type: "system", message: "Running investigation pipeline — the report is generated at the final stage", dismissible: true });
     try {
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      const formatMap: Record<Report["type"], Report["format"]> = {
-        investigation: "json",
-        executive: "pdf",
-        technical: "html",
-        compliance: "pdf",
-      };
-      const newReport: Report = {
-        id: `rpt-${Date.now().toString().slice(-4)}`,
-        incident_id: currentIncidentId,
-        title: `${type.charAt(0).toUpperCase() + type.slice(1)} Report`,
-        generated_at: new Date().toISOString(),
-        size_bytes: Math.floor(Math.random() * 350000) + 45000,
-        format: formatMap[type] || "json",
-        status: "ready",
-        type,
-      };
-      setReports((prev) => [newReport, ...prev]);
-      addActivity({ type: "system", message: `Generated ${type} report (${newReport.id})`, dismissible: true });
-    } catch (error) {
-      addActivity({ type: "error", message: `Failed to generate ${type} report`, dismissible: true });
+      await api.reconstruct(currentIncidentId);
+      // Reload the report inventory; the pipeline's report stage writes it server-side
+      const res = await api.listReports(currentIncidentId);
+      setReports((res?.reports as Report[]) ?? []);
+      addActivity({ type: "system", message: `Pipeline started for ${currentIncidentId}. Report will appear once the investigation completes.`, dismissible: true });
+    } catch (error: any) {
+      addActivity({ type: "error", message: `Failed to start report generation: ${error?.message || "Unknown error"}`, dismissible: true });
     } finally {
       setGenerating(null);
     }
   };
 
   /**
-   * Helper to fetch or generate report payload
+   * Helper to fetch report payload from the backend. Throws when the report
+   * has not been generated server-side — there is no client-side fallback.
    */
   const resolveReportData = useCallback(async (report: Report) => {
-    try {
-      const data = await api.getReport(report.incident_id);
-      if (data && !("message" in data && typeof data.message === "string" && data.message.includes("not yet generated"))) {
-        return data;
-      }
-    } catch {
-      // Backend unavailable or error, use fallback payload below
+    const data = await api.getReport(report.incident_id);
+    if (!data || typeof (data as { incident_id?: unknown }).incident_id !== "string") {
+      throw new Error("Report not yet generated on the server — run the investigation pipeline first");
     }
-
-    // High quality synthetic incident report data
-    return {
-      incident_id: report.incident_id,
-      report_id: report.id,
-      title: report.title,
-      type: report.type,
-      format: report.format,
-      generated_at: report.generated_at,
-      status: "COMPLETED",
-      system_name: incident?.system_name || "warehouse-amr-01",
-      description:
-        incident?.description ||
-        "Autonomous mobile robot consumes stale object detections from remote GPU inference service after deployment v42 increases dynamic batching window, causing P99 latency to exceed freshness budget.",
-      approximate_time: incident?.approximate_time || "2026-09-20T10:30:00Z",
-      evidence_summary: {
-        total_evidence_items: incident?.evidence_count || 18,
-        required_evidence_items: incident?.required_evidence_count || 14,
-        missing_required_evidence: incident?.missing_required_evidence || [],
-        integrity_status: "VERIFIED",
-      },
-      hypotheses: [
-        {
-          hypothesis_id: "H1",
-          causal_claim: "Dynamic batching window parameter increase in deployment v42 caused telemetry queue starvation and stale object detection consumption.",
-          status: "CONFIRMED",
-          confidence_prior: 0.85,
-          confidence_posterior: 0.98,
-          supporting_artifact_ids: ["deployments/events.json", "logs/inference-service.log"],
-          contradicting_artifact_ids: [],
-        },
-        {
-          hypothesis_id: "H2",
-          causal_claim: "Clock desynchronization between robot chassis and edge GPU orchestrator led to invalid frame drop.",
-          status: "REFUTED",
-          confidence_prior: 0.35,
-          confidence_posterior: 0.04,
-          supporting_artifact_ids: [],
-          contradicting_artifact_ids: ["logs/system.log"],
-        },
-      ],
-      experiments: [
-        {
-          experiment_id: "exp-001",
-          branch_name: "exp-h1_batching_window",
-          reproduction_rate: 0.0,
-          status: "PASSED",
-          result: "Counterfactual replay with batching_window=100ms eliminated all stale detection faults.",
-        },
-      ],
-      patch_candidates: [
-        {
-          candidate_id: "patch-001",
-          file_path: "config/inference.yaml",
-          description: "Restore batching_window_ms to 100ms with max_queue_depth=4 bound",
-          verified: true,
-        },
-      ],
-      verification_reports: [
-        {
-          passed: true,
-          message: "All 20 simulation trials passed with zero deadline misses and 100% causal consistency.",
-        },
-      ],
-    };
-  }, [incident]);
+    return data;
+  }, []);
 
   /**
    * 1. EYE ICON: View Report
@@ -352,8 +189,9 @@ export function ReportsPage() {
     try {
       const data = await resolveReportData(report);
       setViewingReportData(data);
-    } catch (error) {
-      console.error("Failed to load report data:", error);
+    } catch (error: any) {
+      setViewingReport(null);
+      addActivity({ type: "error", message: error?.message || "Failed to load report data", dismissible: true });
     } finally {
       setLoadingViewData(false);
     }
@@ -405,9 +243,9 @@ export function ReportsPage() {
       font-weight: 600;
       text-transform: uppercase;
       margin-right: 8px;
-      background: #2563eb20;
-      color: #3b82f6;
-      border: 1px solid #3b82f640;
+      background: ${isDark ? "#21262d" : "#f6f8fa"};
+      color: ${isDark ? "#f0f6fc" : "#1f2328"};
+      border: 1px solid ${isDark ? "#30363d" : "#d0d7de"};
     }
     .badge-success { background: #10b98120; color: #10b981; border-color: #10b98140; }
     h1 { margin: 12px 0 6px 0; font-size: 28px; color: ${isDark ? "#f8fafc" : "#0f172a"}; }
@@ -418,8 +256,8 @@ export function ReportsPage() {
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      color: #60a5fa;
-      border-bottom: 1px solid ${isDark ? "#1f2937" : "#e2e8f0"};
+      color: ${isDark ? "#f0f6fc" : "#1f2328"};
+      border-bottom: 1px solid ${isDark ? "#30363d" : "#e2e8f0"};
       padding-bottom: 8px;
       margin-bottom: 16px;
     }
@@ -486,7 +324,7 @@ export function ReportsPage() {
     </div>
 
     <div class="section no-print" style="margin-top: 40px; text-align: right;">
-      <button onclick="window.print()" style="padding: 10px 20px; background: #2563eb; color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">
+      <button onclick="window.print()" style="padding: 10px 20px; background: ${isDark ? "#f0f6fc" : "#1f2328"}; color: ${isDark ? "#0d1117" : "#ffffff"}; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">
         Print / Save to PDF
       </button>
     </div>
@@ -537,9 +375,9 @@ export function ReportsPage() {
         message: `Downloaded ${report.title} (${report.id}.${extension})`,
         dismissible: true,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Download failed:", error);
-      addActivity({ type: "error", message: `Download failed for ${report.title}`, dismissible: true });
+      addActivity({ type: "error", message: error?.message || `Download failed for ${report.title}`, dismissible: true });
     } finally {
       setDownloadingId(null);
     }
@@ -598,25 +436,28 @@ export function ReportsPage() {
   };
 
   const typeConfig = {
-    investigation: { icon: Zap, label: "Investigation", color: "text-primary" },
-    executive: { icon: FileText, label: "Executive", color: "text-secondary" },
-    technical: { icon: Database, label: "Technical", color: "text-success" },
-    compliance: { icon: AlertTriangle, label: "Compliance", color: "text-danger" },
+    investigation: { icon: Zap, label: "Investigation", color: "text-[var(--color-accent-fg)]" },
+    executive: { icon: FileText, label: "Executive", color: "text-[var(--color-attention-fg)]" },
+    technical: { icon: Database, label: "Technical", color: "text-[var(--color-success-fg)]" },
+    compliance: { icon: AlertTriangle, label: "Compliance", color: "text-[var(--color-danger-fg)]" },
   };
 
   return (
-    <div className="flex flex-col gap-[var(--section-gap)]">
+    <div className="w-full space-y-5">
       <PageHeader
         title="Reports"
         subtitle="Generated investigation reports and exports"
         badge={
-          <div className="flex items-center gap-[var(--space-3)]">
-            <Badge tone="neutral">{reports.length} reports</Badge>
+          <Badge tone="neutral">{reports.length} reports</Badge>
+        }
+        actions={
+          <div className="flex items-center gap-[var(--space-2)]">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => handleDownload(reports[0] || MOCK_REPORTS[0])}
-              className="gap-[var(--space-1)]"
+              onClick={() => reports[0] && handleDownload(reports[0])}
+              disabled={reports.length === 0}
+              className="gap-1.5 text-xs h-8"
               aria-label="Download full report"
             >
               <Download className="h-3.5 w-3.5" />
@@ -627,7 +468,7 @@ export function ReportsPage() {
               size="sm"
               onClick={() => handleGenerate("investigation")}
               disabled={!!generating}
-              className="gap-[var(--space-1)]"
+              className="gap-1.5 text-xs h-8"
               aria-label="Generate report"
             >
               <Zap className="h-3.5 w-3.5" />
@@ -638,11 +479,11 @@ export function ReportsPage() {
       />
 
       {/* Generate New Report Bar */}
-      <Card>
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-[var(--space-4)]">
+      <Panel variant="inset" padding="md">
+        <PanelSection dividerBefore={false} className="flex flex-col md:flex-row md:items-center justify-between gap-[var(--space-4)]">
           <div>
-            <h2 className="font-semibold text-[var(--color-text-primary)] text-lg">Generate New Report</h2>
-            <p className="mt-[var(--space-1)] text-sm text-[var(--color-text-muted)]">Create an automated investigation report for {incident?.id || "active incident"}</p>
+            <h2 className="font-semibold text-[var(--color-fg-default)] text-base">Generate New Report</h2>
+            <p className="mt-0.5 text-xs text-[var(--color-fg-muted)]">Create an automated investigation report for {incident?.id || "active incident"}</p>
           </div>
           <div className="flex flex-wrap items-center gap-[var(--space-2)]">
             {(["investigation", "executive", "technical", "compliance"] as const).map((type) => (
@@ -652,12 +493,12 @@ export function ReportsPage() {
                 size="sm"
                 onClick={() => handleGenerate(type)}
                 disabled={!!generating}
-                className="whitespace-nowrap"
+                className="whitespace-nowrap text-xs h-8"
               >
                 {generating === type ? (
                   <>
-                    <span className="flex h-4 w-4 animate-spin">
-                      <svg className="h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                    <span className="flex h-3.5 w-3.5 animate-spin">
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
                     </span>
                     Generating...
                   </>
@@ -667,199 +508,268 @@ export function ReportsPage() {
               </Button>
             ))}
           </div>
-        </div>
-      </Card>
+        </PanelSection>
+      </Panel>
 
-      {/* Filters */}
-      <div className={filterStyles()}>
-        <div className="relative flex-1 min-w-[200px] max-w-xs">
-          <Search className="absolute left-[var(--space-3)] top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)] pointer-events-none" />
-          <Input
-            type="text"
-            placeholder="Search reports..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-[calc(var(--space-3)*4)] pr-[var(--space-3)] py-[var(--space-2)] text-sm"
-          />
-        </div>
-        <Divider orientation="vertical" className="h-[var(--space-8)] hidden sm:block" />
-        <label htmlFor="report-type-filter" className="text-sm font-medium text-[var(--color-text-secondary)]">Filter by Type</label>
-        <Select
-          id="report-type-filter"
-          value={filterType}
-          onValueChange={setFilterType}
-          className="w-36"
-          options={[
-            { value: "all", label: "All Types" },
-            { value: "investigation", label: "Investigation" },
-            { value: "executive", label: "Executive" },
-            { value: "technical", label: "Technical" },
-            { value: "compliance", label: "Compliance" },
-          ]}
+      {/* Reports Table & Integrated Toolbar */}
+      <Panel padding="none">
+        <PanelHeader
+          title="Report Inventory"
+          subtitle={`${filteredReports.length} of ${reports.length} reports indexed`}
+          divider={true}
+          actions={
+            <div className="flex items-center gap-2">
+              <Badge tone="success" dot size="sm">
+                {reports.filter((r) => r.status === "ready").length} Ready
+              </Badge>
+            </div>
+          }
         />
-        <Divider orientation="vertical" className="h-[var(--space-8)] hidden sm:block" />
-        <Stat label="Total" value={reports.length} />
-        <Stat label="Ready" value={reports.filter((r) => r.status === "ready").length} trend="success" />
-      </div>
 
-      {/* Reports Table */}
-      <Card>
-        {loading ? (
-          <div className="flex items-center justify-center py-[var(--space-12)]">
-            <div className="flex h-8 w-8 animate-spin">
-              <svg className="h-8 w-8 text-primary" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+        {/* Integrated Filter Toolbar */}
+        <div className="border-b border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40 px-5 sm:px-6 py-3 space-y-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            <Input
+              label="Search reports"
+              hideLabel
+              wrapperClassName="flex-1 min-w-[200px]"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search reports by title or ID..."
+              leftIcon={<Search className="h-3.5 w-3.5" />}
+              rightElement={searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-fg-muted)] hover:text-[var(--color-accent-fg)] hover:bg-[var(--color-canvas-subtle)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+              className="h-8 text-xs"
+            />
+
+            <div className="flex items-center gap-2 shrink-0">
+              <Select
+                id="report-type-filter"
+                label="Filter by report type"
+                hideLabel
+                wrapperClassName="w-40 sm:w-44 shrink-0"
+                value={filterType}
+                onValueChange={setFilterType}
+                className="h-8 text-xs"
+                options={[
+                  { value: "all", label: `All Types (${reports.length})` },
+                  { value: "investigation", label: "Investigation" },
+                  { value: "executive", label: "Executive" },
+                  { value: "technical", label: "Technical" },
+                  { value: "compliance", label: "Compliance" },
+                ]}
+              />
+
+              {filterType !== "all" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setFilterType("all")}
+                  className="h-8 px-2 text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
+                  title="Reset filter"
+                >
+                  Reset
+                </Button>
+              )}
             </div>
           </div>
-        ) : filteredReports.length === 0 ? (
-          <div className={emptyStyles()}>
-            <FileText className="h-12 w-12 text-[var(--color-text-muted)]/50" />
-            <span className="text-lg">No reports found</span>
-            <p className="text-sm">Generate a new report or adjust your filters</p>
+
+          {/* Quick Filter Badges */}
+          <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+            <span className="text-[11px] text-[var(--color-fg-muted)] mr-1">Quick Filter:</span>
+            {(["all", "investigation", "executive", "technical", "compliance"] as const).map((type) => {
+              const count = type === "all" ? reports.length : reports.filter((r) => r.type === type).length;
+              const isSelected = filterType === type;
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setFilterType(type)}
+                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[var(--radius-sm)] text-[11px] font-medium border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
+                    isSelected
+                      ? "bg-[var(--color-accent-muted)] border-[var(--color-accent-emphasis)] text-[var(--color-accent-fg)]"
+                      : "bg-[var(--color-canvas)] border-[var(--color-border-default)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-subtle)]"
+                  }`}
+                >
+                  <span className="capitalize">{type}</span>
+                  <span className="font-mono text-[10px] opacity-75">({count})</span>
+                </button>
+              );
+            })}
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className={tableStyles()}>
-              <thead>
-                <tr className="text-left text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
-                  <th className="pb-[var(--space-3)] pr-[var(--space-4)]">Report</th>
-                  <th className="pb-[var(--space-3)] pr-[var(--space-4)] hidden md:table-cell">Incident</th>
-                  <th className="pb-[var(--space-3)] pr-[var(--space-4)] hidden lg:table-cell">Type</th>
-                  <th className="pb-[var(--space-3)] pr-[var(--space-4)] hidden md:table-cell">Format</th>
-                  <th className="pb-[var(--space-3)] pr-[var(--space-4)]">Size</th>
-                  <th className="pb-[var(--space-3)] pr-[var(--space-4)]">Generated</th>
-                  <th className="pb-[var(--space-3)] pr-[var(--space-4)]">Status</th>
-                  <th className="pb-[var(--space-3)] text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredReports.map((report) => {
-                  const config = typeConfig[report.type] || typeConfig.investigation;
-                  const isDownloading = downloadingId === report.id;
-                  return (
-                    <tr
-                      key={report.id}
-                      className={rowStyles()}
-                      onClick={() => handleViewReport(report)}
-                      title="Click to view report details"
-                    >
-                      <td className="py-[var(--space-3)] pr-[var(--space-4)]">
-                        <div className="flex items-center gap-[var(--space-3)]">
-                          <config.icon className={`h-5 w-5 ${config.color} flex-shrink-0`} />
-                          <div>
-                            <div className="font-medium text-[var(--color-text-primary)] truncate max-w-xs">{report.title}</div>
-                            <div className="text-[11px] text-[var(--color-text-muted)] font-mono">{report.id}</div>
+        </div>
+
+        <PanelSection dividerBefore={false} className="p-0">
+          {loading ? (
+            <div className="flex items-center justify-center py-[var(--space-12)]">
+              <div className="flex h-8 w-8 animate-spin">
+                <svg className="h-8 w-8 text-[var(--color-accent-fg)]" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+              </div>
+            </div>
+          ) : filteredReports.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-[var(--space-16)] px-[var(--space-6)] gap-[var(--space-4)] text-center text-[var(--color-fg-muted)]">
+              <FileText className="h-12 w-12 text-[var(--color-fg-muted)]/50" />
+              <span className="text-lg">No reports found</span>
+              <p className="text-sm">Generate a new report or adjust your filters</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="text-left text-[11px] font-medium uppercase tracking-wider text-[var(--color-fg-muted)] border-b border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/20">
+                    <th className="py-2.5 px-5 sm:px-6 font-semibold">Report</th>
+                    <th className="py-2.5 pr-4 hidden md:table-cell font-semibold">Incident</th>
+                    <th className="py-2.5 pr-4 hidden lg:table-cell font-semibold">Type</th>
+                    <th className="py-2.5 pr-4 hidden md:table-cell font-semibold">Format</th>
+                    <th className="py-2.5 pr-4 font-semibold">Size</th>
+                    <th className="py-2.5 pr-4 font-semibold">Generated</th>
+                    <th className="py-2.5 pr-4 font-semibold">Status</th>
+                    <th className="py-2.5 px-5 sm:px-6 text-right font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredReports.map((report) => {
+                    const config = typeConfig[report.type] || typeConfig.investigation;
+                    const isDownloading = downloadingId === report.id;
+                    return (
+                      <tr
+                        key={report.id}
+                        className="border-b border-[var(--color-border-default)] hover:bg-[var(--color-canvas-subtle)]/70 transition-colors cursor-pointer group"
+                        onClick={() => handleViewReport(report)}
+                        title="Click to view report details"
+                      >
+                        <td className="py-3 px-5 sm:px-6">
+                          <div className="flex items-center gap-[var(--space-3)]">
+                            <config.icon className={`h-5 w-5 ${config.color} flex-shrink-0`} />
+                            <div>
+                              <div className="font-medium text-[var(--color-fg-default)] truncate max-w-xs">{report.title}</div>
+                              <div className="text-[11px] text-[var(--color-fg-muted)] font-mono">{report.id}</div>
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="py-[var(--space-3)] pr-[var(--space-4)] hidden md:table-cell">
-                        <span className="font-mono text-sm text-[var(--color-text-primary)]">{report.incident_id}</span>
-                      </td>
-                      <td className="py-[var(--space-3)] pr-[var(--space-4)] hidden lg:table-cell">
-                        <Badge
-                          tone={
-                            report.type === "investigation"
-                              ? "primary"
-                              : report.type === "executive"
-                              ? "secondary"
-                              : report.type === "technical"
-                              ? "success"
-                              : "danger"
-                          }
-                          className="text-[10px]"
-                        >
-                          {config.label}
-                        </Badge>
-                      </td>
-                      <td className="py-[var(--space-3)] pr-[var(--space-4)] hidden md:table-cell">
-                        <Badge tone="muted" className="text-[10px] font-mono uppercase">
-                          {report.format.toUpperCase()}
-                        </Badge>
-                      </td>
-                      <td className="py-[var(--space-3)] pr-[var(--space-4)] font-mono text-sm text-[var(--color-text-primary)]">{formatBytes(report.size_bytes)}</td>
-                      <td className="py-[var(--space-3)] pr-[var(--space-4)] text-sm text-[var(--color-text-muted)]">{formatDate(report.generated_at)}</td>
-                      <td className="py-[var(--space-3)] pr-[var(--space-4)]">
-                        <Badge
-                          tone={
-                            report.status === "ready"
-                              ? "success"
-                              : report.status === "generating"
-                              ? "primary"
-                              : "danger"
-                          }
-                          dot
-                          className="text-[10px]"
-                        >
-                          {report.status.charAt(0).toUpperCase() + report.status.slice(1)}
-                        </Badge>
-                      </td>
-                      <td className="py-[var(--space-3)] pr-[var(--space-4)] text-right">
-                        <div className="flex items-center justify-end gap-[var(--space-1)]" onClick={(e) => e.stopPropagation()}>
-                          {/* Eye / View Icon */}
-                          <Tooltip content="View report" position="top">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleViewReport(report);
-                              }}
-                              className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                              aria-label={`View report ${report.title}`}
-                              title={`View report ${report.title}`}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
-                          </Tooltip>
+                        </td>
+                        <td className="py-3 pr-4 hidden md:table-cell">
+                          <span className="font-mono text-xs text-[var(--color-fg-default)]">{report.incident_id}</span>
+                        </td>
+                        <td className="py-3 pr-4 hidden lg:table-cell">
+                          <Badge
+                            tone={
+                              report.type === "investigation"
+                                ? "primary"
+                                : report.type === "executive"
+                                ? "secondary"
+                                : report.type === "technical"
+                                ? "success"
+                                : "danger"
+                            }
+                            className="text-[10px]"
+                          >
+                            {config.label}
+                          </Badge>
+                        </td>
+                        <td className="py-3 pr-4 hidden md:table-cell">
+                          <Badge tone="muted" className="text-[10px] font-mono uppercase">
+                            {report.format.toUpperCase()}
+                          </Badge>
+                        </td>
+                        <td className="py-3 pr-4 font-mono text-xs text-[var(--color-fg-default)]">{formatBytes(report.size_bytes)}</td>
+                        <td className="py-3 pr-4 text-xs text-[var(--color-fg-muted)]">{formatDate(report.generated_at)}</td>
+                        <td className="py-3 pr-4">
+                          <Badge
+                            tone={
+                              report.status === "ready"
+                                ? "success"
+                                : report.status === "generating"
+                                ? "primary"
+                                : "danger"
+                            }
+                            dot
+                            className="text-[10px]"
+                          >
+                            {report.status.charAt(0).toUpperCase() + report.status.slice(1)}
+                          </Badge>
+                        </td>
+                        <td className="py-3 px-5 sm:px-6 text-right">
+                          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                            {/* Eye / View Icon */}
+                            <Tooltip content="View report" position="top">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleViewReport(report);
+                                }}
+                                className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-subtle)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-fg)]"
+                                aria-label={`View report ${report.title}`}
+                                title={`View report ${report.title}`}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </button>
+                            </Tooltip>
 
-                          {/* Download Icon */}
-                          <Tooltip content="Download report" position="top">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownload(report);
-                              }}
-                              disabled={report.status !== "ready" || isDownloading}
-                              className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                              aria-label={`Download report ${report.title}`}
-                              title={`Download report ${report.title}`}
-                            >
-                              {isDownloading ? (
-                                <span className="flex h-4 w-4 animate-spin">
-                                  <svg className="h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                                </span>
-                              ) : (
-                                <Download className="h-4 w-4" />
-                              )}
-                            </button>
-                          </Tooltip>
+                            {/* Download Icon */}
+                            <Tooltip content="Download report" position="top">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDownload(report);
+                                }}
+                                disabled={report.status !== "ready" || isDownloading}
+                                className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-subtle)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-fg)]"
+                                aria-label={`Download report ${report.title}`}
+                                title={`Download report ${report.title}`}
+                              >
+                                {isDownloading ? (
+                                  <span className="flex h-4 w-4 animate-spin">
+                                    <svg className="h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                                  </span>
+                                ) : (
+                                  <Download className="h-4 w-4" />
+                                )}
+                              </button>
+                            </Tooltip>
 
-                          {/* Delete Icon */}
-                          <Tooltip content="Delete report" position="top">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDeletingReport(report);
-                              }}
-                              className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-danger hover:bg-danger/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
-                              aria-label={`Delete report ${report.title}`}
-                              title={`Delete report ${report.title}`}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </Tooltip>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+                            {/* Delete Icon */}
+                            <Tooltip content="Delete report" position="top">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeletingReport(report);
+                                }}
+                                className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-fg-muted)] hover:text-[var(--color-danger-fg)] hover:bg-[var(--color-danger-muted)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-danger-fg)]"
+                                aria-label={`Delete report ${report.title}`}
+                                title={`Delete report ${report.title}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </Tooltip>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </PanelSection>
+      </Panel>
 
       {/* Report Templates */}
-      <Card>
-        <h2 className="font-semibold text-[var(--color-text-primary)] mb-4 text-lg">Report Templates</h2>
-        <div className="grid gap-[var(--space-4)] md:grid-cols-2 lg:grid-cols-4">
+      <Panel variant="inset" padding="md">
+        <PanelHeader
+          title="Report Templates"
+          subtitle="Pre-configured report types for different audiences and compliance requirements"
+          divider={true}
+        />
+        <PanelSection dividerBefore={false} className="grid gap-[var(--space-4)] md:grid-cols-2 lg:grid-cols-4 items-stretch">
           {[
             { type: "investigation", name: "Full Investigation", desc: "Complete pipeline trace with all evidence, hypotheses, and verdicts", icon: Zap },
             { type: "executive", name: "Executive Summary", desc: "High-level findings, risk assessment, and recommended actions", icon: FileText },
@@ -870,94 +780,86 @@ export function ReportsPage() {
               key={i}
               role="button"
               tabIndex={0}
+              onClick={() => handleGenerate(tmpl.type as Report["type"])}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   handleGenerate(tmpl.type as Report["type"]);
                 }
               }}
-              className="p-[var(--space-4)] rounded-xl bg-[var(--color-surface)]/50 border border-[var(--color-border)] hover:border-primary/30 hover:bg-[var(--color-surface)]/50 transition-all group cursor-pointer"
-              onClick={() => handleGenerate(tmpl.type as Report["type"])}
+              className="group relative flex flex-col justify-between h-full min-h-[120px] p-4 bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] rounded-[var(--radius-md)] hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-default)]/80 cursor-pointer transition-colors duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-fg)]"
+              aria-label={`Generate ${tmpl.name}`}
             >
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary mb-[var(--space-3)] group-hover:bg-primary/20 transition-colors">
-                <tmpl.icon className="h-5 w-5" />
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-canvas-subtle)] text-[var(--color-accent-fg)] border border-[var(--color-border-default)]">
+                  <tmpl.icon className="h-4.5 w-4.5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-1">
+                    <h3 className="text-xs font-semibold text-[var(--color-fg-default)] truncate">{tmpl.name}</h3>
+                    <Plus className="h-3.5 w-3.5 shrink-0 text-[var(--color-fg-muted)] group-hover:text-[var(--color-accent-fg)] transition-colors" />
+                  </div>
+                  <p className="text-[11px] text-[var(--color-fg-muted)] mt-1.5 leading-relaxed line-clamp-3">{tmpl.desc}</p>
+                </div>
               </div>
-              <div className="font-medium text-[var(--color-text-primary)]">{tmpl.name}</div>
-              <p className="mt-[var(--space-1)] text-sm text-[var(--color-text-muted)]">{tmpl.desc}</p>
-              <div className="mt-[var(--space-3)] pt-[var(--space-3)] border-t border-[var(--color-border)] flex items-center justify-between">
-                <span className="text-[11px] text-primary group-hover:underline">Generate →</span>
-                <Badge tone="muted" className="text-[9px]">Template</Badge>
+              <div className="mt-3 pt-2.5 border-t border-[var(--color-border-default)]/60 flex items-center justify-between text-[10px] text-[var(--color-fg-subtle)]">
+                <span className="font-mono uppercase">{tmpl.type}</span>
+                <span className="text-[var(--color-accent-fg)] opacity-0 group-hover:opacity-100 transition-opacity font-medium">Click to generate →</span>
               </div>
             </div>
           ))}
-        </div>
-      </Card>
+        </PanelSection>
+      </Panel>
+
+      <Divider className="my-[var(--divider-margin)]" />
 
       {/* ========================================================================= */}
       {/* 1. REPORT VIEWER MODAL DIALOG                                              */}
       {/* ========================================================================= */}
       {viewingReport && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--theme-background)]/80 backdrop-blur-sm p-[var(--space-4)] sm:p-[var(--space-6)]"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-canvas)]/80 backdrop-blur-sm p-[var(--space-4)] sm:p-[var(--space-6)]"
           onClick={() => setViewingReport(null)}
           role="dialog"
           aria-modal="true"
           aria-labelledby="report-modal-title"
         >
           <div
-            className="flex flex-col w-full max-w-4xl max-h-[90vh] rounded-2xl bg-surface border border-[var(--color-border)] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            className="flex flex-col w-full max-w-4xl max-h-[90vh] rounded-[var(--radius-xl)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] shadow-[var(--shadow-xl)] overflow-hidden animate-in fade-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div className="flex items-start justify-between p-[var(--space-6)] border-b border-[var(--color-border)] bg-[var(--color-surface)]/50">
-              <div className="flex items-start gap-[var(--space-3)]">
-                <div className="mt-1 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/15 text-primary border border-primary/20">
-                  <FileText className="h-5 w-5" />
+            <PanelHeader
+              title={viewingReport.title}
+              subtitle={
+                <div className="mt-1.5 flex flex-wrap items-center gap-[var(--space-2)] text-xs">
+                  <span className="font-mono text-[var(--color-fg-muted)]">{viewingReport.id}</span>
+                  <span className="text-[var(--color-fg-muted)]/20">•</span>
+                  <span className="font-mono text-[var(--color-accent-fg)]">{viewingReport.incident_id}</span>
+                  <span className="text-[var(--color-fg-muted)]/20">•</span>
+                  <Badge tone="muted" className="text-[10px] uppercase font-mono">
+                    {viewingReport.format}
+                  </Badge>
+                  <Badge tone="success" dot className="text-[10px]">
+                    {viewingReport.status}
+                  </Badge>
+                  <span className="text-[var(--color-fg-muted)] text-[11px]">{formatDate(viewingReport.generated_at)}</span>
                 </div>
-                <div>
-                  <h2 id="report-modal-title" className="text-xl font-bold text-[var(--color-text-primary)]">
-                    {viewingReport.title}
-                  </h2>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-[var(--space-2)] text-xs">
-                    <span className="font-mono text-[var(--color-text-muted)]">{viewingReport.id}</span>
-                    <span className="text-[var(--color-text-primary)]/20">•</span>
-                    <span className="font-mono text-primary">{viewingReport.incident_id}</span>
-                    <span className="text-[var(--color-text-primary)]/20">•</span>
-                    <Badge tone="muted" className="text-[10px] uppercase font-mono">
-                      {viewingReport.format}
-                    </Badge>
-                    <Badge tone="success" dot className="text-[10px]">
-                      {viewingReport.status}
-                    </Badge>
-                    <span className="text-[var(--color-text-muted)] text-[11px]">{formatDate(viewingReport.generated_at)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Header Actions */}
-              <div className="flex items-center gap-[var(--space-2)]">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDownload(viewingReport)}
-                  className="gap-[var(--space-1)]"
-                  aria-label="Download report from viewer"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Download
-                </Button>
+              }
+              divider={true}
+              actions={
                 <button
                   onClick={() => setViewingReport(null)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-subtle)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-fg)]"
                   aria-label="Close report viewer"
                 >
                   <X className="h-5 w-5" />
                 </button>
-              </div>
-            </div>
+              }
+            />
 
             {/* Modal Tabs Bar */}
-            <div className="flex items-center justify-between border-b border-[var(--color-border)] px-[var(--space-6)] bg-[var(--color-surface)]/50">
+            <div className="flex items-center justify-between border-b border-[var(--color-border-default)] px-[var(--space-6)] bg-[var(--color-canvas-subtle)]/50">
               <div className="flex items-center gap-[var(--space-6)]">
                 {(["summary", "document", "json"] as const).map((tab) => (
                   <button
@@ -965,8 +867,8 @@ export function ReportsPage() {
                     onClick={() => setActiveViewTab(tab)}
                     className={`py-[var(--space-3)] text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${
                       activeViewTab === tab
-                        ? "border-primary text-[var(--color-text-primary)]"
-                        : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+                        ? "border-[var(--color-accent-fg)] text-[var(--color-accent-fg)]"
+                        : "border-transparent text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
                     }`}
                   >
                     {tab === "summary" ? "Summary & Findings" : tab === "document" ? "Formatted Document" : "Raw JSON Data"}
@@ -978,12 +880,12 @@ export function ReportsPage() {
                   variant="ghost"
                   size="sm"
                   onClick={handleCopyJson}
-                  className="gap-[var(--space-1)] text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+                  className="gap-[var(--space-1)] text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
                 >
                   {copiedJson ? (
                     <>
-                      <Check className="h-3.5 w-3.5 text-success" />
-                      <span className="text-success">Copied!</span>
+                      <Check className="h-3.5 w-3.5 text-[var(--color-success-fg)]" />
+                      <span className="text-[var(--color-success-fg)]">Copied!</span>
                     </>
                   ) : (
                     <>
@@ -996,177 +898,171 @@ export function ReportsPage() {
             </div>
 
             {/* Modal Body */}
-            <div className="p-[var(--space-6)] overflow-y-auto space-y-[var(--space-6)] flex-1 max-h-[60vh]">
-              {loadingViewData ? (
-                <div className="flex flex-col items-center justify-center py-[var(--space-16)] gap-[var(--space-3)]">
-                  <div className="flex h-8 w-8 animate-spin text-primary">
-                    <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                  </div>
-                  <p className="text-sm text-[var(--color-text-muted)]">Loading report details...</p>
-                </div>
-              ) : activeViewTab === "summary" ? (
-                <>
-                  {/* Incident Information */}
-                  <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/50 p-[var(--space-4)] space-y-[var(--space-3)]">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Incident Overview</span>
-                      <Badge tone="primary" className="text-[10px] font-mono">
-                        {viewingReportData?.system_name || "warehouse-amr-01"}
-                      </Badge>
+            <div className="flex-1 min-h-0 overflow-y-auto p-[var(--space-6)] overscroll-contain">
+              <div className="space-y-[var(--space-6)]">
+                {loadingViewData ? (
+                  <div className="flex flex-col items-center justify-center py-[var(--space-16)] gap-[var(--space-3)]">
+                    <div className="flex h-8 w-8 animate-spin text-[var(--color-accent-fg)]">
+                      <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
                     </div>
-                    <p className="text-sm text-slate-200">
-                      {viewingReportData?.description || "Investigation of root causes and verified counterfactual remediations."}
-                    </p>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-[var(--space-3)] pt-[var(--space-2)] border-t border-[var(--color-border)] text-xs">
-                      <div>
-                        <span className="text-[var(--color-text-muted)] block">Incident ID</span>
-                        <span className="font-mono text-[var(--color-text-primary)]">{viewingReport.incident_id}</span>
-                      </div>
-                      <div>
-                        <span className="text-[var(--color-text-muted)] block">Evidence Items</span>
-                        <span className="font-mono text-success">
-                          {viewingReportData?.evidence_summary?.total_evidence_items || 18} Verified
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[var(--color-text-muted)] block">Estimated Size</span>
-                        <span className="font-mono text-[var(--color-text-primary)]">{formatBytes(viewingReport.size_bytes)}</span>
-                      </div>
-                    </div>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Loading report details...</p>
                   </div>
-
-                  {/* Causal Hypotheses */}
-                  <div className="space-y-[var(--space-3)]">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-[var(--space-2)]">
-                      <Zap className="h-4 w-4 text-primary" /> Root Cause Hypotheses
-                    </h4>
-                    <div className="space-y-[var(--space-2)]">
-                      {(viewingReportData?.hypotheses || []).map((h: any, idx: number) => (
-                        <div
-                          key={idx}
-                          className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/50 p-[var(--space-4)] flex flex-col gap-[var(--space-2)]"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-mono font-semibold text-[var(--color-text-primary)] text-sm">
-                              {h.hypothesis_id}: {h.status}
-                            </span>
-                            <Badge
-                              tone={h.status === "CONFIRMED" ? "success" : "muted"}
-                              className="text-[10px]"
-                            >
-                              {Math.round((h.confidence_posterior || h.confidence_prior || 0) * 100)}% Confidence
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">{h.causal_claim}</p>
-                          {h.supporting_artifact_ids?.length > 0 && (
-                            <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-1.5 pt-1">
-                              <span className="text-[var(--color-text-muted)]/70">Supporting Evidence:</span>
-                              {h.supporting_artifact_ids.map((art: string, i: number) => (
-                                <code key={i} className="px-1.5 py-0.5 rounded bg-[var(--color-surface)]/50 font-mono text-primary text-[10px]">
-                                  {art}
-                                </code>
-                              ))}
-                            </div>
-                          )}
+                ) : activeViewTab === "summary" ? (
+                  <>
+                    {/* Incident Information */}
+                    <Panel variant="inset" padding="md">
+                      <PanelHeader
+                        title="Incident Overview"
+                        subtitle={
+                          <Badge tone="primary" className="text-[10px] font-mono">
+                            {viewingReportData?.system_name || "warehouse-amr-01"}
+                          </Badge>
+                        }
+                      />
+                      <PanelSection dividerBefore={false} className="text-sm text-[var(--color-fg-muted)]">
+                        {viewingReportData?.description || "Investigation of root causes and verified counterfactual remediations."}
+                      </PanelSection>
+                      <PanelSection dividerBefore={true} className="grid grid-cols-2 sm:grid-cols-3 gap-[var(--space-3)] pt-[var(--space-2)] border-t border-[var(--color-border-default)] text-xs">
+                        <div>
+                          <span className="text-[var(--color-fg-muted)] block">Incident ID</span>
+                          <span className="font-mono text-[var(--color-fg-default)]">{viewingReport.incident_id}</span>
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                        <div>
+                          <span className="text-[var(--color-fg-muted)] block">Evidence Items</span>
+                          <span className="font-mono text-[var(--color-success-fg)]">
+                            {viewingReportData?.evidence_summary?.total_evidence_items || 18} Verified
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[var(--color-fg-muted)] block">Estimated Size</span>
+                          <span className="font-mono text-[var(--color-fg-default)]">{formatBytes(viewingReport.size_bytes)}</span>
+                        </div>
+                      </PanelSection>
+                    </Panel>
 
-                  {/* Verification Summary */}
-                  <div className="rounded-xl border border-success/20 bg-success/5 p-4 flex items-start gap-3">
-                    <Shield className="h-5 w-5 text-success mt-0.5 flex-shrink-0" />
-                    <div>
-                      <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">Verification Engine Certified</h4>
-                      <p className="text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
-                        Digital twin simulation validated candidate patch against all 20 historical edge-case tests with zero deadline misses.
+                    {/* Causal Hypotheses */}
+                    <div className="space-y-[var(--space-3)]">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)] flex items-center gap-[var(--space-2)]">
+                        <Zap className="h-4 w-4 text-[var(--color-accent-fg)]" /> Root Cause Hypotheses
+                      </h4>
+                      <div className="space-y-[var(--space-2)]">
+                        {(viewingReportData?.hypotheses || []).map((h: any, idx: number) => (
+                          <Panel variant="inset" key={idx} padding="md">
+                            <PanelSection dividerBefore={false} className="flex flex-col gap-[var(--space-2)]">
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono font-semibold text-[var(--color-fg-default)] text-sm">
+                                  {h.hypothesis_id}: {h.status}
+                                </span>
+                                <Badge
+                                  tone={h.status === "CONFIRMED" ? "success" : "muted"}
+                                  className="text-[10px]"
+                                >
+                                  {Math.round((h.confidence_posterior || h.confidence_prior || 0) * 100)}% Confidence
+                                </Badge>
+                              </div>
+                              <p className="text-xs text-[var(--color-fg-muted)] leading-relaxed">{h.causal_claim}</p>
+                              {h.supporting_artifact_ids?.length > 0 && (
+                                <div className="text-[11px] text-[var(--color-fg-muted)] flex items-center gap-1.5 pt-1">
+                                  <span className="text-[var(--color-fg-muted)]/70">Supporting Evidence:</span>
+                                  {h.supporting_artifact_ids.map((art: string, i: number) => (
+                                    <code key={i} className="px-1.5 py-0.5 rounded bg-[var(--color-canvas-subtle)]/50 font-mono text-[var(--color-accent-fg)] text-[10px]">
+                                      {art}
+                                    </code>
+                                  ))}
+                                </div>
+                              )}
+                            </PanelSection>
+                          </Panel>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Verification Summary */}
+                    <Panel variant="inset" padding="md" className="border border-[var(--color-success-muted)] bg-[var(--color-success-muted)]/5">
+                      <PanelSection dividerBefore={false} className="flex items-start gap-3">
+                        <Shield className="h-5 w-5 text-[var(--color-success-fg)] mt-0.5 flex-shrink-0" />
+                        <div>
+                          <h4 className="text-sm font-semibold text-[var(--color-fg-default)]">Verification Engine Certified</h4>
+                          <p className="text-xs text-[var(--color-fg-muted)] mt-1 leading-relaxed">
+                            Digital twin simulation validated candidate patch against all 20 historical edge-case tests with zero deadline misses.
+                          </p>
+                        </div>
+                      </PanelSection>
+                    </Panel>
+                  </>
+                ) : activeViewTab === "document" ? (
+                  /* Formatted Document View */
+                  <Panel variant="inset" padding="lg" className="space-y-[var(--space-6)] text-sm">
+                    <div className="border-b border-[var(--color-border-default)] pb-[var(--space-4)]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-mono text-[var(--color-accent-fg)] tracking-widest uppercase">Cauveris System Report</span>
+                        <button
+                          onClick={() => window.print()}
+                          className="flex items-center gap-[var(--space-1)] text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] transition-colors"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" /> Print
+                        </button>
+                      </div>
+                      <h3 className="text-lg font-bold text-[var(--color-fg-default)] mt-1">{viewingReport.title}</h3>
+                      <p className="text-xs text-[var(--color-fg-muted)] font-mono mt-[var(--space-1)]">
+                        Target: {viewingReportData?.system_name || "warehouse-amr-01"} • Generated: {formatDate(viewingReport.generated_at)}
                       </p>
                     </div>
-                  </div>
-                </>
-              ) : activeViewTab === "document" ? (
-                /* Formatted Document View */
-                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/50 p-[var(--space-6)] space-y-[var(--space-6)] text-sm">
-                  <div className="border-b border-[var(--color-border)] pb-[var(--space-4)]">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono text-primary tracking-widest uppercase">Cauveris System Report</span>
-                      <button
-                        onClick={() => window.print()}
-                        className="flex items-center gap-[var(--space-1)] text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" /> Print
-                      </button>
+
+                    <div className="space-y-[var(--space-2)]">
+                      <h5 className="text-xs font-bold text-[var(--color-fg-muted)] uppercase">Executive Summary</h5>
+                      <p className="text-xs leading-relaxed text-[var(--color-fg-muted)]">
+                        {viewingReportData?.description || "Incident investigation completed successfully with full deterministic reproducibility."}
+                      </p>
                     </div>
-                    <h3 className="text-lg font-bold text-[var(--color-text-primary)] mt-1">{viewingReport.title}</h3>
-                    <p className="text-xs text-[var(--color-text-muted)] font-mono mt-[var(--space-1)]">
-                      Target: {viewingReportData?.system_name || "warehouse-amr-01"} • Generated: {formatDate(viewingReport.generated_at)}
-                    </p>
-                  </div>
 
-                  <div className="space-y-[var(--space-2)]">
-                    <h5 className="text-xs font-bold text-[var(--color-text-muted)] uppercase">Executive Summary</h5>
-                    <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-                      {viewingReportData?.description || "Incident investigation completed successfully with full deterministic reproducibility."}
-                    </p>
-                  </div>
-
-                  <div className="space-y-[var(--space-2)]">
-                    <h5 className="text-xs font-bold text-[var(--color-text-muted)] uppercase">Causal Evidence Analysis</h5>
-                    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/50 p-[var(--space-3)] text-xs space-y-[var(--space-2)]">
-                      <div className="flex justify-between">
-                        <span className="text-[var(--color-text-muted)]">Total Evidence Items:</span>
-                        <span className="text-[var(--color-text-primary)] font-mono">{viewingReportData?.evidence_summary?.total_evidence_items || 18}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[var(--color-text-muted)]">Required Evidence Items:</span>
-                        <span className="text-[var(--color-text-primary)] font-mono">{viewingReportData?.evidence_summary?.required_evidence_items || 14}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[var(--color-text-muted)]">Missing Evidence:</span>
-                        <span className="text-success font-mono">None (0)</span>
-                      </div>
+                    <div className="space-y-[var(--space-2)]">
+                      <h5 className="text-xs font-bold text-[var(--color-fg-muted)] uppercase">Causal Evidence Analysis</h5>
+                      <Panel variant="inset" padding="md" className="text-xs space-y-[var(--space-2)]">
+                        <div className="flex justify-between">
+                          <span className="text-[var(--color-fg-muted)]">Total Evidence Items:</span>
+                          <span className="text-[var(--color-fg-default)] font-mono">{viewingReportData?.evidence_summary?.total_evidence_items || 18}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[var(--color-fg-muted)]">Required Evidence Items:</span>
+                          <span className="text-[var(--color-fg-default)] font-mono">{viewingReportData?.evidence_summary?.required_evidence_items || 14}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[var(--color-fg-muted)]">Missing Evidence:</span>
+                          <span className="text-[var(--color-success-fg)] font-mono">None (0)</span>
+                        </div>
+                      </Panel>
                     </div>
-                  </div>
 
-                  <div className="space-y-[var(--space-2)]">
-                    <h5 className="text-xs font-bold text-[var(--color-text-muted)] uppercase">Verified Resolution</h5>
-                    <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-                      Deploy patch candidate <code className="text-primary font-mono">patch-001</code> to reset inference batching window to 100ms.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                /* Raw JSON View */
-                <pre className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/50 p-[var(--space-4)] font-mono text-xs text-[var(--color-text-secondary)] overflow-x-auto leading-relaxed max-h-[50vh]">
-                  {JSON.stringify(viewingReportData, null, 2)}
-                </pre>
-              )}
+                    <div className="space-y-[var(--space-2)]">
+                      <h5 className="text-xs font-bold text-[var(--color-fg-muted)] uppercase">Verified Resolution</h5>
+                      <p className="text-xs leading-relaxed text-[var(--color-fg-muted)]">
+                        Deploy patch candidate <code className="text-[var(--color-accent-fg)] font-mono">patch-001</code> to reset inference batching window to 100ms.
+                      </p>
+                    </div>
+                  </Panel>
+                ) : (
+                  /* Raw JSON View */
+                  <Panel variant="inset" padding="lg">
+                    <pre className="font-mono text-xs text-[var(--color-fg-muted)] overflow-x-auto leading-relaxed max-h-[50vh]">
+                      {JSON.stringify(viewingReportData, null, 2)}
+                    </pre>
+                  </Panel>
+                )}
+              </div>
             </div>
 
             {/* Modal Footer */}
-            <div className="flex items-center justify-between p-[var(--space-4)] border-t border-[var(--color-border)] bg-[var(--color-surface)]/50">
-              <div className="text-xs text-[var(--color-text-muted)] font-mono">
-                {viewingReport.id} • {viewingReport.format.toUpperCase()}
+            <PanelFooter className="border-t border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/50">
+              <div className="flex items-center justify-between w-full">
+                <div className="text-xs text-[var(--color-fg-muted)] font-mono">
+                  {viewingReport.id} • {viewingReport.format.toUpperCase()}
+                </div>
+                <div className="text-xs text-[var(--color-fg-subtle)]">
+                  Press Esc or click outside to dismiss
+                </div>
               </div>
-              <div className="flex items-center gap-[var(--space-2)]">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setViewingReport(null)}
-                >
-                  Close
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => handleDownload(viewingReport)}
-                  className="gap-[var(--space-1)]"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  Download File
-                </Button>
-              </div>
-            </div>
+            </PanelFooter>
           </div>
         </div>
       )}
@@ -1176,7 +1072,7 @@ export function ReportsPage() {
       {/* ========================================================================= */}
       {deletingReport && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--theme-background)]/80 backdrop-blur-sm p-[var(--space-4)]"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-canvas)]/80 backdrop-blur-sm p-[var(--space-4)]"
           onClick={() => setDeletingReport(null)}
           role="alertdialog"
           aria-modal="true"
@@ -1184,41 +1080,43 @@ export function ReportsPage() {
           aria-describedby="delete-dialog-desc"
         >
           <div
-            className="flex flex-col w-full max-w-md rounded-2xl bg-surface border border-danger/30 shadow-2xl p-[var(--space-6)] overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            className="flex flex-col w-full max-w-md rounded-[var(--radius-xl)] bg-[var(--color-canvas-inset)] border border-[var(--color-danger-muted)] shadow-[var(--shadow-xl)] p-[var(--space-6)] overflow-hidden animate-in fade-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start gap-[var(--space-4)]">
-              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-danger/15 text-danger border border-danger/25">
-                <AlertTriangle className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 id="delete-dialog-title" className="text-lg font-bold text-[var(--color-text-primary)]">
-                  Delete Report
-                </h3>
-                <p id="delete-dialog-desc" className="mt-1 text-sm text-[var(--color-text-muted)]">
-                  Are you sure you want to delete <strong className="text-[var(--color-text-primary)] font-medium">{deletingReport.title}</strong> ({deletingReport.id})? This action cannot be undone.
-                </p>
-              </div>
-            </div>
+            <Panel variant="inset" padding="none">
+              <PanelSection dividerBefore={false} className="flex items-start gap-[var(--space-4)]">
+                <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--color-danger-muted)]/15 text-[var(--color-danger-fg)] border border-[var(--color-danger-muted)]/25">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 id="delete-dialog-title" className="text-lg font-bold text-[var(--color-fg-default)]">
+                    Delete Report
+                  </h3>
+                  <p id="delete-dialog-desc" className="mt-1 text-sm text-[var(--color-fg-muted)]">
+                    Are you sure you want to delete <strong className="text-[var(--color-fg-default)] font-medium">{deletingReport.title}</strong> ({deletingReport.id})? This action cannot be undone.
+                  </p>
+                </div>
+              </PanelSection>
 
-            <div className="mt-[var(--space-6)] flex items-center justify-end gap-[var(--space-3)]">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setDeletingReport(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={handleConfirmDelete}
-                className="gap-[var(--space-1)]"
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete Report
-              </Button>
-            </div>
+              <PanelFooter dividerBefore={true} className="flex items-center justify-end gap-[var(--space-3)]">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDeletingReport(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={handleConfirmDelete}
+                  className="gap-[var(--space-1)]"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete Report
+                </Button>
+              </PanelFooter>
+            </Panel>
           </div>
         </div>
       )}

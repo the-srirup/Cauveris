@@ -55,16 +55,6 @@ vi.mock("@/hooks/useMediaQuery", () => ({
   }),
 }));
 
-// Mock UI components
-vi.mock("@/components/ui", () => ({
-  Badge: ({ children, tone = "default", className = "" }: { children: React.ReactNode; tone?: string; className?: string }) => (
-    <span className={`px-2 py-0.5 rounded text-xs ${className}`} data-tone={tone}>{children}</span>
-  ),
-  Button: ({ children, className = "", ...props }: { children: React.ReactNode; className?: string }) => (
-    <button className={className} {...props}>{children}</button>
-  ),
-}));
-
 // Mock Tabs component - compound export structure
 vi.mock("@/components/Tabs", () => {
   const TabsRoot = ({ children, defaultValue }: { children: React.ReactNode; defaultValue: string }) => (

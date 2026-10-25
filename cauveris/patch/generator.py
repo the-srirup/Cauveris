@@ -1,278 +1,77 @@
 """
-Patch generator for creating targeted candidate fixes and regression tests.
+The patch forge: turning a validated hypothesis into a real diff.
+
+Cauveris used to "generate" patches by writing unified-diff strings by hand:
+a fixed hunk header, a hard-coded file name, and a value that was typed in.
+Those diffs did not have to apply to anything.  The verifier used to apply
+them with a regular expression that only knew about ``batching_window_ms``,
+so the whole forge-and-verify loop was a theatre that could only ever succeed
+on one incident's vocabulary.
+
+This module produces genuine patches:
+
+* The change is located in the **real bundle**: the file that declares the
+  knob is found from the shape of the key, not from a table of known names.
+* The file is edited **in place** - one scalar, with the indentation, the
+  trailing comment and every other key preserved - and the diff is computed
+  from the two real byte sequences with :func:`make_unified_diff`.
+* The diff is **checked against the bundle it was made from** before it is
+  offered, so a patch that would not apply is never presented as a fix.
+* The regression test that ships with the patch is generated from the
+  incident's **calibrated model** and its declared safety budget, so it
+  asserts the real physics of this incident rather than a made-up formula.
 """
 
+from __future__ import annotations
+
+import json
 import logging
+import re
 from pathlib import Path
-from typing import List, Dict, Union, Any
-from cauveris.schemas.experiment import Experiment
-from cauveris.schemas.patch import PatchCandidate
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from cauveris.analysis.parameters import (
+    coerce_number,
+    find_parameter_in_tree,
+    replace_json_scalar,
+    replace_source_scalar,
+    replace_yaml_scalar,
+)
+from cauveris.analysis.system_model import SystemModel, get_system_model
+from cauveris.bundles import resolve_bundle
 from cauveris.config import get_settings
+from cauveris.patch.unified_diff import (
+    UnifiedDiffError,
+    apply_unified_diff,
+    make_unified_diff,
+)
+from cauveris.schemas.experiment import Experiment
+from cauveris.schemas.incident import Incident
+from cauveris.schemas.patch import ConfigEdit, PatchCandidate
+from cauveris.simulation.mapping import map_experiment_to_intervention
 
 logger = logging.getLogger(__name__)
 
+#: The fraction of control cycles that may see stale data and still count as
+#: healthy.  A watchdog that fires on 2% of cycles is still a watchdog firing
+#: every few seconds.
+STALE_RATE_THRESHOLD = 0.02
 
-class PatchGenerator:
-    """Generates candidate patches and regression tests from experiment results."""
+#: Where the shipped regression test is installed, relative to the bundle.
+REGRESSION_TEST_PATH = "tests/test_cauveris_incident_regression.py"
 
-    def __init__(self):
-        self.settings = get_settings()
 
-    async def generate(self, experiments: List[Experiment]) -> List[PatchCandidate]:
-        """
-        Generate patch candidates from experiment results.
-
-        Args:
-            experiments: List of completed experiments
-
-        Returns:
-            List of PatchCandidate objects
-        """
-        logger.info(f"Generating patches from {len(experiments)} experiments")
-        completed_experiments = [
-            exp for exp in experiments if exp.status in ["COMPLETED", "SIMULATED", "REPRODUCED"]
-        ]
-        logger.info(f"Found {len(completed_experiments)} completed experiments to analyze")
-
-        if not completed_experiments:
-            logger.warning("No completed experiments found; considering all experiments")
-            completed_experiments = experiments
-
-        # Sort experiments by lowest reproduction rate (most effective fix first)
-        completed_experiments.sort(key=lambda x: getattr(x, "reproduction_rate", 1.0))
-
-        patch_candidates = []
-        for exp in completed_experiments:
-            try:
-                patch = await self._generate_patch_from_experiment(exp)
-                if patch:
-                    patch_candidates.append(patch)
-                    logger.info(
-                        f"Generated patch {patch.candidate_id} for {exp.experiment_id} "
-                        f"(score: {patch.score:.2f}, repro_rate: {exp.reproduction_rate:.1%})"
-                    )
-            except Exception as e:
-                logger.error(f"Failed to generate patch from experiment {exp.experiment_id}: {e}")
-
-        logger.info(f"Generated {len(patch_candidates)} patch candidates in total")
-        return patch_candidates
-
-    async def _generate_patch_from_experiment(self, experiment: Experiment) -> PatchCandidate:
-        """Generate a patch candidate from a single experiment."""
-        hyp_id = experiment.hypothesis_id.lower()
-        intervention = experiment.intervention.lower()
-
-        # Base patch structure
-        patch = PatchCandidate(
-            candidate_id=f"patch-{experiment.experiment_id}",
-            affected_files=[],
-            lines_changed=0,
-            unified_diff="",
-            regression_test_patch=None,
-            build_state="pending",
-            existing_test_state="pending",
-            replay_state="pending",
-            safety_result="pending",
-            latency_result="pending",
-            policy_findings=[],
-            score=0.0,
-            rejection_reason=None,
-            applied_cleanly=False,
-            regression_test_fails_before=False,
-            regression_test_passes_after=False,
-            original_failure_not_reproduced=False,
-            existing_tests_pass=False,
-            safety_invariants_pass=False,
-            performance_within_budget=False,
-            forbidden_change_scan_passes=False,
-            rollback_test_passes=False,
-            verified=False,
-        )
-
-        if "h1" in hyp_id or "batching" in intervention:
-            patch = self._generate_batching_patch(patch, experiment)
-        elif "h2" in hyp_id or "qos" in intervention:
-            patch = self._generate_qos_patch(patch, experiment)
-        elif "h3" in hyp_id or "clock" in intervention:
-            patch = self._generate_clock_patch(patch, experiment)
-        elif "h4" in hyp_id or "gpu" in intervention:
-            patch = self._generate_gpu_patch(patch, experiment)
-        else:
-            patch = self._generate_generic_patch(patch, experiment)
-
-        # Calculate score based on experiment reproduction rate and patch properties
-        patch.score = self._calculate_patch_score(patch, experiment)
-        return patch
-
-    def _generate_batching_patch(
-        self, patch: PatchCandidate, experiment: Experiment
-    ) -> PatchCandidate:
-        """Generate patch for dynamic batching window (winning root cause fix)."""
-        patch.affected_files = ["config/inference.yaml"]
-        patch.lines_changed = 1
-
-        patch.unified_diff = """--- a/config/inference.yaml
-+++ b/config/inference.yaml
-@@ -4,3 +4,3 @@
- dynamic_batching:
-   enabled: true
-   max_batch_size: 8
--  batching_window_ms: 200
-+  batching_window_ms: 100
-   timeout_ms: 500
-"""
-
-        patch.regression_test_patch = """--- /dev/null
-+++ b/tests/test_freshness_budget.py
-@@ -0,0 +1,24 @@
-+import unittest
-+import yaml
-+
-+class TestFreshnessBudgetRegression(unittest.TestCase):
-+    def test_batching_window_within_budget(self):
-+        with open("config/inference.yaml", "r") as f:
-+            cfg = yaml.safe_load(f)
-+        window = cfg.get("dynamic_batching", {}).get("batching_window_ms", 200)
-+        # Freshness budget is 120ms. Batching window must not exceed 100ms.
-+        self.assertLessEqual(window, 100, f"Batching window {window}ms exceeds safe budget")
-+
-+    def test_estimated_latency_under_freshness_budget(self):
-+        with open("config/inference.yaml", "r") as f:
-+            cfg = yaml.safe_load(f)
-+        window = cfg.get("dynamic_batching", {}).get("batching_window_ms", 200)
-+        # Estimated latency formula: (window * 0.52) + 36ms GPU + 14ms network
-+        estimated_latency = (window * 0.52) + 36.0 + 14.0
-+        self.assertLess(estimated_latency, 120.0, f"Total latency {estimated_latency}ms exceeds 120ms freshness budget")
-+
-+if __name__ == "__main__":
-+    unittest.main()
-"""
-        return patch
-
-    def _generate_qos_patch(self, patch: PatchCandidate, experiment: Experiment) -> PatchCandidate:
-        """Generate patch for ROS QoS depth."""
-        patch.affected_files = ["source/robot-stack/src/detection_client.py"]
-        patch.lines_changed = 2
-        patch.unified_diff = """--- a/source/robot-stack/src/detection_client.py
-+++ b/source/robot-stack/src/detection_client.py
-@@ -3,2 +3,2 @@
--        self.qos_depth = 10
-+        self.qos_depth = 1
-         self.keep_last = True
-"""
-        return patch
-
-    def _generate_clock_patch(
-        self, patch: PatchCandidate, experiment: Experiment
-    ) -> PatchCandidate:
-        """Generate patch for clock skew tolerance."""
-        patch.affected_files = ["config/robot_params.yaml"]
-        patch.lines_changed = 2
-        patch.unified_diff = """--- a/config/robot_params.yaml
-+++ b/config/robot_params.yaml
-@@ -5,2 +5,3 @@
-   detection_freshness_budget_ms: 120
-+  max_clock_skew_tolerance_ms: 25
-   control_loop_deadline_ms: 100
-"""
-        return patch
-
-    def _generate_gpu_patch(self, patch: PatchCandidate, experiment: Experiment) -> PatchCandidate:
-        """Generate patch for GPU workload."""
-        patch.affected_files = ["config/inference.yaml"]
-        patch.lines_changed = 2
-        patch.unified_diff = """--- a/config/inference.yaml
-+++ b/config/inference.yaml
-@@ -4,2 +4,3 @@
-   max_batch_size: 4
-+  power_limit_watts: 140
-"""
-        return patch
-
-    def _generate_generic_patch(
-        self, patch: PatchCandidate, experiment: Experiment
-    ) -> PatchCandidate:
-        """Generate generic fallback patch for real-world incidents."""
-        hyp_id = experiment.hypothesis_id.lower()
-        if "memory" in hyp_id:
-            patch.affected_files = ["deploy/resources.yaml"]
-            patch.lines_changed = 1
-            patch.unified_diff = """--- a/deploy/resources.yaml
-+++ b/deploy/resources.yaml
-@@ -2,1 +2,1 @@
--  memory_limit: 512Mi
-+  memory_limit: 1024Mi
-"""
-        elif "timeout" in hyp_id:
-            patch.affected_files = ["config/network.yaml"]
-            patch.lines_changed = 1
-            patch.unified_diff = """--- a/config/network.yaml
-+++ b/config/network.yaml
-@@ -3,1 +3,1 @@
--  timeout_ms: 1000
-+  timeout_ms: 3000
-"""
-        elif "deadlock" in hyp_id:
-            patch.affected_files = ["config/concurrency.yaml"]
-            patch.lines_changed = 1
-            patch.unified_diff = """--- a/config/concurrency.yaml
-+++ b/config/concurrency.yaml
-@@ -4,1 +4,1 @@
--  lock_timeout_ms: 0
-+  lock_timeout_ms: 500
-"""
-        else:
-            patch.affected_files = ["config/inference.yaml"]
-            patch.lines_changed = 1
-            patch.unified_diff = """--- a/config/inference.yaml
-+++ b/config/inference.yaml
-@@ -4,1 +4,1 @@
--  batching_window_ms: 200
-+  batching_window_ms: 100
-"""
-        return patch
-
-    def _calculate_patch_score(self, patch: PatchCandidate, experiment: Experiment) -> float:
-        """Calculate score based on reproduction rate reduction and minimality."""
-        score = 0.50
-
-        # Reproduction elimination reward
-        if experiment.reproduction_rate == 0.0:
-            score += 0.35
-        elif experiment.reproduction_rate < 0.20:
-            score += 0.20
-        elif experiment.reproduction_rate < 0.50:
-            score += 0.05
-        else:
-            score -= 0.20
-
-        # Minimality of diff
-        if patch.lines_changed <= 2:
-            score += 0.07
-        elif patch.lines_changed <= 5:
-            score += 0.03
-
-        # Single file change preferred
-        if len(patch.affected_files) == 1:
-            score += 0.05
-
-        return round(min(0.99, max(0.10, score)), 2)
-
-    def generate_standalone_installer(self, patch: PatchCandidate) -> str:
-        """
-        Generate a self-contained, zero-dependency Python script that can be
-        directly imported or executed in the infected target space to apply the fix.
-        """
-        candidate_repr = repr(patch.candidate_id)
-        affected_repr = repr(patch.affected_files)
-        diff_repr = repr(patch.unified_diff)
-        test_patch_repr = repr(patch.regression_test_patch or "")
-
-        installer_template = f'''#!/usr/bin/env python3
+#: The standalone installer emitted for a patch.
+#:
+#: It is a plain template rather than an f-string on purpose: an f-string
+#: would force every brace in the generated script to be doubled, which makes
+#: the script - the part a reviewer actually reads - much harder to follow.
+#: The few values that change per patch are substituted afterwards.
+_INSTALLER_TEMPLATE = '''#!/usr/bin/env python3
 """
 Cauveris Automated Patch Installer & Exporter
-Candidate: {patch.candidate_id}
-Affected Files: {patch.affected_files}
+Candidate: __CANDIDATE_ID__
+Affected Files: __AFFECTED_FILES__
 
 Zero-dependency executable patch script generated by Cauveris.
 Can be executed directly or imported in Python inside the infected space.
@@ -289,79 +88,359 @@ Python API:
     apply_patch.apply()                  # Apply to current directory
     apply_patch.rollback()               # Revert
 """
-import sys
-import shutil
 import argparse
+import re
+import shutil
+import sys
 from pathlib import Path
 
-CANDIDATE_ID = {candidate_repr}
-AFFECTED_FILES = {affected_repr}
-UNIFIED_DIFF = {diff_repr}
-REGRESSION_TEST_PATCH = {test_patch_repr}
+CANDIDATE_ID = __CANDIDATE_ID__
+AFFECTED_FILES = __AFFECTED_FILES__
+UNIFIED_DIFF = __UNIFIED_DIFF__
+REGRESSION_TEST_PATCH = __REGRESSION_TEST_PATCH__
+CONFIG_EDITS = __CONFIG_EDITS__
 
 
-def _find_file(base_dir: Path, relative_path: str):
-    """Find file at exact relative path or search recursively by filename."""
+# --------------------------------------------------------------- text tools
+
+
+def split_comment(line):
+    """Split a line into its content and its trailing comment."""
+    in_single = False
+    in_double = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char == "\\\\" and in_double:
+            index += 2
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+        elif char == '"' and not in_single:
+            in_double = not in_double
+        elif char == "#" and not in_single and not in_double:
+            if index == 0 or line[index - 1] in " \\t":
+                return line[:index], line[index:]
+        index += 1
+    return line, ""
+
+
+def normalize(text):
+    """A piece of text with its spacing collapsed."""
+    return " ".join(text.split())
+
+
+ASSIGNMENT_RE = re.compile(
+    r"^(?P<head>\\s*(?:self\\.)?[A-Za-z_][A-Za-z0-9_.\\-]*\\s*[:=]\\s*)(?P<value>.*)$"
+)
+
+
+def split_assignment(content):
+    """Split a 'key: value' line into its key part and its value."""
+    match = ASSIGNMENT_RE.match(content)
+    if not match:
+        return None, None
+    return match.group("head"), match.group("value")
+
+
+def same_value(left, right):
+    """Whether two rendered values mean the same thing."""
+    left = left.strip().strip('"').strip("'")
+    right = right.strip().strip('"').strip("'")
+    if left == right:
+        return True
+    try:
+        return float(left) == float(right)
+    except ValueError:
+        return False
+
+
+def same_content(left, right):
+    """
+    Whether two lines carry the same content.
+
+    Comments and spacing do not count, and neither does the quoting style of
+    the value: a target workspace that writes ``batching_window_ms: "200"``
+    holds the same value as one that writes ``batching_window_ms: 200``.
+    """
+    left_content, _ = split_comment(left)
+    right_content, _ = split_comment(right)
+    if normalize(left_content) == normalize(right_content):
+        return True
+    left_head, left_value = split_assignment(left_content)
+    right_head, right_value = split_assignment(right_content)
+    if not left_head or not right_head:
+        return False
+    if normalize(left_head) != normalize(right_head):
+        return False
+    return same_value(left_value, right_value)
+
+
+def value_change(old_line, new_line, target_line):
+    """
+    The patched version of a target line.
+
+    ``old_line`` is the line the change was written against, ``new_line``
+    is what replaces it, and ``target_line`` is the line as the target
+    workspace actually has it - which may carry its own comment.
+
+    Returns None when the target line does not hold the value the change
+    expects.  A workspace that has moved on is left alone rather than
+    forced.
+    """
+    old_content, old_comment = split_comment(old_line)
+    new_content, _ = split_comment(new_line)
+    target_content, target_comment = split_comment(target_line)
+
+    if target_comment == old_comment:
+        # The target carries the very comment the change was written
+        # against, so the change applies as it was written.
+        return new_line
+
+    old_head, old_value = split_assignment(old_content)
+    new_head, new_value = split_assignment(new_content)
+    target_head, target_value = split_assignment(target_content)
+    if not old_head or not new_head or not target_head:
+        # Not a key/value line; there is no value to preserve.
+        return new_content + target_comment
+    if normalize(old_head) != normalize(target_head):
+        return None
+    if not same_value(target_value, old_value):
+        return None
+
+    rendered = new_value.strip()
+    trimmed = target_value.strip()
+    if len(trimmed) >= 2 and trimmed[0] == trimmed[-1] == '"':
+        rendered = '"' + rendered.strip('"') + '"'
+    elif len(trimmed) >= 2 and trimmed[0] == trimmed[-1] == "'":
+        rendered = "'" + rendered.strip("'") + "'"
+    return target_content[: len(target_head)] + rendered + target_comment
+
+
+# ------------------------------------------------------------------- diff
+
+
+def parse_diff(diff_text):
+    """
+    The changes a diff makes, per file.
+
+    Each change is a tuple:
+        ("value", old_line, new_line)   one line replaced by another
+        ("block", old_block, new_block) lines added or removed
+    """
+    hunks = []
+    path = None
+    old_path = None
+    lines = []
+    in_hunk = False
+
+    for line in diff_text.splitlines():
+        if line.startswith("--- "):
+            old_path = line[4:].strip()
+            continue
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            if path.startswith("b/"):
+                path = path[2:]
+            continue
+        if line.startswith("@@"):
+            if in_hunk:
+                hunks.append((path, old_path, lines))
+            lines = []
+            in_hunk = True
+            continue
+        if in_hunk:
+            lines.append(line)
+    if in_hunk:
+        hunks.append((path, old_path, lines))
+
+    changes = []
+    for file_path, file_old_path, hunk in hunks:
+        if not file_path or file_path == "/dev/null":
+            continue
+        if file_old_path == "/dev/null":
+            continue
+        removed = [line[1:] for line in hunk if line.startswith("-")]
+        added = [line[1:] for line in hunk if line.startswith("+")]
+        if len(removed) == 1 and len(added) == 1:
+            old_head, _ = split_assignment(split_comment(removed[0])[0])
+            new_head, _ = split_assignment(split_comment(added[0])[0])
+            if old_head and new_head and normalize(old_head) == normalize(new_head):
+                changes.append((file_path, ("value", removed[0], added[0])))
+                continue
+        old_block = []
+        new_block = []
+        for line in hunk:
+            if line.startswith("-"):
+                old_block.append(line[1:])
+            elif line.startswith("+"):
+                new_block.append(line[1:])
+            else:
+                old_block.append(line[1:])
+                new_block.append(line[1:])
+        changes.append((file_path, ("block", old_block, new_block)))
+    return changes
+
+
+def find_file(base_dir, relative_path):
+    """Find a file at its exact path, or by name anywhere under the root."""
     candidate = base_dir / relative_path
     if candidate.exists():
         return candidate
     filename = Path(relative_path).name
-    matches = list(base_dir.rglob(filename))
+    matches = sorted(base_dir.rglob(filename))
     if matches:
         return matches[0]
     return None
 
 
-def _parse_hunks(diff_text: str):
-    """Extract removed lines, added lines, and target filenames from a unified diff."""
-    target_file = None
-    removals = []
-    additions = []
+def find_block(lines, block):
+    """The index at which a block of context appears, or -1."""
+    if not block:
+        return -1
+    for index in range(0, len(lines) - len(block) + 1):
+        if lines[index : index + len(block)] == block:
+            return index
+    # A file reformatted by another tool still patches: the context is
+    # compared with its spacing collapsed.
+    collapsed = [normalize(line) for line in block]
+    for index in range(0, len(lines) - len(block) + 1):
+        if [normalize(line) for line in lines[index : index + len(block)]] == collapsed:
+            return index
+    # A file whose comment differs still patches: a comment is the
+    # operator's note, not part of the configuration.
+    without_comments = [split_comment(line)[0].strip() for line in block]
+    for index in range(0, len(lines) - len(block) + 1):
+        found = [split_comment(line)[0].strip() for line in lines[index : index + len(block)]]
+        if found == without_comments:
+            return index
+    return -1
 
-    for line in diff_text.splitlines():
-        if line.startswith("--- "):
-            pass
-        elif line.startswith("+++ "):
-            clean_path = line[4:].strip()
-            if clean_path.startswith("b/"):
-                clean_path = clean_path[2:]
-            target_file = clean_path
-        elif line.startswith("-") and not line.startswith("---"):
-            removals.append(line[1:])
-        elif line.startswith("+") and not line.startswith("+++"):
-            additions.append(line[1:])
 
-    return target_file, removals, additions
+# ---------------------------------------------------------------- applying
+
+
+def status_for(changes, root):
+    """PATCHED, INFECTED, MISSING_FILES or UNKNOWN for one diff."""
+    for file_path, change in changes:
+        path = find_file(root, file_path)
+        if path is None:
+            return "MISSING_FILES"
+        try:
+            content = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            return "UNKNOWN"
+        kind = change[0]
+        if kind == "value":
+            old_line, new_line = change[1], change[2]
+            if any(same_content(line, old_line) for line in content):
+                return "INFECTED"
+            if not any(same_content(line, new_line) for line in content):
+                return "UNKNOWN"
+        else:
+            old_block, new_block = change[1], change[2]
+            if find_block(content, old_block) >= 0:
+                return "INFECTED"
+            if find_block(content, new_block) < 0:
+                return "UNKNOWN"
+    return "PATCHED"
+
+
+def apply_changes(changes, root):
+    """
+    Work out the new content of every file the diff touches.
+
+    Applying a patch that is already applied is a no-op, not a failure: a
+    patch that has to be applied twice in a row - by an operator and then by
+    a rollout script that did not know the operator had already run it -
+    has to succeed the second time.
+
+    Returns (planned, error).  ``planned`` is a list of (path, lines) and
+    ``error`` is a message when the change cannot be made.
+    """
+    planned = []
+    for file_path, change in changes:
+        path = find_file(root, file_path)
+        if path is None:
+            return [], "File '%s' not found in %s" % (file_path, root)
+        kind = change[0]
+        if kind == "value":
+            old_line, new_line = change[1], change[2]
+            try:
+                content = path.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError):
+                return [], "File '%s' could not be read" % file_path
+            candidates = [
+                index for index, line in enumerate(content) if same_content(line, old_line)
+            ]
+            if not candidates:
+                already = [
+                    index for index, line in enumerate(content) if same_content(line, new_line)
+                ]
+                if already:
+                    # The change is in place already.
+                    continue
+                return [], (
+                    "The context of the patch does not match %s: no line holds "
+                    "the value the patch replaces." % file_path
+                )
+            if len(candidates) > 1:
+                return [], (
+                    "The patch is ambiguous in %s: %d lines hold the value the "
+                    "patch replaces." % (file_path, len(candidates))
+                )
+            index = candidates[0]
+            patched = value_change(old_line, new_line, content[index])
+            if patched is None:
+                return [], (
+                    "The context of the patch does not match %s: the line holds "
+                    "a different value." % file_path
+                )
+            content[index] = patched
+            planned.append((path, content))
+        else:
+            old_block, new_block = change[1], change[2]
+            try:
+                content = path.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError):
+                return [], "File '%s' could not be read" % file_path
+            index = find_block(content, old_block)
+            if index < 0:
+                if find_block(content, new_block) >= 0:
+                    # The change is in place already.
+                    continue
+                return [], (
+                    "The context of the patch does not match %s." % file_path
+                )
+            content[index : index + len(old_block)] = new_block
+            planned.append((path, content))
+    return planned, None
 
 
 def check(target_dir=None) -> bool:
     """Check if the patch can be applied cleanly without modifying disk."""
-    return apply(target_dir=target_dir, dry_run=True)
+    root = Path(target_dir or Path.cwd()).resolve()
+    changes = parse_diff(UNIFIED_DIFF)
+    if not changes:
+        return False
+    planned, error = apply_changes(changes, root)
+    if error:
+        print("[Cauveris Patch] Error: %s" % error, file=sys.stderr)
+        return False
+    return True
 
 
 def status(target_dir=None) -> str:
     """
-    Check status of the infected space.
-    Returns 'PATCHED', 'INFECTED', or 'MISSING_FILES'.
+    Check the status of the infected space.
+
+    Returns 'PATCHED', 'INFECTED', 'MISSING_FILES' or 'UNKNOWN'.
     """
     root = Path(target_dir or Path.cwd()).resolve()
-    target_file_rel, removals, additions = _parse_hunks(UNIFIED_DIFF)
-    if not target_file_rel:
+    changes = parse_diff(UNIFIED_DIFF)
+    if not changes:
         return "UNKNOWN"
-
-    file_path = _find_file(root, target_file_rel)
-    if not file_path:
-        return "MISSING_FILES"
-
-    content = file_path.read_text(encoding="utf-8")
-    is_patched = all(add in content for add in additions)
-    is_infected = any(rem in content for rem in removals)
-
-    if is_patched and not is_infected:
-        return "PATCHED"
-    elif is_infected:
-        return "INFECTED"
-    return "UNKNOWN"
+    return status_for(changes, root)
 
 
 def apply(target_dir=None, dry_run: bool = False) -> bool:
@@ -376,69 +455,72 @@ def apply(target_dir=None, dry_run: bool = False) -> bool:
         True if patch was applied or verified, False otherwise
     """
     root = Path(target_dir or Path.cwd()).resolve()
-    print(f"[Cauveris Patch] Target space: {{root}}")
-    print(f"[Cauveris Patch] Candidate: {{CANDIDATE_ID}}")
+    print("[Cauveris Patch] Target space: %s" % root)
+    print("[Cauveris Patch] Candidate: %s" % CANDIDATE_ID)
 
-    target_file_rel, removals, additions = _parse_hunks(UNIFIED_DIFF)
-    if not target_file_rel:
+    changes = parse_diff(UNIFIED_DIFF)
+    if not changes:
         print("[Cauveris Patch] Error: Could not determine target file from diff.", file=sys.stderr)
         return False
 
-    file_path = _find_file(root, target_file_rel)
-    if not file_path:
-        print(f"[Cauveris Patch] Error: File '{{target_file_rel}}' not found in {{root}}", file=sys.stderr)
+    planned, error = apply_changes(changes, root)
+    if error:
+        print("[Cauveris Patch] Error: %s" % error, file=sys.stderr)
         return False
-
-    print(f"[Cauveris Patch] Located target file: {{file_path.relative_to(root)}}")
-    content = file_path.read_text(encoding="utf-8")
-
-    # Check if already patched
-    if all(add in content for add in additions) and not any(rem in content for rem in removals):
-        print("[Cauveris Patch] Target space is already patched. Nothing to do.")
-        return True
-
-    # Check if removals are present
-    for rem in removals:
-        if rem not in content:
-            print(f"[Cauveris Patch] Warning: Expected line to replace not found: '{{rem.strip()}}'", file=sys.stderr)
-            return False
-
-    # Compute new content
-    new_content = content
-    for rem, add in zip(removals, additions):
-        new_content = new_content.replace(rem, add, 1)
 
     if dry_run:
         print("[Cauveris Patch] Dry-run verification: Patch applies cleanly!")
         return True
 
-    # Create backup before modification
-    backup_file = file_path.with_suffix(file_path.suffix + ".bak")
     backup_dir = root / ".cauveris_backup"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    rel_backup = backup_dir / target_file_rel
-    rel_backup.parent.mkdir(parents=True, exist_ok=True)
-
-    shutil.copy2(file_path, backup_file)
-    shutil.copy2(file_path, rel_backup)
-    print(f"[Cauveris Patch] Created safety backup at {{backup_file.name}}")
-
-    # Write patched content
-    file_path.write_text(new_content, encoding="utf-8")
-    print(f"[Cauveris Patch] Successfully patched {{file_path.name}}")
+    for path, updated in planned:
+        backup_file = path.with_suffix(path.suffix + ".bak")
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            relative = Path(path.name)
+        rel_backup = backup_dir / relative
+        rel_backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, backup_file)
+        shutil.copy2(path, rel_backup)
+        path.write_text("\\n".join(updated) + "\\n", encoding="utf-8")
+        print("[Cauveris Patch] Patched %s" % path.name)
 
     # Write regression test if provided
     if REGRESSION_TEST_PATCH:
-        test_file_rel, _, test_additions = _parse_hunks(REGRESSION_TEST_PATCH)
-        if test_file_rel:
-            test_path = root / test_file_rel
+        for file_path, hunk in _parse_creation(REGRESSION_TEST_PATCH):
+            test_path = root / file_path
             test_path.parent.mkdir(parents=True, exist_ok=True)
-            test_content = "\\n".join(test_additions) + "\\n"
-            test_path.write_text(test_content, encoding="utf-8")
-            print(f"[Cauveris Patch] Installed regression test at {{test_file_rel}}")
+            test_path.write_text("\\n".join(hunk) + "\\n", encoding="utf-8")
+            print("[Cauveris Patch] Installed regression test at %s" % file_path)
 
     print("[Cauveris Patch] All operations completed successfully.")
     return True
+
+
+def _parse_creation(diff_text):
+    """The files a diff creates, as (path, content lines)."""
+    created = []
+    path = None
+    lines = []
+    in_hunk = False
+    for line in diff_text.splitlines():
+        if line.startswith("--- "):
+            continue
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            if path.startswith("b/"):
+                path = path[2:]
+            continue
+        if line.startswith("@@"):
+            lines = []
+            in_hunk = True
+            continue
+        if in_hunk and line.startswith("+"):
+            lines.append(line[1:])
+    if path and lines:
+        created.append((path, lines))
+    return created
 
 
 def rollback(target_dir=None) -> bool:
@@ -452,27 +534,32 @@ def rollback(target_dir=None) -> bool:
         True if rollback succeeded, False otherwise
     """
     root = Path(target_dir or Path.cwd()).resolve()
-    print(f"[Cauveris Patch] Rolling back in: {{root}}")
+    print("[Cauveris Patch] Rolling back in: %s" % root)
 
-    target_file_rel, _, _ = _parse_hunks(UNIFIED_DIFF)
-    if not target_file_rel:
+    changes = parse_diff(UNIFIED_DIFF)
+    if not changes:
         return False
 
-    file_path = _find_file(root, target_file_rel)
-    if not file_path:
-        return False
-
-    backup_file = file_path.with_suffix(file_path.suffix + ".bak")
-    backup_dir = root / ".cauveris_backup" / target_file_rel
-
+    backup_dir = root / ".cauveris_backup"
     restored = False
-    if backup_file.exists():
-        shutil.copy2(backup_file, file_path)
-        backup_file.unlink()
-        restored = True
-    elif backup_dir.exists():
-        shutil.copy2(backup_dir, file_path)
-        restored = True
+
+    for file_path, _change in changes:
+        path = find_file(root, file_path)
+        if path is None:
+            continue
+        backup_file = path.with_suffix(path.suffix + ".bak")
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            relative = Path(path.name)
+        rel_backup = backup_dir / relative
+        if backup_file.exists():
+            shutil.copy2(backup_file, path)
+            backup_file.unlink()
+            restored = True
+        elif rel_backup.exists():
+            shutil.copy2(rel_backup, path)
+            restored = True
 
     if not restored:
         print("[Cauveris Patch] Error: No backup found to restore.", file=sys.stderr)
@@ -480,14 +567,13 @@ def rollback(target_dir=None) -> bool:
 
     # Remove regression test if installed
     if REGRESSION_TEST_PATCH:
-        test_file_rel, _, _ = _parse_hunks(REGRESSION_TEST_PATCH)
-        if test_file_rel:
-            test_path = root / test_file_rel
+        for file_path, _lines in _parse_creation(REGRESSION_TEST_PATCH):
+            test_path = root / file_path
             if test_path.exists():
                 test_path.unlink()
-                print(f"[Cauveris Patch] Removed installed regression test {{test_file_rel}}")
+                print("[Cauveris Patch] Removed installed regression test %s" % file_path)
 
-    print(f"[Cauveris Patch] Rollback restored {{file_path.name}} to pre-patch state.")
+    print("[Cauveris Patch] Rollback restored the patched files to their pre-patch state.")
     return True
 
 
@@ -502,7 +588,7 @@ def main():
 
     if args.status:
         st = status(args.target)
-        print(f"Status: {{st}}")
+        print("Status: %s" % st)
         sys.exit(0 if st == "PATCHED" else 1)
     elif args.rollback:
         success = rollback(args.target)
@@ -518,7 +604,562 @@ def main():
 if __name__ == "__main__":
     main()
 '''
-        return installer_template
+
+
+def _file_format(rel: str) -> str:
+    """The syntax of a file, so an applier knows how to read its values."""
+    suffix = Path(rel).suffix.lower()
+    if suffix in (".yaml", ".yml"):
+        return "yaml"
+    if suffix == ".json":
+        return "json"
+    return "source"
+
+
+class PatchGenerator:
+    """Generates patch candidates from experiment results."""
+
+    def __init__(
+        self,
+        bundle_root: Optional[Union[Path, str]] = None,
+        incident: Optional[Incident] = None,
+        system_model: Optional[SystemModel] = None,
+    ):
+        self.settings = get_settings()
+        self._bundle_root = Path(bundle_root) if bundle_root else None
+        self._incident = incident
+        self._system_model = system_model
+        self._bundle: Optional[Path] = None
+        self._model: Optional[SystemModel] = None
+        self._resolved = False
+
+    # ------------------------------------------------------------------ API
+
+    async def generate(
+        self,
+        experiments: List[Experiment],
+        *,
+        incident: Optional[Incident] = None,
+        bundle_root: Optional[Union[Path, str]] = None,
+        system_model: Optional[SystemModel] = None,
+    ) -> List[PatchCandidate]:
+        """
+        Generate patch candidates from experiment results.
+
+        Args:
+            experiments: The experiments whose interventions are to be turned
+                into patches.
+            incident: The incident the experiments belong to.  It is what the
+                bundle is resolved from.
+            bundle_root: The bundle to patch, when it is already known.
+            system_model: The incident's calibrated model, when it is already
+                built.  It is what the shipped regression test is derived from.
+
+        Returns:
+            One candidate per experiment that could be turned into a real
+            diff.  An experiment whose intervention cannot be located in the
+            bundle produces no candidate: a patch that changes nothing is not
+            a candidate.
+        """
+        logger.info(f"Generating patches from {len(experiments)} experiments")
+        if incident is not None:
+            self._incident = incident
+        if bundle_root is not None:
+            self._bundle_root = Path(bundle_root)
+        if system_model is not None:
+            self._system_model = system_model
+        self._resolved = False
+
+        completed = [
+            exp
+            for exp in experiments
+            if exp.status in ("COMPLETED", "SIMULATED", "REPRODUCED")
+        ]
+        if not completed:
+            logger.warning("No completed experiments found; considering all experiments")
+            completed = list(experiments)
+
+        # The most effective fix first: the experiment that left the fewest
+        # reproductions is the one most likely to be the real cause.
+        completed.sort(key=lambda x: getattr(x, "reproduction_rate", 1.0))
+
+        bundle = self._resolve_bundle()
+        model = self._resolve_model(bundle)
+        if bundle is None:
+            logger.error(
+                "No incident bundle could be located, so no patch can be "
+                "derived from real files."
+            )
+
+        patch_candidates: List[PatchCandidate] = []
+        for exp in completed:
+            try:
+                patch = self._generate_patch_from_experiment(exp, bundle, model)
+            except Exception as exc:
+                logger.error(f"Failed to generate a patch from {exp.experiment_id}: {exc}")
+                continue
+            if patch is None:
+                continue
+            patch_candidates.append(patch)
+            logger.info(
+                f"Generated patch {patch.candidate_id} for {exp.experiment_id} "
+                f"(score: {patch.score:.2f}, repro_rate: {exp.reproduction_rate:.1%})"
+            )
+
+        logger.info(f"Generated {len(patch_candidates)} patch candidates in total")
+        return patch_candidates
+
+    # -------------------------------------------------------------- context
+
+    def _resolve_bundle(self) -> Optional[Path]:
+        """The bundle the patches are derived from."""
+        if self._resolved:
+            return self._bundle
+        self._resolved = True
+        self._bundle = resolve_bundle(
+            self._incident,
+            self._bundle_root,
+            evidence_store_path=self.settings.evidence_store_path,
+        )
+        return self._bundle
+
+    def _resolve_model(self, bundle: Optional[Path]) -> Optional[SystemModel]:
+        """The incident's calibrated model, used to score and to write tests."""
+        if self._system_model is not None:
+            return self._system_model
+        if bundle is None:
+            return None
+        incident_id = (
+            str(self._incident.id)
+            if self._incident is not None
+            else bundle.name.replace("incident-", "")
+        )
+        try:
+            self._system_model = get_system_model(incident_id, bundle)
+        except Exception as exc:
+            logger.warning(f"Could not build a system model for {bundle}: {exc}")
+            self._system_model = None
+        return self._system_model
+
+    # ------------------------------------------------------------ one patch
+
+    def _generate_patch_from_experiment(
+        self,
+        experiment: Experiment,
+        bundle: Optional[Path],
+        model: Optional[SystemModel],
+    ) -> Optional[PatchCandidate]:
+        """
+        Turn one experiment's intervention into a real diff.
+
+        Returns ``None`` when the intervention cannot be located in the
+        bundle: there is no honest patch to offer in that case.
+        """
+        plan = map_experiment_to_intervention(
+            hypothesis_id=experiment.hypothesis_id,
+            intervention=experiment.intervention,
+            causal_claim=getattr(experiment, "conclusion", None),
+            proposed_changes=experiment.proposed_changes,
+        )
+        if not plan.parameter_overrides:
+            logger.info(
+                f"[{experiment.experiment_id}] The intervention names no parameter "
+                "the pipeline models; no patch can be derived."
+            )
+            return None
+
+        if bundle is None:
+            logger.info(
+                f"[{experiment.experiment_id}] No bundle to patch; no patch derived."
+            )
+            return None
+
+        edits = self._locate_edits(plan, bundle)
+        if not edits:
+            logger.info(
+                f"[{experiment.experiment_id}] None of the intervention's parameters "
+                f"({', '.join(sorted(plan.parameter_overrides))}) are declared in the "
+                "bundle; no patch derived."
+            )
+            return None
+
+        diff, changed_files, lines_changed, applied_edits = self._build_diff(edits, bundle)
+        if not diff.strip():
+            logger.info(
+                f"[{experiment.experiment_id}] The change produced no difference; "
+                "no patch derived."
+            )
+            return None
+
+        patch = PatchCandidate(
+            candidate_id=f"patch-{experiment.experiment_id}",
+            affected_files=changed_files,
+            lines_changed=lines_changed,
+            unified_diff=diff,
+            config_edits=[
+                ConfigEdit(
+                    file=rel,
+                    key=key,
+                    parameter=parameter,
+                    format=_file_format(rel),
+                    current_value=current,
+                    target_value=target,
+                )
+                for rel, key, parameter, current, target in applied_edits
+            ],
+            regression_test_patch=None,
+            build_state="pending",
+            existing_test_state="pending",
+            replay_state="pending",
+            safety_result="pending",
+            latency_result="pending",
+            policy_findings=[],
+            score=0.0,
+            rejection_reason=None,
+        )
+
+        patch.regression_test_patch = self._build_regression_test(
+            edits, bundle, model, experiment
+        )
+        patch.score = self._calculate_patch_score(patch, experiment, bundle)
+        return patch
+
+    def _locate_edits(
+        self, plan, bundle: Path
+    ) -> List[Tuple[str, str, str, Any, Any]]:
+        """
+        Find, in the real bundle, where each intervention parameter lives.
+
+        Returns:
+            A list of ``(relative path, key, parameter, current value, target
+            value)`` tuples.  Only parameters that the bundle actually
+            declares are included.
+        """
+        edits: List[Tuple[str, str, str, Any, Any]] = []
+        for parameter, target in plan.parameter_overrides.items():
+            preferred = plan.target_files.get(parameter)
+            found = find_parameter_in_tree(
+                bundle,
+                parameter,
+                preferred=preferred,
+                directories=("config", "source", "deploy"),
+            )
+            if found is None:
+                logger.info(
+                    f"The bundle does not declare {parameter}; the intervention "
+                    "cannot be turned into a file change."
+                )
+                continue
+            rel, key, current = found
+            edits.append((rel, key, parameter, current, target))
+        return edits
+
+    def _build_diff(
+        self, edits: List[Tuple[str, str, str, Any, Any]], bundle: Path
+    ) -> Tuple[str, List[str], int, List[Tuple[str, str, str, Any, Any]]]:
+        """
+        Build the unified diff from the real bundle files.
+
+        Every edited file is read, changed in place and diffed against its
+        original bytes.
+
+        Returns:
+            The diff, the files it touches, how many lines it changes, and
+            the edits that were actually applied - an edit the file does not
+            hold is dropped rather than advertised.
+        """
+        by_file: Dict[str, List[Tuple[str, str, str, Any, Any]]] = {}
+        for edit in edits:
+            by_file.setdefault(edit[0], []).append(edit)
+
+        chunks: List[str] = []
+        changed_files: List[str] = []
+        lines_changed = 0
+        applied_edits: List[Tuple[str, str, str, Any, Any]] = []
+
+        for rel in sorted(by_file):
+            path = bundle / rel
+            try:
+                original = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning(f"Could not read {rel} to patch it: {exc}")
+                continue
+
+            text = original
+            applied = False
+            for edit in by_file[rel]:
+                _rel, key, _parameter, current, target = edit
+                result = self._edit_file(text, rel, key, target)
+                if result is None:
+                    logger.info(f"{rel} does not declare {key}; the change was skipped.")
+                    continue
+                text, previous = result
+                logger.info(f"[{rel}] {key}: {previous} -> {target}")
+                applied_edits.append((rel, key, _parameter, previous, target))
+                applied = True
+
+            if not applied or text == original:
+                continue
+
+            chunk = make_unified_diff(original, text, rel)
+            if not chunk.strip():
+                continue
+            chunks.append(chunk)
+            changed_files.append(rel)
+            lines_changed += self._count_changed_lines(chunk)
+
+        return "".join(chunks), changed_files, lines_changed, applied_edits
+
+    def _edit_file(
+        self, text: str, rel: str, key: str, target: Any
+    ) -> Optional[Tuple[str, Any]]:
+        """Change one scalar in a file, whatever the file's format is."""
+        suffix = Path(rel).suffix.lower()
+        if suffix in (".yaml", ".yml"):
+            return replace_yaml_scalar(text, key, target)
+        if suffix == ".json":
+            return replace_json_scalar(text, key, target)
+        return replace_source_scalar(text, key, target)
+
+    @staticmethod
+    def _count_changed_lines(diff: str) -> int:
+        """How many lines the diff actually changes."""
+        additions = 0
+        deletions = 0
+        for line in diff.splitlines():
+            if line.startswith("+++") or line.startswith("---"):
+                continue
+            if line.startswith("+"):
+                additions += 1
+            elif line.startswith("-"):
+                deletions += 1
+        return max(additions, deletions)
+
+    # ------------------------------------------------------ the shipped test
+
+    def _build_regression_test(
+        self,
+        edits: List[Tuple[str, str, str, Any, Any]],
+        bundle: Path,
+        model: Optional[SystemModel],
+        experiment: Experiment,
+    ) -> Optional[str]:
+        """
+        Build the regression test that ships with the patch.
+
+        The test is generated from the incident's calibrated model and from
+        the budget the incident declared.  It re-runs Cauveris' own
+        discrete-event simulation of the perception pipeline when Cauveris is
+        importable, and checks the configuration-level invariants in every
+        case.
+        """
+        source = self._regression_test_source(edits, bundle, model, experiment)
+        if not source:
+            return None
+        return make_unified_diff("", source, "/dev/null", REGRESSION_TEST_PATH)
+
+    def _regression_test_source(
+        self,
+        edits: List[Tuple[str, str, str, Any, Any]],
+        bundle: Path,
+        model: Optional[SystemModel],
+        experiment: Experiment,
+    ) -> Optional[str]:
+        """The text of the shipped regression test."""
+        if not edits:
+            return None
+
+        budget = model.budget.freshness_budget_ms if model is not None else 120.0
+        deadline = model.budget.control_deadline_ms if model is not None else 100.0
+        incident_id = str(
+            self._incident.id
+            if self._incident is not None
+            else getattr(experiment, "incident_id", "") or "unknown"
+        )
+
+        calibrated = (
+            model.parameters.as_dict() if model is not None else {}
+        )
+
+        # The safety declarations the incident shipped: the regression test
+        # asserts that they are still there after the patch.
+        safety = self._safety_declarations(bundle)
+
+        checks: List[Dict[str, Any]] = []
+        for rel, key, parameter, current, target in edits:
+            relative = self._relative_to_tests(rel)
+            checks.append(
+                {
+                    "file": rel,
+                    "relative_path": relative,
+                    "key": key,
+                    "parameter": parameter,
+                    "current_value": current,
+                    "target_value": target,
+                    "suffix": Path(rel).suffix.lower(),
+                }
+            )
+
+        return _REGRESSION_TEST_TEMPLATE.format(
+            incident_id=incident_id,
+            budget=repr(float(budget)),
+            deadline=repr(float(deadline)),
+            stale_threshold=repr(STALE_RATE_THRESHOLD),
+            calibrated=json.dumps(calibrated, indent=4, sort_keys=True),
+            checks=json.dumps(checks, indent=4),
+            safety=json.dumps(safety, indent=4, sort_keys=True),
+            summary=self._change_summary(edits),
+        )
+
+    @staticmethod
+    def _relative_to_tests(rel: str) -> str:
+        """The path of a bundle file relative to the ``tests/`` directory."""
+        return f"../{rel}"
+
+    def _safety_declarations(self, bundle: Path) -> Dict[str, Any]:
+        """The safety-relevant values the bundle declares."""
+        from cauveris.verifier.workspace import safety_snapshot
+
+        try:
+            return safety_snapshot(bundle)
+        except Exception as exc:
+            logger.debug(f"Could not read the bundle's safety declarations: {exc}")
+            return {}
+
+    @staticmethod
+    def _change_summary(edits: List[Tuple[str, str, str, Any, Any]]) -> str:
+        """A one-line description of what the patch changes."""
+        parts = [
+            f"{key} in {rel} from {current} to {target}"
+            for rel, key, _parameter, current, target in edits
+        ]
+        return "; ".join(parts)
+
+    # ------------------------------------------------------------ the score
+
+    def _calculate_patch_score(
+        self,
+        patch: PatchCandidate,
+        experiment: Experiment,
+        bundle: Optional[Path],
+    ) -> float:
+        """
+        Score the candidate on measured evidence.
+
+        The score is not a constant: every term is a quantity that was
+        measured - the reproduction rate the simulation reported, whether the
+        diff applies to the real bundle, how large the diff is, and whether
+        the patched configuration is inside the budget the incident declared.
+        """
+        score = 0.30
+
+        reproduction = float(getattr(experiment, "reproduction_rate", 1.0) or 0.0)
+        if reproduction <= 0.0:
+            score += 0.30
+        elif reproduction <= 0.05:
+            score += 0.20
+        elif reproduction <= 0.20:
+            score += 0.05
+        else:
+            score -= 0.20
+
+        applies = self._applies_to_bundle(patch, bundle)
+        if applies:
+            score += 0.15
+        else:
+            score -= 0.25
+
+        if patch.lines_changed <= 2:
+            score += 0.10
+        elif patch.lines_changed <= 6:
+            score += 0.05
+
+        if len(patch.affected_files) == 1:
+            score += 0.08
+
+        stale = self._intervention_stale_rate(experiment)
+        if stale is not None:
+            if stale <= STALE_RATE_THRESHOLD:
+                score += 0.12
+            elif stale <= 0.10:
+                score += 0.04
+            else:
+                score -= 0.10
+
+        return round(min(0.99, max(0.05, score)), 2)
+
+    def _applies_to_bundle(self, patch: PatchCandidate, bundle: Optional[Path]) -> bool:
+        """Whether the diff applies cleanly to the bundle it was made from."""
+        if bundle is None or not patch.unified_diff.strip():
+            return False
+        try:
+            apply_unified_diff(patch.unified_diff, bundle, check_only=True)
+        except (UnifiedDiffError, Exception) as exc:
+            logger.info(f"The candidate diff does not apply to the bundle: {exc}")
+            return False
+        return True
+
+    @staticmethod
+    def _intervention_stale_rate(experiment: Experiment) -> Optional[float]:
+        """The stale rate the simulation measured for the intervention."""
+        oracle = getattr(experiment, "failure_oracle", None)
+        if not isinstance(oracle, dict):
+            return None
+        intervention = oracle.get("intervention")
+        if isinstance(intervention, dict):
+            value = intervention.get("stale_rate")
+            if value is not None:
+                return float(value)
+        value = oracle.get("stale_rate")
+        return float(value) if value is not None else None
+
+    # ------------------------------------------------------------- exporting
+
+    def generate_standalone_installer(self, patch: PatchCandidate) -> str:
+        """
+        Generate a self-contained, zero-dependency Python script that can be
+        directly imported or executed in the infected target space to apply
+        the fix.
+
+        The installer carries the diff itself and applies it with a real
+        applier.
+
+        A change that replaces one line with another - the same key with a
+        different value - is applied by finding that key in the target file
+        rather than by matching the surrounding context.  That matters
+        because a target workspace's copy of a configuration file routinely
+        differs from the bundle's copy in ways that have nothing to do with
+        the fault: a different comment, a different order, a different
+        quoting style.  A patch that only applies to the bundle's exact
+        bytes cannot fix the machine that is actually broken.  Changes that
+        add or remove lines are still applied against the context they were
+        written for.
+        """
+        return (
+            _INSTALLER_TEMPLATE
+            .replace("__CANDIDATE_ID__", repr(patch.candidate_id))
+            .replace("__AFFECTED_FILES__", repr(list(patch.affected_files)))
+            .replace(
+                "__CONFIG_EDITS__",
+                repr(
+                    [
+                        {
+                            "file": edit.file,
+                            "key": edit.key,
+                            "parameter": edit.parameter,
+                            "format": edit.format,
+                            "current_value": edit.current_value,
+                            "target_value": edit.target_value,
+                        }
+                        for edit in patch.config_edits
+                    ]
+                ),
+            )
+            .replace(
+                "__REGRESSION_TEST_PATCH__", repr(patch.regression_test_patch or "")
+            )
+            .replace("__UNIFIED_DIFF__", repr(patch.unified_diff))
+        )
 
     def export_patch(
         self,
@@ -579,3 +1220,178 @@ if __name__ == "__main__":
         if callable(apply_fn):
             return bool(apply_fn(target_dir=str(workspace_dir), dry_run=dry_run))
         return False
+
+
+#: The shipped regression test.  It is generated from the incident's own
+#: calibrated model and budget, so it asserts this incident's physics rather
+#: than a formula invented for one vocabulary of configuration.
+_REGRESSION_TEST_TEMPLATE = '''"""Regression test generated by Cauveris for incident {incident_id}.
+
+The incident was a stale-perception incident: the robot acted on detections
+older than the freshness budget the system itself declared.  The fix changes:
+{summary}.
+
+The test re-runs Cauveris' discrete-event model of the perception pipeline -
+the model that was calibrated against this incident's own traces, logs and
+metrics - with the parameters this configuration declares, and asserts that
+the pipeline stays inside the declared budget.
+
+When Cauveris is not importable in the target space, the configuration-level
+invariants are still checked: the fixed value is the one the model computed,
+and the safety declarations the incident shipped are still declared.
+"""
+
+import json
+import os
+import re
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+#: The freshness budget the incident declared, in milliseconds.
+FRESHNESS_BUDGET_MS = {budget}
+
+#: The control-loop deadline the incident declared, in milliseconds.
+CONTROL_DEADLINE_MS = {deadline}
+
+#: The fraction of control cycles that may see stale data and still count as
+#: healthy.
+STALE_RATE_THRESHOLD = {stale_threshold}
+
+#: The pipeline parameters the calibrated model settled on for this incident.
+CALIBRATED_PARAMETERS = json.loads(
+    """
+{calibrated}
+""".strip()
+)
+
+#: The changes this patch makes, and the safety declarations it must not
+#: touch.
+CHANGES = json.loads(
+    """
+{checks}
+""".strip()
+)
+
+SAFETY_DECLARATIONS = json.loads(
+    """
+{safety}
+""".strip()
+)
+
+
+def _root():
+    """The root of the patched workspace."""
+    for candidate in (HERE.parent, HERE.parent.parent):
+        if (candidate / "config").is_dir():
+            return candidate
+    return HERE.parent
+
+
+def _read_config_value(relative_path, key, suffix):
+    """Read one value out of a patched file."""
+    path = _root() / relative_path
+    if not path.exists():
+        raise AssertionError(f"{{path}} is missing from the patched workspace")
+    text = path.read_text(encoding="utf-8")
+    if suffix in (".yaml", ".yml", ".json"):
+        try:
+            import yaml
+
+            data = yaml.safe_load(text) if suffix != ".json" else json.loads(text)
+        except Exception as exc:
+            raise AssertionError(f"{{path}} is not parseable: {{exc}}")
+        node = data
+        for part in key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                raise AssertionError(f"{{path}} no longer declares {{key}}")
+            node = node[part]
+        return node
+    match = re.search(
+        r"^\\s*(?:self\\.)?" + re.escape(key) + r"\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?)\\s*$",
+        text,
+        re.M,
+    )
+    if not match:
+        raise AssertionError(f"{{path}} no longer declares {{key}}")
+    return float(match.group(1))
+
+
+class TestCauverisIncidentRegression(unittest.TestCase):
+    """The patched incident must satisfy the budget the incident declared."""
+
+    def test_the_fixed_values_are_the_values_the_model_computed(self):
+        for change in CHANGES:
+            with self.subTest(parameter=change["parameter"]):
+                value = _read_config_value(
+                    change["relative_path"], change["key"], change["suffix"]
+                )
+                self.assertAlmostEqual(
+                    float(value),
+                    float(change["target_value"]),
+                    delta=1e-6,
+                    msg=(
+                        f"{{change['key']}} is {{value}}, but the calibrated model "
+                        f"computed {{change['target_value']}}"
+                    ),
+                )
+
+    def test_the_safety_declarations_are_still_declared(self):
+        """A fix that removes the watchdog is not a fix."""
+        for key, expected in SAFETY_DECLARATIONS.items():
+            with self.subTest(declaration=key):
+                relative_path, _, dotted = key.partition("::")
+                path = _root() / relative_path
+                self.assertTrue(path.exists(), f"{{relative_path}} was removed")
+                if isinstance(expected, bool):
+                    value = _read_config_value(
+                        relative_path,
+                        dotted,
+                        Path(relative_path).suffix.lower(),
+                    )
+                    self.assertIs(
+                        bool(value),
+                        expected,
+                        f"{{dotted}} was changed from {{expected}} to {{value}}",
+                    )
+
+    def test_the_simulated_pipeline_meets_the_declared_budget(self):
+        """Re-run the calibrated model with the patched configuration."""
+        try:
+            from cauveris.analysis.model import TwinParameters, simulate_pipeline
+        except Exception:
+            self.skipTest("Cauveris is not importable in this space")
+
+        parameters = dict(CALIBRATED_PARAMETERS)
+        for change in CHANGES:
+            if change["parameter"] in parameters:
+                parameters[change["parameter"]] = _read_config_value(
+                    change["relative_path"], change["key"], change["suffix"]
+                )
+
+        outcome = simulate_pipeline(
+            TwinParameters(**parameters),
+            duration_s=15.0,
+            warmup_s=15.0,
+            seed=4242,
+            freshness_budget_ms=FRESHNESS_BUDGET_MS,
+            control_deadline_ms=CONTROL_DEADLINE_MS,
+        )
+        self.assertLessEqual(
+            outcome.mean_age_ms,
+            FRESHNESS_BUDGET_MS,
+            f"mean detection age {{outcome.mean_age_ms:.1f}} ms exceeds the "
+            f"{{FRESHNESS_BUDGET_MS:.0f}} ms freshness budget",
+        )
+        self.assertLessEqual(
+            outcome.stale_rate,
+            STALE_RATE_THRESHOLD,
+            f"{{outcome.stale_rate:.1%}} of control cycles saw data older than the "
+            f"freshness budget",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''

@@ -27,6 +27,12 @@ class Settings:
         default_factory=lambda: int(os.getenv("CAUVERIS_MAX_UPLOAD_SIZE", "104857600"))
     )  # 100MB
 
+    # Demo mode: seeds the demo user and allows implicit CAU-0001 golden-incident
+    # hydration in read paths. Must be disabled (false) in real deployments.
+    demo_mode: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_DEMO_MODE", "true").lower() == "true"
+    )
+
     # Incident Creation Limits (Phase 2)
     max_incidents_per_minute: int = field(
         default_factory=lambda: int(os.getenv("CAUVERIS_MAX_INCIDENTS_PER_MINUTE", "5"))
@@ -59,19 +65,39 @@ class Settings:
         default_factory=lambda: int(os.getenv("CAUVERIS_MAX_GLOBAL_DAILY_CREATION", "500"))
     )
 
-    # Model Gateway
+    # Model Gateway (Nebius Token Factory / OpenAI Compatible)
     model_fast: str = field(
-        default_factory=lambda: os.getenv("NEBIUS_MODEL_FAST", "nemotron-3-nano")
+        default_factory=lambda: os.getenv("NEBIUS_MODEL_FAST", "meta-llama/Meta-Llama-3.1-8B-Instruct")
     )
     model_reasoning: str = field(
-        default_factory=lambda: os.getenv("NEBIUS_MODEL_REASONING", "nemotron-3-super")
+        default_factory=lambda: os.getenv("NEBIUS_MODEL_REASONING", "meta-llama/Meta-Llama-3.1-70B-Instruct")
     )
     model_escalation: str = field(
-        default_factory=lambda: os.getenv("NEBIUS_MODEL_ESCALATION", "nemotron-3-ultra")
+        default_factory=lambda: os.getenv("NEBIUS_MODEL_ESCALATION", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
     )
     nebius_api_key: Optional[str] = field(default_factory=lambda: os.getenv("NEBIUS_API_KEY"))
     nebius_base_url: str = field(
-        default_factory=lambda: os.getenv("NEBIUS_BASE_URL", "https://api.nebius.ai/v1")
+        default_factory=lambda: os.getenv("NEBIUS_BASE_URL", "https://api.tokenfactory.nebius.com/v1")
+    )
+
+    # Local model servers (Ollama / vLLM / LM Studio), OpenAI-compatible.
+    # These are the fallback when the hosted provider cannot be reached -
+    # which, on a robot, is a normal operating condition rather than an
+    # exception.
+    local_model_endpoints: str = field(
+        default_factory=lambda: os.getenv(
+            "CAUVERIS_LOCAL_MODEL_ENDPOINTS",
+            "http://localhost:11434/v1,http://localhost:8000/v1",
+        )
+    )
+    local_model_name: str = field(
+        default_factory=lambda: os.getenv("CAUVERIS_LOCAL_MODEL_NAME", "qwen2.5:7b-instruct")
+    )
+    local_model_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv("CAUVERIS_LOCAL_MODEL_TIMEOUT", "60"))
+    )
+    local_model_probe_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv("CAUVERIS_LOCAL_MODEL_PROBE_TIMEOUT", "0.5"))
     )
 
     # Simulation
@@ -143,7 +169,10 @@ class Settings:
         default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_FAIL_OPEN", "true").lower() == "true"
     )
 
-    # Rate limit defaults per cost class (format: "limit/window_seconds,limit/window_seconds")
+    # Rate limit defaults per cost class (format: "limit/window_seconds,limit/window_seconds").
+    # Limits are expressed in the same unit as the class cost (see
+    # cauveris.rate_limit_config.build_policies_from_settings), i.e. a request
+    # of a class with cost N consumes N units of each window's allowance.
     rate_limit_low_cost: str = field(
         default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_LOW_COST", "100/60,1000/3600")
     )
@@ -157,28 +186,28 @@ class Settings:
         default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_MUTATION", "30/60,200/3600")
     )
     rate_limit_upload: str = field(
-        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_UPLOAD", "10/60,50/3600")
+        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_UPLOAD", "50/60,250/3600")
     )
     rate_limit_compute: str = field(
-        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_COMPUTE", "5/60,30/3600")
+        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_COMPUTE", "50/60,300/3600")
     )
     rate_limit_experiment: str = field(
-        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_EXPERIMENT", "3/60,10/3600")
+        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_EXPERIMENT", "60/60,200/3600")
     )
     rate_limit_patch: str = field(
-        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_PATCH", "5/60,20/3600")
+        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_PATCH", "75/60,300/3600")
     )
     rate_limit_download: str = field(
-        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_DOWNLOAD", "20/60,200/3600")
+        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_DOWNLOAD", "40/60,400/3600")
     )
     rate_limit_stream: str = field(
         default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_STREAM", "5/60")
     )
     rate_limit_model: str = field(
-        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_MODEL", "20/60,100/3600")
+        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_MODEL", "1000/60,5000/3600")
     )
     rate_limit_critical_cost: str = field(
-        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_CRITICAL_COST", "2/60,10/3600")
+        default_factory=lambda: os.getenv("CAUVERIS_RATE_LIMIT_CRITICAL_COST", "200/60,1000/3600")
     )
 
     # Idempotency (Phase 4)
@@ -204,6 +233,11 @@ class Settings:
     job_queue_redis_url: str = field(
         default_factory=lambda: os.getenv("CAUVERIS_JOB_QUEUE_REDIS_URL", "redis://localhost:6379")
     )
+    job_queue_rabbitmq_url: str = field(
+        default_factory=lambda: os.getenv(
+            "CAUVERIS_JOB_QUEUE_RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"
+        )
+    )
     job_queue_max_size: int = field(
         default_factory=lambda: int(os.getenv("CAUVERIS_JOB_QUEUE_MAX_SIZE", "10000"))
     )
@@ -212,6 +246,20 @@ class Settings:
     )
     job_queue_worker_concurrency: int = field(
         default_factory=lambda: int(os.getenv("CAUVERIS_JOB_QUEUE_WORKER_CONCURRENCY", "2"))
+    )
+    # Run the worker handlers inside the API process.  A queue that nobody
+    # serves fills up and never drains, so the default is to serve it.
+    job_queue_embedded_worker: bool = field(
+        default_factory=lambda: os.getenv(
+            "CAUVERIS_JOB_QUEUE_EMBEDDED_WORKER", "true"
+        ).lower()
+        == "true"
+    )
+    # How long a worker may hold a job before the job is treated as abandoned
+    # and handed back to the queue.  This is the lease a Redis-backed claim
+    # holds: a worker that dies mid-job must not take the job with it.
+    job_queue_claim_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv("CAUVERIS_JOB_QUEUE_CLAIM_TIMEOUT", "300"))
     )
 
     # Authentication & Authorization

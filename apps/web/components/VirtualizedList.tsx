@@ -23,53 +23,77 @@ export function VirtualizedList<T>({
   renderItem,
   height,
   width = "100%",
-  overscanCount = 5,
+  overscanCount = 4,
   className = "",
   style,
 }: VirtualizedListProps<T>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
 
-  // Calculate visible range
-  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscanCount);
-  const visibleCount = Math.ceil(height / itemHeight) + overscanCount * 2;
-  const endIndex = Math.min(items.length, startIndex + visibleCount);
+  // A zero item height makes the range maths divide by zero (Infinity) and
+  // renders the entire list instead of a window of it.
+  const safeItemHeight = itemHeight > 0 ? itemHeight : 1;
+
+  const totalHeight = items.length * safeItemHeight;
+  const maxScroll = Math.max(0, totalHeight - height);
+
+  // Clamp scrollTop to valid range to prevent overscroll disappearing bug
+  const clampedScrollTop = Math.max(0, Math.min(scrollTop, maxScroll));
+
+  // Calculate visible range with clamped values
+  const rawStartIndex = Math.floor(clampedScrollTop / safeItemHeight);
+  const maxStartIndex = Math.max(0, items.length - 1);
+  const startIndex = Math.max(0, Math.min(maxStartIndex, rawStartIndex - overscanCount));
+  const visibleCount = Math.ceil(height / safeItemHeight) + overscanCount * 2;
+  const endIndex = Math.max(startIndex, Math.min(items.length, startIndex + visibleCount));
   const visibleItems = items.slice(startIndex, endIndex);
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
   }, []);
 
-  const totalHeight = items.length * itemHeight;
-  const offsetY = startIndex * itemHeight;
+  // When items change or filter changes, ensure scroll position is not beyond the new total height
+  useEffect(() => {
+    if (containerRef.current) {
+      if (containerRef.current.scrollTop > maxScroll) {
+        containerRef.current.scrollTop = maxScroll;
+        setScrollTop(maxScroll);
+      }
+    }
+  }, [items.length, maxScroll]);
 
   return (
     <div
       ref={containerRef}
-      className={className}
+      className={`scrollbar-thin ${className}`}
       style={{
         height,
         width,
-        overflow: "auto",
+        overflowY: "auto",
+        overflowX: "hidden",
         position: "relative",
+        WebkitOverflowScrolling: "touch",
         ...style,
       }}
       onScroll={handleScroll}
     >
-      <div style={{ height: totalHeight, position: "relative" }}>
-        <div style={{ transform: `translateY(${offsetY}px)`, position: "absolute", top: 0, left: 0, right: 0 }}>
-          {visibleItems.map((item, i) => {
-            const index = startIndex + i;
-            const itemStyle: React.CSSProperties = {
-              position: "absolute",
-              top: index * itemHeight,
-              left: 0,
-              right: 0,
-              height: itemHeight,
-            };
-            return <div key={index} style={itemStyle}>{renderItem(item, index, itemStyle)}</div>;
-          })}
-        </div>
+      <div style={{ height: totalHeight, minHeight: "100%", position: "relative", width: "100%" }}>
+        {visibleItems.map((item, i) => {
+          const index = startIndex + i;
+          const itemStyle: React.CSSProperties = {
+            position: "absolute",
+            top: index * itemHeight,
+            left: 0,
+            right: 0,
+            height: itemHeight,
+            boxSizing: "border-box",
+          };
+          return (
+            <div key={index} style={itemStyle}>
+              {renderItem(item, index, { width: "100%", height: "100%", boxSizing: "border-box" })}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -104,23 +128,32 @@ export function VirtualizedGrid<T>({
   const [scrollTop, setScrollTop] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
 
-  // Calculate visible range
-  const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - overscanCount);
-  const visibleRowCount = Math.ceil(height / rowHeight) + overscanCount * 2;
-  const endRow = Math.min(Math.ceil(items.length / columnCount), startRow + visibleRowCount);
+  // Guard against degenerate geometry: a zero row/column height or column count
+  // produces Infinity/NaN in the range maths, and a scroll position past the
+  // end of the content produced a *negative* range length - `Array(-3)` throws
+  // "Invalid array length" and takes the whole page down.
+  const safeRowHeight = rowHeight > 0 ? rowHeight : 1;
+  const safeColumnWidth = columnWidth > 0 ? columnWidth : 1;
+  const safeColumnCount = columnCount > 0 ? columnCount : 1;
 
-  const startCol = Math.max(0, Math.floor(scrollLeft / columnWidth) - overscanCount);
-  const visibleColCount = Math.ceil((typeof width === "number" ? width : 800) / columnWidth) + overscanCount * 2;
-  const endCol = Math.min(columnCount, startCol + visibleColCount);
+  const totalRows = Math.ceil(items.length / safeColumnCount);
+  const totalHeight = totalRows * safeRowHeight;
+  const totalWidth = safeColumnCount * safeColumnWidth;
+
+  // Calculate visible range
+  const startRow = Math.max(0, Math.min(totalRows, Math.floor(scrollTop / safeRowHeight) - overscanCount));
+  const visibleRowCount = Math.ceil(height / safeRowHeight) + overscanCount * 2;
+  const endRow = Math.max(startRow, Math.min(totalRows, startRow + visibleRowCount));
+
+  const startCol = Math.max(0, Math.min(safeColumnCount, Math.floor(scrollLeft / safeColumnWidth) - overscanCount));
+  const visibleColCount =
+    Math.ceil((typeof width === "number" ? width : 800) / safeColumnWidth) + overscanCount * 2;
+  const endCol = Math.max(startCol, Math.min(safeColumnCount, startCol + visibleColCount));
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
     setScrollLeft(e.currentTarget.scrollLeft);
   }, []);
-
-  const totalRows = Math.ceil(items.length / columnCount);
-  const totalHeight = totalRows * rowHeight;
-  const totalWidth = columnCount * columnWidth;
 
   return (
     <div

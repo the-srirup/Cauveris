@@ -8,9 +8,11 @@ import time
 import inspect
 from enum import Enum, auto
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional, Callable, Any, Dict, List
 from dataclasses import dataclass, field
 from cauveris.config import get_settings
+from cauveris.analysis.system_model import get_system_model
 from cauveris.schemas.incident import Incident
 from cauveris.model_gateway.base import ModelGateway
 from cauveris.ingestion.controller import IngestionController
@@ -379,6 +381,49 @@ class PipelineOrchestrator:
                 self._notify_progress(legacy_state)
                 return True
 
+    def _bundle_root(self, context: PipelineContext) -> Optional[Path]:
+        """
+        Where the incident's evidence bundle lives.
+
+        The patch forge and the verifier both work against this directory, so
+        that the diff the forge offers is a diff against the very files the
+        verifier checks.
+        """
+        incident = context.validated_incident or context.incident
+        if incident is None:
+            return None
+        bundle_path = None
+        raw = getattr(incident, "bundle_path", None)
+        if raw:
+            bundle_path = Path(raw)
+        elif isinstance(getattr(incident, "manifest", None), dict):
+            manifest_path = incident.manifest.get("bundle_path")
+            if manifest_path:
+                bundle_path = Path(manifest_path)
+        if bundle_path is None or not bundle_path.is_dir():
+            return None
+        return bundle_path
+
+    def _system_model(self, context: PipelineContext):
+        """
+        The incident's calibrated model, built from its own evidence.
+
+        The digitial twin, the hypothesis layer and the verifier all read the
+        same model, so that they cannot disagree about what the incident was.
+        """
+        incident = context.validated_incident or context.incident
+        if incident is None:
+            return None
+        bundle_path = self._bundle_root(context)
+        if bundle_path is None:
+            return None
+        return get_system_model(
+            str(incident.id),
+            bundle_path,
+            timeline_events=list(context.timeline_events or []),
+            manifest=dict(getattr(incident, "manifest", None) or {}),
+        )
+
     async def process_incident(self, incident: Incident) -> PipelineContext:
         """
         Process an incident through the full pipeline.
@@ -473,7 +518,8 @@ class PipelineOrchestrator:
             # 5. Sandbox Experiment Planning
             async def do_sandbox():
                 context.experiments = await self.sandbox_controller.plan_experiments(
-                    context.hypotheses
+                    context.hypotheses,
+                    incident_id=context.incident.id if context.incident else None,
                 )
                 await self.sandbox_controller.run_experiments(context.experiments)
                 stage_map["sandbox_planning"].details["experiments"] = len(
@@ -493,7 +539,8 @@ class PipelineOrchestrator:
             # 6. Digital Twin Simulation & Scoring
             async def do_simulation():
                 context.experiments = await self.simulation_runner.run_simulations(
-                    context.experiments
+                    context.experiments,
+                    system_model=self._system_model(context),
                 )
                 stage_map["simulation_execution"].details["simulated_experiments"] = len(
                     context.experiments or []
@@ -511,7 +558,11 @@ class PipelineOrchestrator:
 
             # 7. Patch Forge
             async def do_patch_forge():
-                context.patch_candidates = await self.patch_generator.generate(context.experiments)
+                context.patch_candidates = await self.patch_generator.generate(
+                    context.experiments,
+                    incident=context.validated_incident or context.incident,
+                    system_model=self._system_model(context),
+                )
                 stage_map["patch_forge"].details["patches"] = len(context.patch_candidates or [])
 
             ok = await self._execute_stage(
@@ -527,7 +578,9 @@ class PipelineOrchestrator:
             # 8. 9-Point Invariant Verification
             async def do_verification():
                 context.verification_reports = await self.verification_engine.verify(
-                    context.patch_candidates
+                    context.patch_candidates,
+                    incident=context.validated_incident or context.incident,
+                    bundle_root=self._bundle_root(context),
                 )
                 stage_map["invariant_verification"].details["verified_count"] = sum(
                     1 for r in (context.verification_reports or []) if getattr(r, "verified", False)

@@ -1,0 +1,26 @@
+{
+  "launch_file": "warehouse_robot.launch.py",
+  "arguments": {
+    "use_sim_time": "false",
+    "robot_namespace": "flotilla_01",
+    "enable_safety_monitoring": "true"
+  },
+  "nodes": [
+    {
+      "package": "robot_navigation",
+      "executable": "navigation_node",
+      "name": "navigation_node"
+    },
+    {
+      "package": "object_detection",
+      "executable": "detection_client",
+      "name": "detection_client"
+    },
+    {
+      "package": "tf2_ros",
+      "executable": "buffer_server",
+      "name": "tf_buffer"
+    }
+  ],
+  "timestamp": "2026-09-20T10:29:50Z"
+}

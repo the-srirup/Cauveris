@@ -47,7 +47,9 @@ class IdempotencyRecord:
     state: IdempotencyState = IdempotencyState.PROCESSING
     created_at: float = field(default_factory=time.time)
     completed_at: Optional[float] = None
-    expires_at: float = field(default_factory=lambda: time.time() + 86400)  # 24h default TTL
+    # None means "use the store's default TTL"; the store assigns the concrete
+    # expiry when the record is stored.
+    expires_at: Optional[float] = None
 
 
 class IdempotencyStore(ABC):
@@ -136,7 +138,7 @@ class InMemoryIdempotencyStore(IdempotencyStore):
         await self._ensure_cleanup_task()
         with self._lock:
             record = self._data.get(key)
-            if record and record.expires_at < time.time():
+            if record and record.expires_at is not None and record.expires_at < time.time():
                 # Expired
                 del self._data[key]
                 return None
@@ -146,6 +148,10 @@ class InMemoryIdempotencyStore(IdempotencyStore):
         with self._lock:
             if record.key in self._data:
                 return False
+            if record.expires_at is None:
+                # Apply the store's configured TTL; the record used to carry a
+                # hard-coded 24h expiry that ignored the configuration.
+                record.expires_at = time.time() + self._default_ttl
             self._data[record.key] = record
             return True
 
@@ -179,7 +185,11 @@ class InMemoryIdempotencyStore(IdempotencyStore):
         now = time.time()
         removed = 0
         with self._lock:
-            expired_keys = [k for k, v in self._data.items() if v.expires_at < now]
+            expired_keys = [
+                k
+                for k, v in self._data.items()
+                if v.expires_at is not None and v.expires_at < now
+            ]
             for k in expired_keys:
                 del self._data[k]
                 removed += 1
@@ -243,7 +253,8 @@ class RedisIdempotencyStore(IdempotencyStore):
                 return None
             record_data = json.loads(data)
             # Check expiry
-            if record_data.get("expires_at", 0) < time.time():
+            expires_at = record_data.get("expires_at")
+            if expires_at is not None and expires_at < time.time():
                 await self._redis.delete(self._make_key(key))
                 return None
             # Convert to record
@@ -272,6 +283,9 @@ class RedisIdempotencyStore(IdempotencyStore):
 
         try:
             key = self._make_key(record.key)
+            if record.expires_at is None:
+                # Apply the store's configured TTL.
+                record.expires_at = time.time() + self._default_ttl
             # Use SET NX for atomic check-and-set
             data = json.dumps(
                 {
@@ -327,7 +341,7 @@ class RedisIdempotencyStore(IdempotencyStore):
             record_data["completed_at"] = time.time()
 
             # Save with same TTL
-            ttl = int(record_data["expires_at"] - time.time())
+            ttl = int((record_data.get("expires_at") or 0) - time.time())
             if ttl <= 0:
                 ttl = self._default_ttl
 
@@ -622,6 +636,13 @@ async def idempotency_middleware(request: Request, call_next):
             headers=dict(response.headers),
             media_type=response.media_type,
         )
+
+    # The request failed with a server error. Drop the idempotency record so
+    # that a retry with the same key is not permanently rejected by a record
+    # stuck in the PROCESSING state.
+    store = get_idempotency_store()
+    if store is not None:
+        await store.delete(idempotency_key)
 
     return response
 

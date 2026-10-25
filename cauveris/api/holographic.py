@@ -36,7 +36,10 @@ from cauveris.holographic.counterfactual import (
 from cauveris.holographic.anomaly import create_anomaly_detector
 from cauveris.holographic.synthetic import SyntheticIncidentGenerator, IncidentType
 from cauveris.holographic.topology import SystemTopology, build_topology_from_timeline
+from cauveris.holographic.calibration import CalibrationProfile
+from cauveris.attribution import canonical_component, load_component_aliases
 from cauveris.ingestion.controller import IngestionController
+from cauveris.timeline.builder import TimelineBuilder
 from cauveris.schemas.incident import Incident
 
 router = APIRouter(prefix="/holographic", tags=["holographic"])
@@ -135,10 +138,17 @@ async def get_holographic_reconstruction(
     """
     try:
         # Try to get real incident data
-        timeline, temporal_analysis, topology, bundle = await _get_incident_data(incident_id)
+        timeline, temporal_analysis, topology, bundle, calibration, aliases = (
+            await _get_incident_data(incident_id)
+        )
 
         # Create request object for config generation
         from pydantic import BaseModel
+
+        def _val(x, default=None):
+            if hasattr(x, "default"):
+                return x.default
+            return x if x is not None else default
 
         class _TempRequest(BaseModel):
             enable_counterfactual: bool
@@ -151,14 +161,14 @@ async def get_holographic_reconstruction(
             gpu_max_kernel_time_ns: int
 
         temp_request = _TempRequest(
-            enable_counterfactual=enable_counterfactual,
-            enable_anomalies=enable_anomalies,
-            enable_multiscale=enable_multiscale,
-            use_gpu=use_gpu,
-            gpu_decay_type=gpu_decay_type,
-            gpu_normalization=gpu_normalization,
-            gpu_time_step_ns=gpu_time_step_ns,
-            gpu_max_kernel_time_ns=gpu_max_kernel_time_ns,
+            enable_counterfactual=_val(enable_counterfactual, False),
+            enable_anomalies=_val(enable_anomalies, True),
+            enable_multiscale=_val(enable_multiscale, True),
+            use_gpu=_val(use_gpu, True),
+            gpu_decay_type=_val(gpu_decay_type, "exponential"),
+            gpu_normalization=_val(gpu_normalization, "l1"),
+            gpu_time_step_ns=_val(gpu_time_step_ns, 1000000),
+            gpu_max_kernel_time_ns=_val(gpu_max_kernel_time_ns, 10000000000),
         )
         config = _create_holographic_config(temp_request)
 
@@ -181,6 +191,8 @@ async def get_holographic_reconstruction(
             topology=topology,
             config=config,
             temporal_analysis=temporal_analysis,
+            calibration=calibration,
+            aliases=aliases,
         )
 
         # Build kernels for counterfactual - use the same kernel builder from analysis
@@ -238,6 +250,173 @@ async def get_holographic_reconstruction(
         raise HTTPException(status_code=500, detail=f"Reconstruction failed: {str(e)}")
 
 
+@router.get("/timeline")
+async def get_holographic_timeline(
+    incident_id: str = Query(..., description="Incident ID to reconstruct over time"),
+    frames: int = Query(
+        6, ge=1, le=24, description="Number of evidence slices to reconstruct"
+    ),
+    use_gpu: bool = Query(True, description="Use GPU acceleration for the kernels"),
+):
+    """
+    Reconstruct the incident repeatedly, once per slice of its own evidence.
+
+    Each frame is a genuine holographic inversion over the telemetry that had
+    actually arrived by that point in the incident — not a re-colouring of one
+    reconstruction, and not an interpolation between two drawings. A slice with
+    thin evidence therefore reconstructs *worse*, and says so, which is the
+    honest shape of the data.
+
+    The slices are cut by event count rather than by wall-clock, so every
+    frame is backed by at least one real event whenever the incident has
+    enough events to go around.
+    """
+    try:
+        timeline, temporal_analysis, topology, bundle, calibration, aliases = (
+            await _get_incident_data(incident_id)
+        )
+
+        synthetic = timeline is None or topology is None
+        if synthetic:
+            # No bundle: fall back to the same fixed synthetic scenario the
+            # reconstruction endpoint uses, and label the frames as such.
+            generator = SyntheticIncidentGenerator(seed=42)
+            incident = generator.generate(IncidentType.CPU_SPIKE_CASCADE)
+            topology = incident.topology
+            timeline = incident.timeline
+            temporal_analysis = {}
+            provenance = _synthetic_provenance(
+                bundle, incident_type=IncidentType.CPU_SPIKE_CASCADE.name
+            )
+        else:
+            provenance = _bundle_provenance(bundle, timeline=timeline)
+
+        ordered = sorted(
+            timeline,
+            key=lambda e: e.get("timestamp_ns", 0) if isinstance(e, dict) else 0,
+        )
+        slice_count = max(1, min(frames, len(ordered)))
+        groups = _balanced_slices(ordered, slice_count)
+
+        frame_payloads: List[Dict[str, Any]] = []
+        for index, group in enumerate(groups):
+            frame_payloads.append(
+                _reconstruct_slice(
+                    incident_id=incident_id,
+                    topology=topology,
+                    events=group,
+                    temporal_analysis=temporal_analysis or {},
+                    index=index,
+                    use_gpu=use_gpu,
+                    calibration=calibration,
+                    aliases=aliases,
+                )
+            )
+
+        return {
+            "incident_id": incident_id,
+            "frames": frame_payloads,
+            "frame_count": len(frame_payloads),
+            "event_count": len(ordered),
+            "slices_requested": slice_count,
+            "provenance": provenance,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Timeline reconstruction failed: {str(e)}")
+
+
+def _balanced_slices(events: List[Dict[str, Any]], count: int) -> List[List[Dict[str, Any]]]:
+    """Cut an ordered event list into ``count`` contiguous, non-empty groups.
+
+    The groups are balanced by event count rather than by elapsed time: a
+    window that contains no evidence cannot be reconstructed, so a time-based
+    cut would produce empty frames and hide the incident's actual sparsity.
+    """
+    if not events:
+        return []
+    count = max(1, min(count, len(events)))
+    base, extra = divmod(len(events), count)
+    slices: List[List[Dict[str, Any]]] = []
+    cursor = 0
+    for index in range(count):
+        size = base + (1 if index < extra else 0)
+        slices.append(events[cursor : cursor + size])
+        cursor += size
+    return slices
+
+
+def _reconstruct_slice(
+    *,
+    incident_id: str,
+    topology: SystemTopology,
+    events: List[Dict[str, Any]],
+    temporal_analysis: Dict[str, Any],
+    index: int,
+    use_gpu: bool,
+    calibration: Optional[CalibrationProfile] = None,
+    aliases: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """Run one holographic inversion over a slice of the incident's evidence."""
+    timestamps = [
+        e.get("timestamp_ns", 0) for e in events if isinstance(e, dict)
+    ]
+    window = (min(timestamps), max(timestamps)) if timestamps else (0, 0)
+
+    frame: Dict[str, Any] = {
+        "stage_id": f"T{index}",
+        "index": index,
+        "timestamp_ns": window[0],
+        "window_ns": [window[0], window[1]],
+        "event_count": len(events),
+        "nodes": [],
+        "links": [],
+        "fidelity": 0.0,
+        "boundary_residual": 0.0,
+        "status": "ok",
+        "error": None,
+    }
+
+    if not events:
+        frame["status"] = "empty"
+        frame["error"] = "This slice of the incident window contains no evidence."
+        return frame
+
+    config = HolographicConfig(
+        enable_multiscale=False,
+        enable_compression=False,
+        enable_synthesis=False,
+        enable_anomaly_detection=False,
+        use_gpu=use_gpu,
+    )
+
+    try:
+        result = analyze_incident_holographically(
+            incident_id=incident_id,
+            timeline=events,
+            topology=topology,
+            config=config,
+            temporal_analysis=temporal_analysis,
+            calibration=calibration,
+            aliases=aliases,
+        )
+        viz = generate_visualization_data(
+            topology=topology,
+            reconstruction=result.reconstruction,
+            incident_id=incident_id,
+            timestamp_ns=result.reconstruction.reconstruction_timestamp_ns,
+        )
+        frame["nodes"] = viz.bulk_nodes
+        frame["links"] = viz.bulk_edges
+        frame["fidelity"] = result.reconstruction.overall_fidelity
+        frame["boundary_residual"] = result.reconstruction.boundary_residual
+    except Exception as exc:  # pragma: no cover - defensive: one bad slice must not lose the rest
+        frame["status"] = "failed"
+        frame["error"] = f"Reconstruction failed for this slice: {exc}"
+
+    return _convert_numpy_types(frame)
+
+
 @router.post("/reconstruction")
 async def create_holographic_reconstruction(request: VisualizationRequest):
     """Create holographic reconstruction with custom parameters."""
@@ -282,7 +461,9 @@ async def simulate_counterfactual(
         from cauveris.holographic.integration import HolographicConfig
         from cauveris.holographic.gpu_kernels import create_gpu_kernel_builder, is_gpu_available
 
-        timeline, temporal_analysis, topology, bundle = await _get_incident_data(incident_id)
+        timeline, temporal_analysis, topology, bundle, calibration, aliases = (
+            await _get_incident_data(incident_id)
+        )
 
         if timeline is None or topology is None:
             generator = SyntheticIncidentGenerator(seed=42)
@@ -312,6 +493,8 @@ async def simulate_counterfactual(
             topology=topology,
             config=config,
             temporal_analysis=temporal_analysis,
+            calibration=calibration,
+            aliases=aliases,
         )
         reconstruction = result.reconstruction
 
@@ -389,7 +572,9 @@ async def get_anomalies(
         )
         from cauveris.holographic.integration import HolographicConfig
 
-        timeline, temporal_analysis, topology, bundle = await _get_incident_data(incident_id)
+        timeline, temporal_analysis, topology, bundle, calibration, aliases = (
+            await _get_incident_data(incident_id)
+        )
 
         if timeline is None or topology is None:
             generator = SyntheticIncidentGenerator(seed=42)
@@ -418,6 +603,8 @@ async def get_anomalies(
             topology=topology,
             config=config,
             temporal_analysis=temporal_analysis,
+            calibration=calibration,
+            aliases=aliases,
         )
         reconstruction = result.reconstruction
 
@@ -468,7 +655,9 @@ async def get_boundary_layers(
         )
         from cauveris.holographic.integration import HolographicConfig
 
-        timeline, temporal_analysis, topology, bundle = await _get_incident_data(incident_id)
+        timeline, temporal_analysis, topology, bundle, calibration, aliases = (
+            await _get_incident_data(incident_id)
+        )
 
         if timeline is None or topology is None:
             generator = SyntheticIncidentGenerator(seed=42)
@@ -497,6 +686,8 @@ async def get_boundary_layers(
             topology=topology,
             config=config,
             temporal_analysis=temporal_analysis,
+            calibration=calibration,
+            aliases=aliases,
         )
         reconstruction = result.reconstruction
 
@@ -527,6 +718,8 @@ _BUNDLE_SEARCH_TEMPLATES = (
     str(Path("evidence_store") / "{incident_id}"),
     "./incident-{incident_id}",
     "./{incident_id}",
+    "./golden_incident/incident-{incident_id}",
+    "./golden_incident/{incident_id}",
 )
 
 
@@ -606,17 +799,25 @@ async def _get_incident_data(
     Optional[Dict[str, Any]],
     Optional[SystemTopology],
     Dict[str, Any],
+    Optional[CalibrationProfile],
+    Optional[Dict[str, str]],
 ]:
     """
     Load real incident data from storage using the ingestion pipeline.
 
     Returns:
-        Tuple of (timeline_events, temporal_analysis, topology, bundle).
+        Tuple of (timeline_events, temporal_analysis, topology, bundle,
+        calibration, aliases).
 
         ``bundle`` records where the evidence came from:
         ``{"found": bool, "path": str | None, "search_paths": [str]}``. It is
         returned on the failure path too — a caller that has to tell the user
         "your incident could not be found" also needs to say *where* we looked.
+
+        ``calibration`` holds the scales the incident's own declarations put
+        its measurements on, and ``aliases`` the names the bundle says are the
+        same component.  Both are ``None`` when there is no bundle to read
+        them from.
     """
     import logging
 
@@ -627,18 +828,19 @@ async def _get_incident_data(
         controller = IngestionController()
 
         # Look for incident bundle in standard locations
-        evidence_store = Path(_BUNDLE_SEARCH_TEMPLATES[0].format(incident_id=incident_id))
-        if not evidence_store.exists():
-            evidence_store = Path(_BUNDLE_SEARCH_TEMPLATES[1].format(incident_id=incident_id))
-        if not evidence_store.exists():
-            evidence_store = Path(_BUNDLE_SEARCH_TEMPLATES[2].format(incident_id=incident_id))
+        evidence_store = None
+        for template in _BUNDLE_SEARCH_TEMPLATES:
+            cand = Path(template.format(incident_id=incident_id))
+            if cand.exists() and cand.is_dir():
+                evidence_store = cand
+                break
 
-        if not evidence_store.exists():
+        if evidence_store is None:
             logger.warning(
                 f"Incident bundle not found for {incident_id} in "
                 f"{missing['search_paths']}, falling back to synthetic data"
             )
-            return None, None, None, missing
+            return None, None, None, missing, None, None
 
         bundle = {
             "found": True,
@@ -658,32 +860,70 @@ async def _get_incident_data(
         # Process the incident bundle
         incident = await controller.process(incident)
 
-        # Extract timeline events from evidence items
+        # Build the timeline with the real builder: it parses every evidence
+        # channel the bundle ships — traces, logs, metric exports, deployment
+        # records, operator notes, ROS recordings — and attributes each
+        # observation to the component it describes.
+        incident = await TimelineBuilder().build(incident)
         timeline_events = incident.timeline_events
-        temporal_analysis = incident.temporal_analysis
 
-        # If no timeline events, try to extract from evidence files
+        # If the builder found nothing (a bundle laid out in a way it does not
+        # know), fall back to the flat evidence scan.  It sees fewer channels,
+        # so the reconstruction it produces is the weaker of the two.
         if not timeline_events:
             timeline_events = _extract_timeline_from_evidence(incident, evidence_store)
+
+        # The scales the incident's own declarations put its measurements on,
+        # and the names it says are the same component.
+        calibration = CalibrationProfile.from_bundle(evidence_store)
+        if timeline_events:
+            calibration.learn_from_events(timeline_events)
+        aliases = load_component_aliases(evidence_store)
+
+        # Temporal analysis over the same timeline (clock skew, causality).
+        temporal_analysis = await _analyze_temporally(incident, evidence_store)
 
         # Build topology from timeline if not in manifest
         topology = None
         if incident.manifest and "topology" in incident.manifest:
-            topology = _build_topology_from_manifest(incident.manifest["topology"])
+            topology = _build_topology_from_manifest(incident.manifest["topology"], aliases)
         elif timeline_events:
-            # Infer topology from timeline using existing function
-            bundle_config = incident.manifest if incident.manifest else {}
-            topology = build_topology_from_timeline(timeline_events, bundle_config)
+            # Infer topology from timeline using the same resolver the evidence
+            # units use, so the graph and the measurements describe the same
+            # components.
+            topology = build_topology_from_timeline(timeline_events, evidence_store, aliases)
 
         logger.info(
             f"Loaded real incident {incident_id} from {evidence_store}: "
             f"{len(timeline_events)} timeline events, topology: {topology is not None}"
         )
-        return timeline_events, temporal_analysis, topology, bundle
+        return timeline_events, temporal_analysis, topology, bundle, calibration, aliases
 
     except Exception as e:
         logger.error(f"Failed to load incident {incident_id}: {e}")
-        return None, None, None, missing
+        return None, None, None, missing, None, None
+
+
+async def _analyze_temporally(
+    incident: Incident, bundle_path: Path
+) -> Dict[str, Any]:
+    """Run the temporal analyzer over the incident's own timeline.
+
+    The analyzer is real work — clock-skew estimation, causality checks,
+    freshness budgets — but it is not on the critical path of a
+    reconstruction: when it cannot run, the reconstruction proceeds without
+    the cross-reference instead of failing.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    try:
+        from cauveris.temporal.integration import TemporalAnalyzer
+
+        return TemporalAnalyzer().analyze_incident(incident, bundle_path) or {}
+    except Exception as exc:
+        logger.warning(f"Temporal analysis unavailable for {incident.id}: {exc}")
+        return {}
 
 
 def _extract_timeline_from_evidence(incident: Incident, bundle_path: Path) -> List[Dict[str, Any]]:
@@ -1012,8 +1252,16 @@ def _parse_metrics_csv(file_path: Path) -> List[Dict[str, Any]]:
     return events
 
 
-def _build_topology_from_manifest(topology_config: Dict[str, Any]) -> SystemTopology:
-    """Build SystemTopology from manifest configuration."""
+def _build_topology_from_manifest(
+    topology_config: Dict[str, Any],
+    aliases: Optional[Dict[str, str]] = None,
+) -> SystemTopology:
+    """Build SystemTopology from manifest configuration.
+
+    Component names are canonicalised through the bundle's declared aliases,
+    so a manifest that names a component one way and the evidence another
+    way still ends up describing one component.
+    """
     from cauveris.holographic.topology import ComponentInfo, ResourceCapacity, CausalEdge
 
     topology = SystemTopology()
@@ -1022,7 +1270,7 @@ def _build_topology_from_manifest(topology_config: Dict[str, Any]) -> SystemTopo
     for comp_name, comp_data in topology_config.get("components", {}).items():
         topology.add_component(
             ComponentInfo(
-                name=comp_name,
+                name=canonical_component(comp_name, aliases) or comp_name,
                 component_type=comp_data.get("type", "service"),
                 capacity=ResourceCapacity(
                     cpu_cores=comp_data.get("cpu_cores", 4.0),
@@ -1039,8 +1287,8 @@ def _build_topology_from_manifest(topology_config: Dict[str, Any]) -> SystemTopo
     for edge_data in topology_config.get("edges", []):
         topology.add_causal_edge(
             CausalEdge(
-                source=edge_data["source"],
-                target=edge_data["target"],
+                source=canonical_component(edge_data["source"], aliases) or edge_data["source"],
+                target=canonical_component(edge_data["target"], aliases) or edge_data["target"],
                 latency_ms=edge_data.get("latency_ms", 5.0),
                 edge_type=edge_data.get("type", "rpc"),
             )
@@ -1107,7 +1355,9 @@ async def _load_incident_full(incident_id: str) -> Optional[VisualizationRespons
 
     logger = logging.getLogger(__name__)
     try:
-        timeline, temporal_analysis, topology, bundle = await _get_incident_data(incident_id)
+        timeline, temporal_analysis, topology, bundle, calibration, aliases = (
+            await _get_incident_data(incident_id)
+        )
         if timeline is None or topology is None:
             # A comparison is a claim about two real incidents — unlike the
             # single-incident view there is nothing meaningful to synthesize
@@ -1125,6 +1375,8 @@ async def _load_incident_full(incident_id: str) -> Optional[VisualizationRespons
             topology=topology,
             config=config,
             temporal_analysis=temporal_analysis,
+            calibration=calibration,
+            aliases=aliases,
         )
 
         from cauveris.holographic.visualization import generate_visualization_data
@@ -1484,23 +1736,32 @@ class ConnectionManager:
 
                         # Re-run holographic analysis with new data
                         try:
+                            # Rebuild the timeline from the bundle: new
+                            # evidence may have landed in any channel.
+                            incident = await TimelineBuilder().build(incident)
                             timeline_events = incident.timeline_events
-                            temporal_analysis = incident.temporal_analysis
+                            temporal_analysis = await _analyze_temporally(
+                                incident, evidence_store
+                            )
 
                             if not timeline_events:
                                 timeline_events = _extract_timeline_from_evidence(
                                     incident, evidence_store
                                 )
 
+                            calibration = CalibrationProfile.from_bundle(evidence_store)
+                            if timeline_events:
+                                calibration.learn_from_events(timeline_events)
+                            aliases = load_component_aliases(evidence_store)
+
                             topology = None
                             if incident.manifest and "topology" in incident.manifest:
                                 topology = _build_topology_from_manifest(
-                                    incident.manifest["topology"]
+                                    incident.manifest["topology"], aliases
                                 )
                             elif timeline_events:
-                                bundle_config = incident.manifest if incident.manifest else {}
                                 topology = build_topology_from_timeline(
-                                    timeline_events, bundle_config
+                                    timeline_events, evidence_store, aliases
                                 )
 
                             if topology and timeline_events:
@@ -1518,6 +1779,8 @@ class ConnectionManager:
                                     topology=topology,
                                     config=config,
                                     temporal_analysis=temporal_analysis,
+                                    calibration=calibration,
+                                    aliases=aliases,
                                 )
 
                                 # Generate visualization data

@@ -45,6 +45,7 @@ vi.mock('lucide-react', () => ({
   Trash2: (props: any) => <svg data-testid="icon-trash-2" {...props} />,
   User: (props: any) => <svg data-testid="icon-user" {...props} />,
   LogOut: (props: any) => <svg data-testid="icon-logout" {...props} />,
+  Settings: (props: any) => <svg data-testid="icon-settings" {...props} />,
 }));
 
 // Mock all dependencies before importing the component
@@ -92,19 +93,6 @@ vi.mock("@/lib/api", () => ({
     exportReport: vi.fn(),
     resetDemo: vi.fn(),
   },
-}));
-
-// Mock UI components
-vi.mock("@/components/ui", () => ({
-  Badge: ({ children, tone = "default", className = "" }: { children: React.ReactNode; tone?: string; className?: string }) => (
-    <span className={`px-2 py-0.5 rounded text-xs ${className}`} data-tone={tone}>{children}</span>
-  ),
-  Button: ({ children, className = "", ...props }: { children: React.ReactNode; className?: string }) => (
-    <button className={className} {...props}>{children}</button>
-  ),
-  Progress: ({ className = "", value, ...props }: { className?: string; value: number }) => (
-    <div className={className} role="progressbar" aria-valuenow={value} {...props} />
-  ),
 }));
 
 // Import after mocks

@@ -9,6 +9,8 @@ Production-grade job queue with:
 """
 
 import asyncio
+import inspect
+import json
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -93,8 +95,22 @@ class Job:
         return time.time() > self.expires_at
 
     def can_retry(self) -> bool:
-        """Check if job can be retried."""
-        return self.retry_count < self.max_retries and self.status == JobStatus.FAILED
+        """Check if job can be retried.
+
+        Mirrors the condition the queue backend uses when a job fails: there
+        must be retry budget left and the job must not have reached a
+        terminal state. The previous implementation required the status to be
+        ``FAILED``, but the backend never leaves a job in that state - it
+        either re-queues it (``QUEUED``) or moves it to the dead letter
+        queue (``DEAD_LETTER``) - so ``can_retry()`` was always ``False``.
+        """
+        if self.retry_count >= self.max_retries:
+            return False
+        return self.status not in (
+            JobStatus.COMPLETED,
+            JobStatus.CANCELLED,
+            JobStatus.DEAD_LETTER,
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dict for storage."""
@@ -103,9 +119,31 @@ class Job:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Job":
         """Deserialize from dict."""
-        # Convert priority int to enum
-        if "priority" in data and isinstance(data["priority"], int):
-            data["priority"] = JobPriority(data["priority"])
+        data = dict(data)
+        # Convert priority to enum: it may arrive as an int, as an int-like
+        # enum member or as its name.
+        if "priority" in data and data["priority"] is not None:
+            raw_priority = data["priority"]
+            if isinstance(raw_priority, JobPriority):
+                pass
+            elif isinstance(raw_priority, bool):
+                raise ValueError("bool is not a valid job priority")
+            elif isinstance(raw_priority, int):
+                data["priority"] = JobPriority(raw_priority)
+            elif isinstance(raw_priority, str):
+                candidate = raw_priority.strip().upper()
+                data["priority"] = (
+                    JobPriority(int(candidate))
+                    if candidate.isdigit()
+                    else JobPriority[candidate]
+                )
+            else:
+                raise ValueError(f"unsupported job priority: {raw_priority!r}")
+        # Convert status to enum for the same reason.
+        if "status" in data and data["status"] is not None:
+            raw_status = data["status"]
+            if not isinstance(raw_status, JobStatus):
+                data["status"] = JobStatus(raw_status)
         return cls(**data)
 
 
@@ -244,6 +282,14 @@ class InMemoryQueueBackend(QueueBackend):
             logger.warning(f"Job {job.id} expired before enqueue")
             return False
 
+        # Normalise the priority: an unknown value would raise a KeyError when
+        # indexing the priority lane.
+        try:
+            job.priority = JobPriority(job.priority)
+        except (ValueError, TypeError):
+            logger.warning(f"Job {job.id} has an invalid priority, defaulting to NORMAL")
+            job.priority = JobPriority.NORMAL
+
         tenant_id = job.tenant_id
         lock = self._get_lock(tenant_id)
 
@@ -283,38 +329,51 @@ class InMemoryQueueBackend(QueueBackend):
 
         for _ in range(max_jobs):
             best_job = None
-            best_tenant = None
             best_priority = None
 
-            # Find highest priority job across all tenants matching types
+            # Find highest priority job across all tenants matching types.
+            #
+            # The removal from the queue happens *inside* the tenant lock: the
+            # previous implementation released the lock between the scan and
+            # the removal, so two concurrent workers could pick the same job.
             for tenant_id in tenant_keys:
                 lock = self._get_lock(tenant_id)
                 async with lock:
                     queue = self._get_queue(tenant_id)
                     for priority in sorted(JobPriority, reverse=True):
                         jobs_list = queue[priority]
-                        for i, job in enumerate(jobs_list):
+                        # Purge expired jobs first. This must happen for every
+                        # job in the lane - not just the ones matching
+                        # ``types`` - otherwise jobs whose type no worker
+                        # handles would occupy queue capacity forever.
+                        # The index is *not* advanced after a removal: the
+                        # element that shifted into the vacated slot still has
+                        # to be inspected (the previous implementation skipped
+                        # it, letting expired jobs and even live jobs be
+                        # silently ignored).
+                        i = 0
+                        while i < len(jobs_list):
+                            job = jobs_list[i]
+                            if job.is_expired():
+                                jobs_list.pop(i)
+                                self._stats["expired"] += 1
+                                continue
+                            i += 1
+
+                        for job in jobs_list:
                             if not types or job.type in types:
-                                if job.is_expired():
-                                    # Remove expired
-                                    jobs_list.pop(i)
-                                    self._stats["expired"] += 1
-                                    continue
                                 best_job = job
-                                best_tenant = tenant_id
                                 best_priority = priority
                                 break
                         if best_job:
                             break
                     if best_job:
+                        # Claim the job while still holding the tenant lock.
+                        queue[best_priority].remove(best_job)
                         break
 
             if not best_job:
                 break  # No more jobs
-
-            # Remove from queue and mark processing
-            queue = self._get_queue(best_tenant)
-            queue[best_priority].remove(best_job)
 
             best_job.status = JobStatus.PROCESSING
             best_job.started_at = time.time()
@@ -353,9 +412,28 @@ class InMemoryQueueBackend(QueueBackend):
         # Store in completed for result polling (with TTL)
         self._completed[job_id] = job
         self._stats["completed"] += 1
+        self._prune_completed()
 
         logger.debug(f"Completed job {job_id}")
         return True
+
+    def _prune_completed(self) -> None:
+        """
+        Drop completed jobs that are past their TTL.
+
+        Without this the ``_completed`` cache grows without bound, leaking the
+        memory of every job the queue has ever finished.
+        """
+        if not self._completed:
+            return
+        now = time.time()
+        stale = [
+            job_id
+            for job_id, job in self._completed.items()
+            if job.expires_at is not None and job.expires_at < now
+        ]
+        for job_id in stale:
+            self._completed.pop(job_id, None)
 
     async def fail(self, job_id: str, error: str, retry: bool = False) -> bool:
         job = self._processing.pop(job_id, None)
@@ -367,11 +445,30 @@ class InMemoryQueueBackend(QueueBackend):
         can_retry = retry and job.retry_count < job.max_retries
 
         if can_retry:
-            job.status = JobStatus.FAILED
-            await self.requeue(job)
-            logger.debug(
-                f"Job {job_id} failed, requeued for retry ({job.retry_count}/{job.max_retries})"
-            )
+            # NOTE: the status is deliberately *not* set to FAILED here. The
+            # job is re-queued immediately afterwards (which sets it to
+            # QUEUED) and an await happens in between, so a poller could
+            # otherwise observe the transient FAILED status and give up on a
+            # job that is about to be retried.
+            requeued = await self.requeue(job)
+            if requeued:
+                logger.debug(
+                    f"Job {job_id} failed, requeued for retry "
+                    f"({job.retry_count}/{job.max_retries})"
+                )
+            else:
+                # The retry could not be queued (queue full, job expired).
+                # The job has already been removed from the processing set, so
+                # without this fallback it would be lost entirely.
+                logger.warning(
+                    f"Job {job_id} could not be requeued, moving to dead letter: {error}"
+                )
+                job.status = JobStatus.DEAD_LETTER
+                job.completed_at = time.time()
+                dlq = self._get_dead_letter(job.tenant_id)
+                dlq.append(job)
+                self._stats["failed"] += 1
+                self._stats["dead_lettered"] += 1
         else:
             job.status = JobStatus.DEAD_LETTER
             job.completed_at = time.time()
@@ -469,6 +566,819 @@ class InMemoryQueueBackend(QueueBackend):
         pass
 
 
+class RedisQueueBackend(QueueBackend):
+    """
+    Redis-backed job queue for distributed workers.
+
+    Features:
+    - Priority-based scheduling via Redis Sorted Sets (ZSET)
+    - Per-tenant isolation and FIFO ordering within priority lanes
+    - Job metadata and payload persistence with TTL
+    - Distributed worker claim and processing tracking
+    - Dead letter queue for unrecoverable errors
+    - Health checks and queue statistics
+    """
+
+    def __init__(
+        self,
+        redis_url: str = "redis://localhost:6379",
+        key_prefix: str = "cauveris:jq:",
+        max_size: int = 10000,
+        default_ttl: int = 3600,
+        redis_client: Optional[Any] = None,
+        claim_timeout: Optional[float] = None,
+    ):
+        self._redis_url = redis_url
+        self._key_prefix = key_prefix
+        self._max_size = max_size
+        self._default_ttl = default_ttl
+        self._redis = redis_client
+        self._healthy = False
+        if claim_timeout is None:
+            from cauveris.config import get_settings
+
+            claim_timeout = getattr(
+                get_settings(), "job_queue_claim_timeout_seconds", 300.0
+            )
+        self._claim_timeout = float(claim_timeout)
+        self._stats = {
+            "enqueued": 0,
+            "dequeued": 0,
+            "completed": 0,
+            "failed": 0,
+            "dead_lettered": 0,
+            "cancelled": 0,
+            "expired": 0,
+            "rejected_full": 0,
+            "reclaimed": 0,
+        }
+
+    async def _ensure_connection(self) -> bool:
+        if self._redis is not None:
+            try:
+                await self._redis.ping()
+                self._healthy = True
+                return True
+            except Exception as exc:
+                logger.warning(f"Redis ping failed: {exc}")
+                self._healthy = False
+                return False
+
+        try:
+            import redis.asyncio as aioredis
+
+            self._redis = aioredis.from_url(
+                self._redis_url,
+                decode_responses=True,
+                socket_timeout=5.0,
+                socket_connect_timeout=5.0,
+            )
+            await self._redis.ping()
+            self._healthy = True
+            return True
+        except ImportError:
+            logger.error("redis package is required for RedisQueueBackend")
+            self._healthy = False
+            return False
+        except Exception as exc:
+            logger.warning(f"Could not connect to Redis at {self._redis_url}: {exc}")
+            self._healthy = False
+            return False
+
+    async def _total_queued(self) -> int:
+        if not self._redis:
+            return 0
+        active_queues_key = f"{self._key_prefix}active_queues"
+        active_queues = await self._redis.smembers(active_queues_key)
+        total = 0
+        for qk in active_queues:
+            total += await self._redis.zcard(qk)
+        return total
+
+    async def enqueue(self, job: Job) -> bool:
+        if not await self._ensure_connection():
+            logger.error("RedisQueueBackend: Redis connection unavailable")
+            return False
+
+        if job.expires_at is None:
+            job.expires_at = time.time() + self._default_ttl
+
+        if job.is_expired():
+            logger.warning(f"Job {job.id} expired before enqueue")
+            self._stats["expired"] += 1
+            return False
+
+        try:
+            job.priority = JobPriority(job.priority)
+        except (ValueError, TypeError):
+            job.priority = JobPriority.NORMAL
+
+        tenant_id = job.tenant_id or "default"
+        job_type = job.type or "generic"
+
+        total_queued = await self._total_queued()
+        if total_queued >= self._max_size:
+            self._stats["rejected_full"] += 1
+            logger.warning(
+                f"Redis queue full ({total_queued} >= {self._max_size}), rejecting job {job.id}"
+            )
+            return False
+
+        job_key = f"{self._key_prefix}job:{job.id}"
+        ttl_seconds = max(1, int(job.expires_at - time.time()))
+        await self._redis.set(job_key, json.dumps(job.to_dict()), ex=ttl_seconds)
+
+        score = (int(job.priority.value) * 1_000_000_000_000) - int(job.created_at * 1000)
+        queue_key = f"{self._key_prefix}queue:{tenant_id}:{job_type}"
+        active_queues_key = f"{self._key_prefix}active_queues"
+
+        await self._redis.zadd(queue_key, {job.id: score})
+        await self._redis.sadd(active_queues_key, queue_key)
+        self._stats["enqueued"] += 1
+        return True
+
+    async def dequeue(self, worker_id: str, types: List[str], max_jobs: int = 1) -> List[Job]:
+        if not await self._ensure_connection():
+            return []
+
+        # Before handing out new work, take back the work that a worker took
+        # and never finished.  A dead worker must not take the job with it.
+        await self._reclaim_stalled_jobs()
+
+        jobs_taken: List[Job] = []
+        active_queues_key = f"{self._key_prefix}active_queues"
+        active_queues = await self._redis.smembers(active_queues_key)
+
+        for _ in range(max_jobs):
+            best_job: Optional[Job] = None
+            best_queue_key: Optional[str] = None
+            highest_score = -float("inf")
+
+            target_queues = []
+            for qk in active_queues:
+                parts = qk.split(":")
+                q_type = parts[-1] if len(parts) >= 4 else ""
+                if not types or q_type in types or not q_type:
+                    target_queues.append(qk)
+
+            for qk in target_queues:
+                top_items = await self._redis.zrevrange(qk, 0, 0, withscores=True)
+                if top_items:
+                    cand_id, cand_score = top_items[0]
+                    if cand_score > highest_score:
+                        cand_job = await self.get_job(cand_id)
+                        if cand_job is None or cand_job.is_expired():
+                            await self._redis.zrem(qk, cand_id)
+                            if cand_job and cand_job.is_expired():
+                                self._stats["expired"] += 1
+                            continue
+                        highest_score = cand_score
+                        best_job = cand_job
+                        best_queue_key = qk
+
+            if not best_job or not best_queue_key:
+                break
+
+            removed = await self._redis.zrem(best_queue_key, best_job.id)
+            if not removed:
+                continue
+
+            best_job.status = JobStatus.PROCESSING
+            best_job.started_at = time.time()
+            best_job.attempts.append(time.time())
+
+            job_key = f"{self._key_prefix}job:{best_job.id}"
+            # The record has to outlive the work itself: a job that is being
+            # processed may run for longer than the queue's own TTL, and a
+            # record that expires mid-flight would lose the result.
+            ttl_seconds = max(
+                1,
+                int(
+                    max(
+                        (best_job.expires_at or (time.time() + self._default_ttl))
+                        - time.time(),
+                        self._claim_timeout * 2,
+                    )
+                ),
+            )
+            await self._redis.set(job_key, json.dumps(best_job.to_dict()), ex=ttl_seconds)
+
+            processing_key = f"{self._key_prefix}processing"
+            await self._redis.hset(processing_key, best_job.id, worker_id)
+            # The claim carries the time it was taken, so that a worker that
+            # dies mid-job can be detected and its job handed back.
+            await self._redis.hset(
+                self._claimed_key(), best_job.id, str(time.time())
+            )
+
+            self._stats["dequeued"] += 1
+            jobs_taken.append(best_job)
+
+        return jobs_taken
+
+    def _claimed_key(self) -> str:
+        """The hash holding the time each in-flight job was claimed."""
+        return f"{self._key_prefix}processing_claimed"
+
+    async def _reclaim_stalled_jobs(self) -> int:
+        """
+        Hand back the jobs whose worker stopped making progress.
+
+        A job is removed from the queue when it is claimed and is only
+        deleted from the processing set when it completes, fails or is
+        cancelled.  A worker that is killed - a deploy, an OOM kill, a yanked
+        power lead - leaves the claim behind and the job with it: nobody is
+        left to finish work that has no worker attached.
+
+        So the claim carries the time it was taken.  A claim older than the
+        claim timeout belongs to a worker that is not coming back, and the
+        job goes back on the queue with its retry counter advanced.  A job
+        that has used up its retries goes to the dead letter queue instead,
+        because a job that fails this badly is a bug report, not work.
+
+        Returns the number of jobs handed back to the queue.
+        """
+        if not self._redis:
+            return 0
+        try:
+            claims = await self._redis.hgetall(self._claimed_key())
+        except Exception as exc:
+            logger.warning(f"Could not read the claim ledger: {exc}")
+            return 0
+        if not claims:
+            return 0
+
+        now = time.time()
+        reclaimed = 0
+        for job_id, stamp in claims.items():
+            try:
+                age = now - float(stamp)
+            except (TypeError, ValueError):
+                age = 0.0
+            if age < self._claim_timeout:
+                continue
+
+            processing_key = f"{self._key_prefix}processing"
+            await self._redis.hdel(processing_key, job_id)
+            await self._redis.hdel(self._claimed_key(), job_id)
+
+            job = await self.get_job(job_id)
+            if job is None:
+                # The job record expired; there is nothing left to recover.
+                self._stats["expired"] += 1
+                continue
+            if job.status in (
+                JobStatus.COMPLETED,
+                JobStatus.CANCELLED,
+                JobStatus.DEAD_LETTER,
+            ):
+                continue
+            if job.is_expired():
+                self._stats["expired"] += 1
+                continue
+
+            job.error = "the worker holding this job stopped responding"
+            job.started_at = None
+            if job.retry_count >= job.max_retries:
+                job.status = JobStatus.DEAD_LETTER
+                job.completed_at = now
+                job_key = f"{self._key_prefix}job:{job.id}"
+                await self._redis.set(
+                    job_key, json.dumps(job.to_dict()), ex=self._default_ttl * 2
+                )
+                dlq_key = f"{self._key_prefix}dead_letter:{job.tenant_id or 'default'}"
+                await self._redis.rpush(dlq_key, job.id)
+                self._stats["failed"] += 1
+                self._stats["dead_lettered"] += 1
+                logger.warning(
+                    f"Job {job.id} was abandoned by its worker too often; "
+                    f"moving to dead letter"
+                )
+                continue
+
+            job.retry_count += 1
+            job.status = JobStatus.QUEUED
+            job.expires_at = time.time() + self._default_ttl
+            if await self.enqueue(job):
+                reclaimed += 1
+                self._stats["reclaimed"] += 1
+                logger.warning(
+                    f"Reclaimed abandoned job {job.id} "
+                    f"(attempt {job.retry_count}/{job.max_retries})"
+                )
+        return reclaimed
+
+    async def requeue(self, job: Job) -> bool:
+        if not await self._ensure_connection():
+            return False
+        job.status = JobStatus.QUEUED
+        job.retry_count += 1
+        job.error = None
+        job.expires_at = time.time() + self._default_ttl
+
+        processing_key = f"{self._key_prefix}processing"
+        await self._redis.hdel(processing_key, job.id)
+        await self._redis.hdel(self._claimed_key(), job.id)
+        return await self.enqueue(job)
+
+    async def complete(self, job_id: str, result: Dict[str, Any]) -> bool:
+        if not await self._ensure_connection():
+            return False
+
+        processing_key = f"{self._key_prefix}processing"
+        await self._redis.hdel(processing_key, job_id)
+        await self._redis.hdel(self._claimed_key(), job_id)
+
+        job = await self.get_job(job_id)
+        if not job:
+            return False
+
+        job.status = JobStatus.COMPLETED
+        job.completed_at = time.time()
+        job.result = result
+
+        job_key = f"{self._key_prefix}job:{job_id}"
+        await self._redis.set(job_key, json.dumps(job.to_dict()), ex=self._default_ttl)
+
+        completed_key = f"{self._key_prefix}completed"
+        await self._redis.sadd(completed_key, job_id)
+
+        self._stats["completed"] += 1
+        return True
+
+    async def fail(self, job_id: str, error: str, retry: bool = False) -> bool:
+        if not await self._ensure_connection():
+            return False
+
+        processing_key = f"{self._key_prefix}processing"
+        await self._redis.hdel(processing_key, job_id)
+        await self._redis.hdel(self._claimed_key(), job_id)
+
+        job = await self.get_job(job_id)
+        if not job:
+            return False
+
+        job.error = error
+        can_retry = retry and job.retry_count < job.max_retries
+
+        if can_retry:
+            requeued = await self.requeue(job)
+            if requeued:
+                return True
+
+        job.status = JobStatus.DEAD_LETTER
+        job.completed_at = time.time()
+
+        job_key = f"{self._key_prefix}job:{job_id}"
+        await self._redis.set(job_key, json.dumps(job.to_dict()), ex=self._default_ttl * 2)
+
+        dlq_key = f"{self._key_prefix}dead_letter:{job.tenant_id or 'default'}"
+        await self._redis.rpush(dlq_key, job.id)
+
+        self._stats["failed"] += 1
+        self._stats["dead_lettered"] += 1
+        return True
+
+    async def get_job(self, job_id: str) -> Optional[Job]:
+        if not await self._ensure_connection():
+            return None
+        job_key = f"{self._key_prefix}job:{job_id}"
+        data = await self._redis.get(job_key)
+        if not data:
+            return None
+        try:
+            return Job.from_dict(json.loads(data))
+        except Exception as exc:
+            logger.error(f"Error parsing job {job_id} from Redis: {exc}")
+            return None
+
+    async def cancel(self, job_id: str) -> bool:
+        if not await self._ensure_connection():
+            return False
+
+        job = await self.get_job(job_id)
+        if not job:
+            return False
+
+        processing_key = f"{self._key_prefix}processing"
+        await self._redis.hdel(processing_key, job_id)
+        await self._redis.hdel(self._claimed_key(), job_id)
+
+        active_queues_key = f"{self._key_prefix}active_queues"
+        active_queues = await self._redis.smembers(active_queues_key)
+        for qk in active_queues:
+            await self._redis.zrem(qk, job_id)
+
+        job.status = JobStatus.CANCELLED
+        job.completed_at = time.time()
+        job_key = f"{self._key_prefix}job:{job_id}"
+        await self._redis.set(job_key, json.dumps(job.to_dict()), ex=self._default_ttl)
+
+        dlq_key = f"{self._key_prefix}dead_letter:{job.tenant_id or 'default'}"
+        await self._redis.rpush(dlq_key, job.id)
+
+        self._stats["cancelled"] += 1
+        return True
+
+    async def get_stats(self) -> Dict[str, Any]:
+        stats = self._stats.copy()
+        if not await self._ensure_connection():
+            return stats
+
+        stats["queued_total"] = await self._total_queued()
+        processing_key = f"{self._key_prefix}processing"
+        stats["processing"] = await self._redis.hlen(processing_key)
+
+        completed_key = f"{self._key_prefix}completed"
+        stats["completed_cached"] = await self._redis.scard(completed_key)
+
+        active_queues_key = f"{self._key_prefix}active_queues"
+        active_queues = await self._redis.smembers(active_queues_key)
+        tenants = set()
+        per_tenant = {}
+
+        for qk in active_queues:
+            parts = qk.split(":")
+            tenant = parts[-2] if len(parts) >= 4 else "default"
+            tenants.add(tenant)
+            count = await self._redis.zcard(qk)
+            if tenant not in per_tenant:
+                dlq_key = f"{self._key_prefix}dead_letter:{tenant}"
+                dlq_len = await self._redis.llen(dlq_key)
+                per_tenant[tenant] = {"queued": 0, "dead_letter": dlq_len}
+            per_tenant[tenant]["queued"] += count
+
+        stats["tenants"] = list(tenants)
+        stats["per_tenant"] = per_tenant
+        stats["dead_letter_total"] = sum(t["dead_letter"] for t in per_tenant.values())
+        return stats
+
+    async def health_check(self) -> bool:
+        return await self._ensure_connection()
+
+    async def close(self) -> None:
+        if self._redis:
+            try:
+                # redis-py 5+ prefers aclose(); close() is deprecated there.
+                closer = getattr(self._redis, "aclose", None) or self._redis.close
+                result = closer()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                pass
+        self._healthy = False
+
+
+class RabbitMQQueueBackend(QueueBackend):
+    """
+    Production RabbitMQ-backed job queue via aio-pika (AMQP 0-9-1).
+
+    Features:
+    - Topic exchange routing with persistent messages
+    - Priority queue support via x-max-priority
+    - Dead letter exchange (DLX) for unhandled / failed jobs
+    - In-flight message tracking, manual ack / reject semantics
+    - Metadata and job lifecycle caching
+    """
+
+    def __init__(
+        self,
+        amqp_url: str = "amqp://guest:guest@localhost:5672/",
+        exchange_name: str = "cauveris.jobs",
+        max_size: int = 10000,
+        default_ttl: int = 3600,
+        channel: Optional[Any] = None,
+        connection: Optional[Any] = None,
+    ):
+        self._amqp_url = amqp_url
+        self._exchange_name = exchange_name
+        self._max_size = max_size
+        self._default_ttl = default_ttl
+        self._connection = connection
+        self._channel = channel
+        self._exchange = None
+        self._dlx = None
+        self._healthy = False
+        self._jobs: Dict[str, Job] = {}
+        self._pending_messages: Dict[str, Any] = {}
+        self._processing: Dict[str, Job] = {}
+        self._dead_letter: Dict[str, List[Job]] = {}
+        self._completed: Dict[str, Job] = {}
+        self._declared_queues: Dict[str, Any] = {}
+        self._declared_dlqs: Dict[str, Any] = {}
+        self._stats = {
+            "enqueued": 0,
+            "dequeued": 0,
+            "completed": 0,
+            "failed": 0,
+            "dead_lettered": 0,
+            "cancelled": 0,
+            "expired": 0,
+            "rejected_full": 0,
+        }
+
+    async def _ensure_connection(self) -> bool:
+        if self._connection is not None and not getattr(self._connection, "is_closed", False):
+            self._healthy = True
+            return True
+
+        try:
+            import aio_pika
+
+            self._connection = await aio_pika.connect_robust(
+                self._amqp_url,
+                timeout=5.0,
+            )
+            self._channel = await self._connection.channel()
+            self._exchange = await self._channel.declare_exchange(
+                self._exchange_name,
+                aio_pika.ExchangeType.TOPIC,
+                durable=True,
+            )
+            self._dlx = await self._channel.declare_exchange(
+                f"{self._exchange_name}.dlx",
+                aio_pika.ExchangeType.TOPIC,
+                durable=True,
+            )
+            self._healthy = True
+            return True
+        except ImportError:
+            logger.error("aio-pika package is required for RabbitMQQueueBackend")
+            self._healthy = False
+            return False
+        except Exception as exc:
+            logger.warning(f"Could not connect to RabbitMQ at {self._amqp_url}: {exc}")
+            self._healthy = False
+            return False
+
+    async def _get_queue_for_type(self, job_type: str):
+        if job_type in self._declared_queues:
+            return self._declared_queues[job_type]
+        q_name = f"cauveris.queue.{job_type}"
+        queue = await self._channel.declare_queue(
+            q_name,
+            durable=True,
+            arguments={
+                "x-max-priority": 200,
+                "x-dead-letter-exchange": f"{self._exchange_name}.dlx",
+                "x-dead-letter-routing-key": f"dlx.{job_type}",
+            },
+        )
+        await queue.bind(self._exchange, routing_key=f"job.*.{job_type}")
+
+        # The dead letter exchange needs a queue of its own, otherwise the
+        # broker has nowhere to put a message it rejects: the message is
+        # dropped and the failure is invisible.  A rejected job has to be
+        # recoverable after the fact, so it is parked where it can be read.
+        dlq_name = f"cauveris.dlq.{job_type}"
+        dlq = await self._channel.declare_queue(dlq_name, durable=True)
+        await dlq.bind(self._dlx, routing_key=f"dlx.{job_type}")
+        self._declared_dlqs[job_type] = dlq
+
+        self._declared_queues[job_type] = queue
+        return queue
+
+    async def enqueue(self, job: Job) -> bool:
+        if not await self._ensure_connection():
+            logger.error("RabbitMQQueueBackend: RabbitMQ is unavailable")
+            return False
+
+        if job.expires_at is None:
+            job.expires_at = time.time() + self._default_ttl
+
+        if job.is_expired():
+            self._stats["expired"] += 1
+            return False
+
+        try:
+            job.priority = JobPriority(job.priority)
+        except (ValueError, TypeError):
+            job.priority = JobPriority.NORMAL
+
+        tenant_id = job.tenant_id or "default"
+        job_type = job.type or "generic"
+
+        if len(self._jobs) >= self._max_size:
+            self._stats["rejected_full"] += 1
+            logger.warning(f"RabbitMQ queue full, rejecting job {job.id}")
+            return False
+
+        await self._get_queue_for_type(job_type)
+
+        routing_key = f"job.{tenant_id}.{job_type}"
+
+        message = self._message_for(job)
+
+        await self._exchange.publish(message, routing_key=routing_key)
+        self._jobs[job.id] = job
+        self._prune_jobs()
+        self._stats["enqueued"] += 1
+        return True
+
+    @staticmethod
+    def _message_for(job: Job):
+        """
+        Build the AMQP message that carries a job.
+
+        The expiry needs care: AMQP expresses it as a string of milliseconds,
+        and ``aio_pika`` takes it either as a number of *seconds* (which it
+        converts) or as a datetime/timedelta.  A string is not one of those,
+        and the encoder rejects it - which would turn every publish into a
+        failure at the moment the message is built, on a broker that is
+        perfectly healthy.
+        """
+        import aio_pika
+
+        body = json.dumps(job.to_dict()).encode("utf-8")
+        priority_val = min(200, max(0, int(job.priority.value)))
+        expiration_seconds = (
+            max(1, int(job.expires_at - time.time())) if job.expires_at else None
+        )
+
+        return aio_pika.Message(
+            body=body,
+            message_id=job.id,
+            priority=priority_val,
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+            expiration=expiration_seconds,
+        )
+
+    def _prune_jobs(self) -> None:
+        """
+        Drop the bookkeeping for jobs nobody will ask about again.
+
+        The broker holds the queue itself; this dictionary exists so that
+        ``get_job`` can answer for a job that passed through this process.
+        Without pruning it grows for as long as the process runs, keeping
+        every job ever enqueued - and every payload - alive.
+        """
+        if not self._jobs:
+            return
+        cutoff = time.time() - self._default_ttl
+        stale = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if job.completed_at is not None and job.completed_at < cutoff
+        ]
+        for job_id in stale:
+            self._jobs.pop(job_id, None)
+            self._completed.pop(job_id, None)
+        for tenant, jobs in list(self._dead_letter.items()):
+            kept = [j for j in jobs if j.completed_at is None or j.completed_at >= cutoff]
+            if kept:
+                self._dead_letter[tenant] = kept
+            else:
+                self._dead_letter.pop(tenant, None)
+
+    async def dequeue(self, worker_id: str, types: List[str], max_jobs: int = 1) -> List[Job]:
+        if not await self._ensure_connection():
+            return []
+
+        jobs_taken: List[Job] = []
+        effective_types = types or ["generic", "pipeline", "simulation", "patch_generation"]
+
+        for _ in range(max_jobs):
+            found_job = None
+            for j_type in effective_types:
+                queue = await self._get_queue_for_type(j_type)
+                incoming_msg = await queue.get(no_ack=False, fail=False)
+                if incoming_msg is not None:
+                    job_data = json.loads(incoming_msg.body.decode("utf-8"))
+                    job = Job.from_dict(job_data)
+                    if job.is_expired():
+                        await incoming_msg.reject(requeue=False)
+                        self._stats["expired"] += 1
+                        continue
+
+                    job.status = JobStatus.PROCESSING
+                    job.started_at = time.time()
+                    job.attempts.append(time.time())
+
+                    self._pending_messages[job.id] = incoming_msg
+                    self._processing[job.id] = job
+                    self._jobs[job.id] = job
+                    self._stats["dequeued"] += 1
+                    found_job = job
+                    break
+
+            if found_job:
+                jobs_taken.append(found_job)
+            else:
+                break
+
+        return jobs_taken
+
+    async def requeue(self, job: Job) -> bool:
+        job.status = JobStatus.QUEUED
+        job.retry_count += 1
+        job.error = None
+        job.expires_at = time.time() + self._default_ttl
+        self._processing.pop(job.id, None)
+        pending = self._pending_messages.pop(job.id, None)
+        if pending:
+            try:
+                await pending.ack()
+            except Exception:
+                pass
+        return await self.enqueue(job)
+
+    async def complete(self, job_id: str, result: Dict[str, Any]) -> bool:
+        job = self._processing.pop(job_id, None) or self._jobs.get(job_id)
+        pending = self._pending_messages.pop(job_id, None)
+        if pending:
+            try:
+                await pending.ack()
+            except Exception as exc:
+                logger.warning(f"Error acking message {job_id}: {exc}")
+
+        if not job:
+            return False
+
+        job.status = JobStatus.COMPLETED
+        job.completed_at = time.time()
+        job.result = result
+        self._completed[job_id] = job
+        self._jobs[job_id] = job
+        self._stats["completed"] += 1
+        return True
+
+    async def fail(self, job_id: str, error: str, retry: bool = False) -> bool:
+        job = self._processing.pop(job_id, None) or self._jobs.get(job_id)
+        pending = self._pending_messages.pop(job_id, None)
+
+        if not job:
+            if pending:
+                await pending.reject(requeue=False)
+            return False
+
+        job.error = error
+        can_retry = retry and job.retry_count < job.max_retries
+
+        if can_retry:
+            if pending:
+                await pending.ack()
+            requeued = await self.requeue(job)
+            if requeued:
+                return True
+
+        if pending:
+            try:
+                await pending.reject(requeue=False)
+            except Exception:
+                pass
+
+        job.status = JobStatus.DEAD_LETTER
+        job.completed_at = time.time()
+        tenant = job.tenant_id or "default"
+        if tenant not in self._dead_letter:
+            self._dead_letter[tenant] = []
+        self._dead_letter[tenant].append(job)
+        self._jobs[job_id] = job
+
+        self._stats["failed"] += 1
+        self._stats["dead_lettered"] += 1
+        return True
+
+    async def get_job(self, job_id: str) -> Optional[Job]:
+        return self._jobs.get(job_id)
+
+    async def cancel(self, job_id: str) -> bool:
+        job = self._processing.pop(job_id, None) or self._jobs.get(job_id)
+        pending = self._pending_messages.pop(job_id, None)
+        if pending:
+            try:
+                await pending.reject(requeue=False)
+            except Exception:
+                pass
+        if not job:
+            return False
+        job.status = JobStatus.CANCELLED
+        job.completed_at = time.time()
+        self._jobs[job_id] = job
+        self._stats["cancelled"] += 1
+        return True
+
+    async def get_stats(self) -> Dict[str, Any]:
+        stats = self._stats.copy()
+        stats["queued_total"] = max(
+            0, len(self._jobs) - len(self._processing) - len(self._completed)
+        )
+        stats["processing"] = len(self._processing)
+        stats["completed_cached"] = len(self._completed)
+        stats["dead_letter_total"] = sum(len(v) for v in self._dead_letter.values())
+        return stats
+
+    async def health_check(self) -> bool:
+        return await self._ensure_connection()
+
+    async def close(self) -> None:
+        if self._channel and not getattr(self._channel, "is_closed", False):
+            await self._channel.close()
+        if self._connection and not getattr(self._connection, "is_closed", False):
+            await self._connection.close()
+        self._healthy = False
+
+
 class JobQueue:
     """
     High-level job queue manager.
@@ -493,6 +1403,21 @@ class JobQueue:
     def register_handler(self, job_type: str, handler: Callable[[Job], Any]) -> None:
         """Register a handler for a job type."""
         self._handlers[job_type] = handler
+
+    @property
+    def worker_id(self) -> str:
+        """The identity this worker claims jobs under."""
+        return self._worker_id
+
+    @property
+    def is_running(self) -> bool:
+        """Whether the worker loop is currently alive."""
+        return self._worker_task is not None and not self._worker_task.done()
+
+    @property
+    def handled_types(self) -> List[str]:
+        """The job types this worker can run."""
+        return sorted(self._handlers.keys())
 
     def set_concurrency(self, max_concurrent: int) -> None:
         """Set max concurrent jobs for this worker."""
@@ -587,7 +1512,14 @@ class JobQueue:
 
     async def get_stats(self) -> Dict[str, Any]:
         """Get queue statistics."""
-        return await self._backend.get_stats()
+        stats = await self._backend.get_stats()
+        # The worker answers the question the queue statistics cannot: is
+        # anybody actually serving this queue?
+        stats["worker_id"] = self._worker_id
+        stats["worker_running"] = self.is_running
+        stats["worker_handled_types"] = self.handled_types
+        stats["worker_concurrency"] = self._max_concurrent_jobs
+        return stats
 
     async def get_job_status(self, job_id: str) -> Optional[Job]:
         """Get job by ID."""
@@ -610,20 +1542,50 @@ _job_queue: Optional[JobQueue] = None
 
 
 def init_job_queue(
-    backend: str = "memory",
-    max_size: int = 10000,
-    default_ttl: int = 3600,
+    backend: Optional[str] = None,
+    max_size: Optional[int] = None,
+    default_ttl: Optional[int] = None,
     worker_id: Optional[str] = None,
+    redis_url: Optional[str] = None,
+    rabbitmq_url: Optional[str] = None,
 ) -> JobQueue:
     """Initialize the global job queue."""
     global _job_queue_backend, _job_queue
 
-    if backend == "redis":
-        raise NotImplementedError("Redis backend not yet implemented")
-    elif backend == "rabbitmq":
-        raise NotImplementedError("RabbitMQ backend not yet implemented")
+    from cauveris.config import get_settings
+
+    settings = get_settings()
+    chosen_backend = (backend or getattr(settings, "job_queue_backend", "memory")).lower()
+    effective_max_size = (
+        max_size if max_size is not None else getattr(settings, "job_queue_max_size", 10000)
+    )
+    effective_default_ttl = (
+        default_ttl
+        if default_ttl is not None
+        else getattr(settings, "job_queue_default_ttl", 3600)
+    )
+
+    if chosen_backend == "redis":
+        url = redis_url or getattr(settings, "job_queue_redis_url", "redis://localhost:6379")
+        _job_queue_backend = RedisQueueBackend(
+            redis_url=url,
+            max_size=effective_max_size,
+            default_ttl=effective_default_ttl,
+        )
+    elif chosen_backend in ("rabbitmq", "amqp"):
+        url = rabbitmq_url or getattr(
+            settings, "job_queue_rabbitmq_url", "amqp://guest:guest@localhost:5672/"
+        )
+        _job_queue_backend = RabbitMQQueueBackend(
+            amqp_url=url,
+            max_size=effective_max_size,
+            default_ttl=effective_default_ttl,
+        )
     else:
-        _job_queue_backend = InMemoryQueueBackend(max_size=max_size, default_ttl=default_ttl)
+        _job_queue_backend = InMemoryQueueBackend(
+            max_size=effective_max_size,
+            default_ttl=effective_default_ttl,
+        )
 
     _job_queue = JobQueue(_job_queue_backend, worker_id)
     return _job_queue

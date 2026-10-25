@@ -565,7 +565,7 @@ class VisualizationDataGenerator:
             size = 10 + (state.cpu_usage + state.memory_usage) * 30
 
             # Color based on health
-            health = 1.0 - max(state.cpu_usage, state.memory_usage, state.error_rate * 5)
+            health = max(0.0, min(1.0, 1.0 - max(state.cpu_usage, state.memory_usage, min(1.0, state.error_rate))))
             color = self._health_to_color(health)
 
             node = {

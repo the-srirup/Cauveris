@@ -140,9 +140,7 @@ class MeasurementSystemBuilder:
         # 2. Build measurement rows for each HEU
         rows = []
         for heu in heus:
-            row = self._build_measurement_row(heu, incident_duration_ns)
-            if row is not None:
-                rows.append(row)
+            rows.extend(self._build_measurement_rows(heu, incident_duration_ns))
 
         if not rows:
             return self._empty_system()
@@ -168,9 +166,14 @@ class MeasurementSystemBuilder:
             for dim in self._base_dimensions:
                 self._get_or_create_state_index(comp_name, dim)
 
-        # Add dimensions from HEU encoded_dimensions
+        # Add dimensions from HEU encoded_dimensions.  Evidence about a
+        # component the topology does not contain is skipped: it cannot
+        # constrain any reconstructed state, and registering it would add free
+        # variables that the solver has to invent values for.
         for heu in heus:
             comp = heu.source_component
+            if comp not in self.topology.components:
+                continue
             for dim in heu.encoded_dimensions:
                 self._get_or_create_state_index(comp, dim)
 
@@ -183,80 +186,73 @@ class MeasurementSystemBuilder:
             self._state_dims.append(StateDimension(component, dimension, idx))
         return self._state_index[key]
 
-    def _build_measurement_row(
+    def _build_measurement_rows(
         self,
         heu: HolographicEvidenceUnit,
         incident_duration_ns: int,
-    ) -> Optional[MeasurementRow]:
-        """Build measurement row(s) for a single HEU."""
-        # Map HEU to which state dimensions it observes
-        observed_dims = self._map_heu_to_state_dims(heu)
-        if not observed_dims:
-            return None
+    ) -> List[MeasurementRow]:
+        """Build one measurement row per state dimension this HEU informs.
 
-        # Normalize observation value from HEU payload
-        obs_value = self._normalize_observation(heu)
-        if obs_value is None:
-            obs_value = 0.5  # Default mid-range
+        A HEU can inform several dimensions, but one observation value cannot
+        serve all of them: a WARNING log states that the error rate is high
+        and says nothing about the CPU.  Each dimension therefore gets its
+        own row, carrying the value that dimension was actually observed at.
+        """
+        if heu.source_component not in self.topology.components:
+            return []
 
-        # Build coefficients from encoded dimensions
-        state_indices = []
-        coefficients = []
-
-        # Weight by reconstruction weight and kernel response
         weight = heu.reconstruction_weight
+        ambiguity_factor = 1.0 - heu.ambiguity_score
 
+        rows: List[MeasurementRow] = []
         for dim_name, dim_weight in heu.encoded_dimensions.items():
             idx = self._state_index.get((heu.source_component, dim_name))
-            if idx is not None:
-                state_indices.append(idx)
-                # Coefficient combines encoded_dim weight, reconstruction weight, phase
-                coeff = dim_weight * weight * (1.0 - heu.ambiguity_score)
-                coefficients.append(coeff)
-
-        if not state_indices:
-            return None
-
-        # If single observation informs multiple dimensions, distribute
-        # For now, we create one row per state dimension informed
-        rows = []
-        for i, (idx, coeff) in enumerate(zip(state_indices, coefficients)):
-            row = MeasurementRow(
-                heu_id=f"{heu.heu_id}_dim{i}",
-                boundary_layer=heu.boundary_layer,
-                component=heu.source_component,
-                dimension=list(heu.encoded_dimensions.keys())[i],
-                state_indices=[idx],
-                coefficients=np.array([coeff], dtype=np.float32),
-                timestamp_ns=heu.timestamp_ns,
-                observation_value=obs_value,
-                noise_std=self._estimate_noise_std(heu),
+            if idx is None:
+                continue
+            coeff = float(dim_weight) * weight * ambiguity_factor
+            if coeff <= 0.0:
+                continue
+            rows.append(
+                MeasurementRow(
+                    heu_id=f"{heu.heu_id}_dim_{dim_name}",
+                    boundary_layer=heu.boundary_layer,
+                    component=heu.source_component,
+                    dimension=dim_name,
+                    state_indices=[idx],
+                    coefficients=np.array([coeff], dtype=np.float32),
+                    timestamp_ns=heu.timestamp_ns,
+                    observation_value=self._observation_for(heu, dim_name),
+                    noise_std=self._estimate_noise_std(heu),
+                )
             )
-            rows.append(row)
-
-        # For simplicity, return first row (we'll combine in assemble)
-        # Actually, let's return a combined row for this HEU
-        combined = MeasurementRow(
-            heu_id=heu.heu_id,
-            boundary_layer=heu.boundary_layer,
-            component=heu.source_component,
-            dimension="multi",  # Informs multiple dimensions
-            state_indices=state_indices,
-            coefficients=np.array(coefficients, dtype=np.float32),
-            timestamp_ns=heu.timestamp_ns,
-            observation_value=obs_value,
-            noise_std=self._estimate_noise_std(heu),
-        )
-        return combined
+        return rows
 
     def _map_heu_to_state_dims(self, heu: HolographicEvidenceUnit) -> List[str]:
         """Map HEU's boundary layer and encoded dims to state dimensions."""
         # Direct mapping from encoded_dimensions
         return list(heu.encoded_dimensions.keys())
 
+    def _observation_for(self, heu: HolographicEvidenceUnit, dimension: str) -> float:
+        """The value this HEU observed for one dimension, in [0,1]."""
+        if dimension in heu.observations:
+            return float(np.clip(heu.observations[dimension], 0.0, 1.0))
+        # The event implicated the dimension without measuring it: the
+        # relevance weight is the only evidence available.
+        return float(np.clip(heu.encoded_dimensions.get(dimension, 0.5), 0.0, 1.0))
+
     def _normalize_observation(self, heu: HolographicEvidenceUnit) -> Optional[float]:
-        """Normalize HEU payload to [0,1] observation value."""
+        """Normalize HEU payload to [0,1] observation value.
+
+        Kept for callers that want a single value for a HEU; the measurement
+        rows themselves use :meth:`_observation_for`, which is dimension
+        specific.
+        """
+        if heu.observations:
+            return float(max(heu.observations.values()))
+
         payload = heu.payload
+        attributes = payload.get("attributes") if isinstance(payload, dict) else None
+        attributes = attributes if isinstance(attributes, dict) else {}
 
         # Try various payload fields
         if "cpu_usage" in payload:
@@ -281,8 +277,8 @@ class MeasurementSystemBuilder:
                 return float(np.clip(val / 1000, 0, 1))
 
         # Log level based
-        if "level" in payload:
-            level = str(payload["level"]).upper()
+        if "level" in attributes:
+            level = str(attributes["level"]).upper()
             mapping = {
                 "DEBUG": 0.0,
                 "INFO": 0.1,

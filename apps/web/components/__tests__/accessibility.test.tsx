@@ -35,7 +35,7 @@ describe('Accessibility Audit - Core Components', () => {
       links.forEach(link => {
         expect(link).toHaveClass('focus-visible:outline-none');
         expect(link).toHaveClass('focus-visible:ring-2');
-        expect(link).toHaveClass('focus-visible:ring-primary');
+        expect(link).toHaveClass('focus-visible:ring-[var(--color-accent)]');
       });
     });
 
@@ -88,7 +88,7 @@ describe('Accessibility Audit - Core Components', () => {
       buttons.forEach(button => {
         expect(button).toHaveClass('focus-visible:outline-none');
         expect(button).toHaveClass('focus-visible:ring-2');
-        expect(button).toHaveClass('focus-visible:ring-primary');
+        expect(button).toHaveClass('focus-visible:ring-[var(--color-accent)]');
       });
     });
   });
@@ -207,7 +207,7 @@ describe('Accessibility Audit - Core Components', () => {
       tabs.forEach(tab => {
         expect(tab).toHaveClass('focus-visible:outline-none');
         expect(tab).toHaveClass('focus-visible:ring-2');
-        expect(tab).toHaveClass('focus-visible:ring-primary');
+        expect(tab).toHaveClass('focus-visible:ring-[var(--color-accent)]');
       });
     });
   });
@@ -245,7 +245,7 @@ describe('Accessibility Audit - Core Components', () => {
       items.forEach(item => {
         expect(item).toHaveClass('focus-visible:outline-none');
         expect(item).toHaveClass('focus-visible:ring-2');
-        expect(item).toHaveClass('focus-visible:ring-primary');
+        expect(item).toHaveClass('focus-visible:ring-[var(--color-accent)]');
       });
     });
 
@@ -269,7 +269,7 @@ describe('Accessibility Audit - Core Components', () => {
       const button = screen.getByRole('button', { name: 'Test' });
       expect(button).toHaveClass('focus-visible:outline-none');
       expect(button).toHaveClass('focus-visible:ring-2');
-      expect(button).toHaveClass('focus-visible:ring-primary');
+      expect(button).toHaveClass('focus-visible:ring-[var(--color-accent)]');
     });
 
     it('should support disabled state', () => {

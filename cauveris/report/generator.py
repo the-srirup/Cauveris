@@ -4,12 +4,18 @@ Report generator for creating final incident reports and patch packages.
 
 import os
 import json
+import re
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from cauveris.analysis.model import TwinParameters
+from cauveris.analysis.system_model import SystemModel, get_system_model
 from cauveris.schemas.incident import Incident
 from cauveris.schemas.hypothesis import Hypothesis
 from cauveris.schemas.experiment import Experiment
 from cauveris.schemas.patch import PatchCandidate, VerificationReport
+from cauveris.simulation.runner import DigitalTwinFaultInjectors, CloudToRobotDigitalTwin
+from cauveris.simulation.mapping import map_experiment_to_intervention
 from cauveris.config import get_settings
 import logging
 
@@ -21,6 +27,22 @@ class ReportGenerator:
 
     def __init__(self):
         self.settings = get_settings()
+        self._model: Optional[SystemModel] = None
+
+    def _resolve_model(self, incident: Incident) -> Optional[SystemModel]:
+        """The incident's calibrated model, when its bundle can be found."""
+        bundle = getattr(incident, "bundle_path", None)
+        if not bundle:
+            return None
+        try:
+            return get_system_model(
+                incident.id,
+                Path(bundle),
+                manifest=getattr(incident, "manifest", None) or {},
+            )
+        except Exception as exc:
+            logger.info(f"Could not build the system model for the report: {exc}")
+            return None
 
     async def generate(
         self,
@@ -44,6 +66,16 @@ class ReportGenerator:
             Dictionary containing the report and paths to generated artifacts
         """
         logger.info(f"Generating report for incident {incident.id}")
+
+        # The incident's calibrated model, so that every number the report
+        # shows is computed from this incident's own evidence rather than
+        # from a default pipeline.
+        self._model = self._resolve_model(incident)
+
+        # Index hypotheses by id so patches can be traced back to their causal claim
+        self._hypotheses_by_id = {
+            h.hypothesis_id: h for h in hypotheses if getattr(h, "hypothesis_id", None)
+        }
 
         # Create report directory
         report_dir = Path(f"./report/{incident.id}")
@@ -70,7 +102,7 @@ class ReportGenerator:
             "patch_candidates": [self._patch_to_dict(p) for p in patch_candidates],
             "verification_reports": [self._verification_to_dict(v) for v in verification_reports],
             "status": "COMPLETED",
-            "generated_at": "2026-09-20T10:30:00Z",  # In reality, use current time
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
         # Write incident report
@@ -81,9 +113,14 @@ class ReportGenerator:
         # Generate patch package if we have verified patches
         verified_patches = [p for p in patch_candidates if p.verified]
         if verified_patches:
+            # Take the first verified patch and look up its originating experiment
+            # (candidate_id = "patch-{experiment_id}") to build before/after evidence
+            target_patch = verified_patches[0]
+            experiment = self._experiment_for_patch(target_patch, experiments)
             patch_package_dir = await self._generate_patch_package(
                 incident.id,
-                verified_patches[0],  # Take the first verified patch for simplicity
+                target_patch,
+                experiment,
                 report_dir,
             )
             incident_report["patch_package_path"] = str(patch_package_dir)
@@ -175,7 +212,11 @@ class ReportGenerator:
         }
 
     async def _generate_patch_package(
-        self, incident_id: str, patch: PatchCandidate, report_dir: Path
+        self,
+        incident_id: str,
+        patch: PatchCandidate,
+        experiment: Optional[Experiment],
+        report_dir: Path,
     ) -> Path:
         """
         Generate a patch package directory with all required artifacts.
@@ -183,6 +224,7 @@ class ReportGenerator:
         Args:
             incident_id: ID of the incident
             patch: The verified patch candidate
+            experiment: The experiment the patch was generated from (may be None)
             report_dir: Parent directory for the report
 
         Returns:
@@ -238,151 +280,37 @@ class ReportGenerator:
         metrics_dir = before_after_dir / "metrics"
         replay_videos_dir = before_after_dir / "replay-videos"
         mcap_excerpts_dir = before_after_dir / "mcap-excerpts"
+
+        # Post-fix batching window, parsed from the patch diff (None -> baseline 200ms)
+        after_window_ms = self._patched_batching_window(patch)
+        before_window_ms = self._pre_patch_batching_window(patch, self._model)
         for dir_path in [traces_dir, metrics_dir, replay_videos_dir, mcap_excerpts_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
 
-        # 1. Real Before & After Traces
-        before_traces = {
-            "traceID": "0af7651916cd43dd8448eb211c80819c",
-            "spans": [
-                {
-                    "name": "inference_request",
-                    "duration_ms": 155.0,
-                    "attributes": {
-                        "batch_window_ms": 200,
-                        "queue_wait_ms": 115,
-                        "gpu_exec_ms": 40,
-                        "model": "objdet:v42",
-                    },
-                },
-                {
-                    "name": "ros_perception_subscriber",
-                    "duration_ms": 5.2,
-                    "attributes": {
-                        "detection_age_ms": 155.0,
-                        "freshness_budget_ms": 120.0,
-                        "status": "STALE_DETECTION",
-                    },
-                },
-                {
-                    "name": "tf_lookup",
-                    "duration_ms": 100.0,
-                    "status": {
-                        "code": 2,
-                        "message": "ExtrapolationException: Transform lookup failed: detection age 155ms exceeds buffer",
-                    },
-                },
-                {
-                    "name": "robot_control_loop",
-                    "duration_ms": 50.0,
-                    "status": {
-                        "code": 2,
-                        "message": "Control deadline missed due to stale perception latency",
-                    },
-                },
-                {
-                    "name": "safety_monitor",
-                    "duration_ms": 2.0,
-                    "status": {
-                        "code": 2,
-                        "message": "EMERGENCY_STOP: safety relay tripped at aisle B",
-                    },
-                },
-            ],
-        }
-        after_traces = {
-            "traceID": "4bf92f3577b34da6a3ce929d0e0e4736",
-            "spans": [
-                {
-                    "name": "inference_request",
-                    "duration_ms": 78.0,
-                    "attributes": {
-                        "batch_window_ms": 100,
-                        "queue_wait_ms": 42,
-                        "gpu_exec_ms": 36,
-                        "model": "objdet:v42-patched",
-                    },
-                },
-                {
-                    "name": "ros_perception_subscriber",
-                    "duration_ms": 3.8,
-                    "attributes": {
-                        "detection_age_ms": 78.0,
-                        "freshness_budget_ms": 120.0,
-                        "status": "FRESH",
-                    },
-                },
-                {
-                    "name": "tf_lookup",
-                    "duration_ms": 1.2,
-                    "status": {
-                        "code": 0,
-                        "message": "Transform lookup succeeded (age 78ms within 120ms budget)",
-                    },
-                },
-                {
-                    "name": "robot_control_loop",
-                    "duration_ms": 42.0,
-                    "status": {
-                        "code": 0,
-                        "message": "Control deadline met: loop completed in 42ms <= 50ms",
-                    },
-                },
-                {
-                    "name": "safety_monitor",
-                    "duration_ms": 0.5,
-                    "status": {
-                        "code": 0,
-                        "message": "NORMAL_OPERATION: all safety invariants satisfied",
-                    },
-                },
-            ],
-        }
+        # 1. Before & After evidence, computed live from the digital twin using the
+        # actual pre-fix and post-fix configurations (batching window from the patch)
+        # and this incident's calibrated model.
+        before_metrics, before_traces = self._run_twin_evidence(
+            before_window_ms=before_window_ms, model=self._model
+        )
+        after_metrics, after_traces = self._run_twin_evidence(
+            before_window_ms=after_window_ms, model=self._model
+        )
+
         (traces_dir / "before_traces.json").write_text(
             json.dumps(before_traces, indent=2), encoding="utf-8"
         )
         (traces_dir / "after_traces.json").write_text(
             json.dumps(after_traces, indent=2), encoding="utf-8"
         )
+        self._write_metrics_csv(metrics_dir / "before_metrics.csv", before_metrics)
+        self._write_metrics_csv(metrics_dir / "after_metrics.csv", after_metrics)
 
-        # 2. Real Before & After Metrics CSVs
-        before_csv_lines = [
-            "timestamp,inference_latency_ms,queue_depth,gpu_utilization_pct,detection_age_ms,control_loop_latency_ms,safety_tripped"
-        ]
-        for i in range(20):
-            ts = f"2026-09-20T10:29:{50 + (i * 0.1):04.1f}Z"
-            lat = round(135.0 + (i * 3.2), 1)
-            q = 5 + (i * 2)
-            gpu = min(95, 55 + (i * 2))
-            age = lat
-            ctrl = 45.0 if age <= 120.0 else 105.0
-            stop = 1 if age > 120.0 else 0
-            before_csv_lines.append(f"{ts},{lat},{q},{gpu},{age},{ctrl},{stop}")
-        (metrics_dir / "before_metrics.csv").write_text(
-            "\n".join(before_csv_lines) + "\n", encoding="utf-8"
-        )
-
-        after_csv_lines = [
-            "timestamp,inference_latency_ms,queue_depth,gpu_utilization_pct,detection_age_ms,control_loop_latency_ms,safety_tripped"
-        ]
-        for i in range(20):
-            ts = f"2026-09-20T10:35:{10 + (i * 0.1):04.1f}Z"
-            lat = round(72.0 + ((i % 5) * 2.1), 1)
-            q = 2 + (i % 3)
-            gpu = 48 + (i % 4)
-            age = lat
-            ctrl = 42.0
-            stop = 0
-            after_csv_lines.append(f"{ts},{lat},{q},{gpu},{age},{ctrl},{stop}")
-        (metrics_dir / "after_metrics.csv").write_text(
-            "\n".join(after_csv_lines) + "\n", encoding="utf-8"
-        )
-
-        # 3. Real Valid MCAP Excerpts
+        # 2. MCAP excerpts from the same twin trial outputs
         try:
             from mcap.writer import Writer
 
-            for name, is_before in [("before_excerpt.mcap", True), ("after_excerpt.mcap", False)]:
+            for name, payload in [("before_excerpt.mcap", before_metrics), ("after_excerpt.mcap", after_metrics)]:
                 mcap_file = mcap_excerpts_dir / name
                 with open(mcap_file, "wb") as f:
                     w = Writer(f)
@@ -392,20 +320,13 @@ class ReportGenerator:
                         topic="/robot/telemetry", message_encoding="json", schema_id=s_id
                     )
                     t0 = 1789900190000000000
-                    for step_idx in range(10):
+                    for step_idx, trial in enumerate(payload):
                         t_msg = t0 + (step_idx * 50000000)
-                        if is_before and step_idx >= 6:
-                            data_payload = {
-                                "speed_mps": 0.0,
-                                "safety_status": "EMERGENCY_STOP",
-                                "detection_age_ms": 155.0,
-                            }
-                        else:
-                            data_payload = {
-                                "speed_mps": 0.8,
-                                "safety_status": "NOMINAL",
-                                "detection_age_ms": 78.0,
-                            }
+                        data_payload = {
+                            "speed_mps": 0.0 if trial["emergency_stop"] else 0.8,
+                            "safety_status": "EMERGENCY_STOP" if trial["emergency_stop"] else "NOMINAL",
+                            "detection_age_ms": trial["total_latency_ms"],
+                        }
                         w.add_message(
                             channel_id=c_id,
                             log_time=t_msg,
@@ -416,17 +337,21 @@ class ReportGenerator:
         except Exception as e:
             logger.debug(f"Failed to generate MCAP excerpts: {e}")
 
-        # 4. Valid WebM Video Replay Placeholders (Valid EBML container header)
-        webm_header = b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\xf7\x81\x01\x42\xf2\x81\x04\x42\xf3\x81\x08\x42\x82\x84webm\x42\x87\x81\x02\x42\x85\x81\x02"
-        (replay_videos_dir / "before_replay.webm").write_bytes(webm_header + (b"\x00" * 256))
-        (replay_videos_dir / "after_replay.webm").write_bytes(webm_header + (b"\x00" * 256))
+        # 3. Replay note — replay videos require recorded camera streams, which are not
+        # part of the digital twin output. Record honestly rather than emitting fake media.
+        (replay_videos_dir / "README.txt").write_text(
+            "Replay videos are not synthesized. Attach MCAP recordings captured from the real "
+            "system at incident time to this directory before review.\n",
+            encoding="utf-8",
+        )
 
         # Write PULL_REQUEST.md
         pr_path = package_dir / "PULL_REQUEST.md"
+        causal_claim = self._causal_claim_for_patch(patch, experiment)
         pr_content = f"""# Fix for Incident {incident_id}
 
 ## Summary
-{patch.candidate_id} addresses the root cause: {self._get_hypothesis_causal_claim(patch)}.
+{patch.candidate_id} addresses the root cause: {causal_claim}.
 
 ## Changes
 - **Files changed**: {len(patch.affected_files)}
@@ -517,9 +442,159 @@ echo "Rollback complete. Please verify the system is back to its previous state.
         logger.info(f"Patch package generated at {package_dir}")
         return package_dir
 
-    def _get_hypothesis_causal_claim(self, patch: PatchCandidate) -> str:
-        """Extract causal claim from patch (placeholder)."""
-        # In a real implementation, we would link the patch to its hypothesis
-        return (
-            "Increased dynamic batching window caused inference latency to exceed freshness budget"
-        )
+    def _experiment_for_patch(
+        self, patch: PatchCandidate, experiments: List[Experiment]
+    ) -> Optional[Experiment]:
+        """Find the experiment a patch was generated from (candidate_id = patch-{exp_id})."""
+        exp_id = patch.candidate_id
+        if exp_id.startswith("patch-"):
+            exp_id = exp_id[len("patch-"):]
+        for e in experiments:
+            if e.experiment_id == exp_id:
+                return e
+        return None
+
+    def _causal_claim_for_patch(
+        self, patch: PatchCandidate, experiment: Optional[Experiment]
+    ) -> str:
+        """Resolve the causal claim by walking patch -> experiment -> hypothesis."""
+        hypothesis = None
+        if experiment is not None:
+            hypothesis = self._hypotheses_by_id.get(experiment.hypothesis_id)
+        if hypothesis is None:
+            return "Root cause not linked (patch generated without hypothesis metadata)"
+        return hypothesis.causal_claim
+
+    def _patched_batching_window(self, patch: PatchCandidate) -> float:
+        """
+        The batching window the patch installs.
+
+        It is read from the patch's own structured edit when there is one,
+        because that is the value the patch actually writes into the
+        configuration file.  The diff is the fallback for a patch that was
+        built before the structured edit existed.
+        """
+        for edit in patch.config_edits:
+            if edit.parameter == "batching_window_ms":
+                try:
+                    return float(edit.target_value)
+                except (TypeError, ValueError):
+                    break
+        m = re.search(r"\+\s*batching_window_ms:\s*(\d+(?:\.\d+)?)", patch.unified_diff)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                pass
+        return 100.0
+
+    def _pre_patch_batching_window(
+        self, patch: PatchCandidate, model: Optional[SystemModel]
+    ) -> float:
+        """
+        The batching window the target workspace has before the patch.
+
+        Read from the patch's structured edit, because that is the value the
+        patch found in the real file; the calibrated model is the fallback.
+        """
+        for edit in patch.config_edits:
+            if edit.parameter == "batching_window_ms" and edit.current_value is not None:
+                try:
+                    return float(edit.current_value)
+                except (TypeError, ValueError):
+                    break
+        if model is not None and model.has_fitted_model():
+            return float(model.parameters.batching_window_ms)
+        return 200.0
+
+    def _run_twin_evidence(
+        self,
+        before_window_ms: float,
+        model: Optional[SystemModel] = None,
+    ):
+        """
+        Run the actual digital twin for 20 trials at the given batching window and
+        return (trial metric rows, synthetic span view of the trials) used as
+        before/after evidence. Values are computed, not hard-coded.
+
+        The twin is built from the incident's calibrated model when there is
+        one, so the evidence describes *this* incident's pipeline and not a
+        default pipeline that happens to look similar.
+        """
+        if model is not None and model.has_fitted_model():
+            # The window has to be changed in the parameters themselves: the
+            # twin evaluates ``self.parameters()``, so overriding the fault
+            # injectors alone would leave the window at its calibrated value
+            # and the before/after evidence would be two copies of the same
+            # run.
+            merged = model.parameters.as_dict()
+            merged["batching_window_ms"] = before_window_ms
+            parameters = TwinParameters(**merged)
+            faults = DigitalTwinFaultInjectors.from_parameters(parameters)
+            twin = CloudToRobotDigitalTwin(
+                faults,
+                parameters=parameters,
+                budget_ms=model.budget.freshness_budget_ms,
+                control_deadline_ms=model.budget.control_deadline_ms,
+                kinematics=model.kinematics,
+                emergency_stop_on_stale=model.budget.emergency_stop_on_stale,
+            )
+        else:
+            faults = DigitalTwinFaultInjectors(batching_window_ms=before_window_ms)
+            twin = CloudToRobotDigitalTwin(faults)
+        trials = [twin.step(seed=9000 + i) for i in range(20)]
+
+        span_status_ok = all(t["emergency_stop"] is False for t in trials)
+        traces = {
+            "source": "digital_twin_simulation",
+            "trials": len(trials),
+            "freshness_budget_ms": twin.freshness_budget_ms,
+            "spans": [
+                {
+                    "name": "inference_request",
+                    "duration_ms": round(sum(t["inference_latency_ms"] for t in trials) / len(trials), 2),
+                    "attributes": {
+                        "batch_window_ms": before_window_ms,
+                        "avg": True,
+                        "unit": "ms",
+                    },
+                },
+                {
+                    "name": "robot_control_loop",
+                    "duration_ms": round(sum(t["total_latency_ms"] for t in trials) / len(trials), 2),
+                    "status": {
+                        "code": 0 if span_status_ok else 2,
+                        "message": (
+                            "All trials within freshness budget"
+                            if span_status_ok
+                            else "One or more trials exceeded freshness budget (emergency stop)"
+                        ),
+                    },
+                },
+                {
+                    "name": "safety_monitor",
+                    "duration_ms": 0.5,
+                    "status": {
+                        "code": 0 if span_status_ok else 2,
+                        "message": (
+                            "NORMAL_OPERATION: no emergency stops across trials"
+                            if span_status_ok
+                            else f"EMERGENCY_STOP in {sum(1 for t in trials if t['emergency_stop'])}/{len(trials)} trials"
+                        ),
+                    },
+                },
+            ],
+        }
+        return trials, traces
+
+    def _write_metrics_csv(self, path: Path, trials) -> None:
+        """Write trial rows as CSV with a live timestamp column."""
+        ts_base = datetime.now(timezone.utc)
+        lines = ["timestamp,batch_wait_ms,gpu_compute_ms,inference_latency_ms,network_delay_ms,total_latency_ms,is_stale,emergency_stop"]
+        for i, t in enumerate(trials):
+            ts = (ts_base.replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+            lines.append(
+                f"{ts},{t['batch_wait_ms']},{t['gpu_compute_ms']},{t['inference_latency_ms']},"
+                f"{t['network_delay_ms']},{t['total_latency_ms']},{int(t['is_stale'])},{int(t['emergency_stop'])}"
+            )
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")

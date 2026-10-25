@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from cauveris.attribution import canonical_component, resolve_attribution, resolve_event_component
+
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +314,12 @@ class SystemTopology:
                 with open(deploy_file, "r") as f:
                     deploy = json.load(f)
 
-                component_name = deploy.get("service_name", deploy.get("name", deploy_file.stem))
+                component_name = (
+                    deploy.get("service_name")
+                    or deploy.get("service")
+                    or deploy.get("name")
+                    or deploy_file.stem
+                )
                 instances = deploy.get("instances", [])
                 instance_ids = [
                     inst.get("instance_id", f"{component_name}-{i}")
@@ -456,11 +463,20 @@ class SystemTopology:
 def build_topology_from_timeline(
     timeline_events: List[Dict[str, Any]],
     bundle_path: Optional[Path] = None,
+    aliases: Optional[Dict[str, str]] = None,
 ) -> SystemTopology:
     """
     Alternative topology builder that infers components and edges from timeline events.
 
     Used when bundle config files are not available.
+
+    Components are attributed with the same resolver the evidence units use,
+    so the graph and the measurements always describe the same component set.
+
+    Edges are only drawn where the evidence states a relationship: a trace
+    span that names its peer service, or an observation that names another
+    component shortly after that component was active.  Nothing is invented
+    to make the graph look connected.
     """
     topology = SystemTopology()
 
@@ -472,12 +488,9 @@ def build_topology_from_timeline(
         source_type = event.get("source_type", "")
         attributes = event.get("attributes", {})
 
-        # Identify component from attributes (check OTel standard attributes)
-        component = (
-            attributes.get("service")
-            or attributes.get("component")
-            or attributes.get("service.name")
-        )
+        # Identify component with the canonical resolver.
+        attribution = resolve_attribution(event, aliases)
+        component = attribution.component
         instance = attributes.get("instance") or attributes.get("host") or "unknown"
 
         if component:
@@ -495,6 +508,16 @@ def build_topology_from_timeline(
             if layer not in components_found[component].boundary_layers:
                 components_found[component].boundary_layers.append(layer)
 
+            # A deployment describes the component it was applied to.
+            if source_type == "deployment_json":
+                components_found[component].deployment_version = str(
+                    attributes.get("deployment_id", "")
+                )
+                components_found[component].deployment_time_ns = int(
+                    event.get("timestamp_ns", 0) or 0
+                )
+                components_found[component].component_type = "service"
+
         # Infer edges from OTel trace parent-child / peer service
         if source_type == "otel_trace":
             service_name = attributes.get("service.name")
@@ -503,13 +526,19 @@ def build_topology_from_timeline(
             if service_name and peer_service and service_name != peer_service:
                 edges_found.add((service_name, peer_service))
 
+    # Edges stated by the evidence itself: an observation that names another
+    # component while that component was active.
+    edges_found.update(_infer_referenced_edges(timeline_events, components_found))
+
     # Add inferred components
     for comp in components_found.values():
         topology.add_component(comp)
 
     # Add inferred edges
     for src, tgt in edges_found:
-        if src in topology.components and tgt in topology.components:
+        src = canonical_component(src, aliases)
+        tgt = canonical_component(tgt, aliases)
+        if src in topology.components and tgt in topology.components and src != tgt:
             topology.add_causal_edge(
                 CausalEdge(
                     source=src,
@@ -521,6 +550,85 @@ def build_topology_from_timeline(
             )
 
     return topology
+
+
+# How far apart two observations may be for one to be able to name the
+# other's component.  Well inside the causality window of a physical system,
+# loose enough to survive clock skew between evidence channels.
+_REFERENCE_WINDOW_NS = 5_000_000_000
+
+# Evidence whose text is written by a human.  Metric exports are excluded:
+# their messages are generated from column names and say nothing about
+# causality.
+_NARRATIVE_SOURCE_TYPES = ("jsonl_log", "text_log", "operator_note")
+
+
+def _component_tokens(component: str) -> Set[str]:
+    """All distinctive words and stems that identify a component in text."""
+    tokens: Set[str] = set()
+    lowered = component.lower().strip()
+    if len(lowered) >= 4:
+        tokens.add(lowered)
+    for separator in ("-", "_", ".", "/"):
+        if separator in lowered:
+            parts = [p for p in lowered.split(separator) if p]
+            for part in parts:
+                if len(part) >= 4:
+                    tokens.add(part)
+                    if part == "controller":
+                        tokens.add("control")
+                    elif part == "detection":
+                        tokens.add("perception")
+    if "cloud" in tokens or "inference" in tokens:
+        tokens.update({"cloud", "inference"})
+    return tokens
+
+
+def _distinctive_token(component: str) -> Optional[str]:
+    """The word that identifies a component in running text."""
+    tokens = _component_tokens(component)
+    return next(iter(tokens)) if tokens else None
+
+
+def _infer_referenced_edges(
+    timeline_events: List[Dict[str, Any]],
+    components_found: Dict[str, ComponentInfo],
+) -> Set[Tuple[str, str]]:
+    """Edges where one observation explicitly names another component."""
+    edges: Set[Tuple[str, str]] = set()
+    component_tokens = {
+        name: _component_tokens(name)
+        for name in components_found
+    }
+    if not any(component_tokens.values()):
+        return edges
+
+    for event in timeline_events:
+        if event.get("source_type") not in _NARRATIVE_SOURCE_TYPES:
+            continue
+        message = str(event.get("message", "")).lower()
+        if not message:
+            continue
+        target = resolve_event_component(event)
+        if not target:
+            continue
+        timestamp = int(event.get("timestamp_ns", 0) or 0)
+
+        for source, tokens in component_tokens.items():
+            if source == target or not any(token in message for token in tokens):
+                continue
+            # The named component must have been active around this time.
+            # Allow clock skew / timestamp coarseness between evidence channels.
+            for other in timeline_events:
+                if resolve_event_component(other) != source:
+                    continue
+                other_ts = int(other.get("timestamp_ns", 0) or 0)
+                delta = timestamp - other_ts
+                if -_REFERENCE_WINDOW_NS <= delta <= _REFERENCE_WINDOW_NS:
+                    edges.add((source, target))
+                    break
+
+    return edges
 
 
 def _infer_component_type(source_type: str) -> str:

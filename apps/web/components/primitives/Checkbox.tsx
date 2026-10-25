@@ -86,17 +86,25 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
     const checkboxId = id || generatedId;
     const descriptionId = description ? `${checkboxId}-description` : undefined;
 
+    // `indeterminate` is a DOM property, not an HTML attribute — set it via the
+    // ref while preserving forwarded-ref semantics.
+    const attachRef = (el: HTMLInputElement | null) => {
+      if (el) el.indeterminate = !!indeterminate;
+      if (typeof ref === "function") ref(el);
+      else if (ref) ref.current = el;
+    };
+
     return (
       <label htmlFor={checkboxId} className={labelStyles({ size })}>
         <input
-          ref={ref}
+          ref={attachRef}
           type="checkbox"
           id={checkboxId}
           className={checkboxStyles({ size, className })}
           disabled={disabled}
           required={required}
           aria-describedby={descriptionId}
-          aria-controls={indeterminate ? undefined : undefined}
+          aria-checked={indeterminate ? "mixed" : undefined}
           {...props}
         />
         {(label || description) && (

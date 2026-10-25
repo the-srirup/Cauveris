@@ -28,6 +28,9 @@ class ConcurrencySlot:
     acquired_at: float
     heartbeat_at: float
     metadata: Dict = field(default_factory=dict)
+    # Number of active acquires sharing this slot. The slot is only freed once
+    # every holder has released it.
+    ref_count: int = 1
 
 
 class ConcurrencyStore(ABC):
@@ -104,6 +107,9 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
                 if owner_id in slots:
                     slot = slots[owner_id]
                     slot.heartbeat_at = time.time()
+                    # Share the existing slot; the slot is only freed once every
+                    # holder has released it.
+                    slot.ref_count += 1
                     return slot
 
                 # Check capacity
@@ -122,13 +128,12 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
                     )
                     return slot
 
-                # Need to wait - create event if not exists
-                if key not in self._waiting:
-                    self._waiting[key] = {}
-                if owner_id not in self._waiting[key]:
-                    self._waiting[key][owner_id] = asyncio.Event()
-
-                wait_event = self._waiting[key][owner_id]
+                # Need to wait. A fresh event is used for every attempt: reusing
+                # a previously signalled event would make the loop spin instead
+                # of sleeping.
+                waiting = self._waiting.setdefault(key, {})
+                wait_event = asyncio.Event()
+                waiting[owner_id] = wait_event
 
             # Wait outside lock
             try:
@@ -142,8 +147,9 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
             except asyncio.CancelledError:
                 # Clean up wait event
                 async with lock:
-                    if key in self._waiting and owner_id in self._waiting[key]:
-                        del self._waiting[key][owner_id]
+                    waiting = self._waiting.get(key)
+                    if waiting is not None and waiting.get(owner_id) is wait_event:
+                        del waiting[owner_id]
                 raise
 
         return None  # Timeout
@@ -153,20 +159,36 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
         async with lock:
             slots = self._slots.get(key, {})
             if owner_id in slots:
+                slot = slots[owner_id]
+                slot.ref_count -= 1
+                if slot.ref_count > 0:
+                    # Still held by another concurrent acquire of the same owner.
+                    logger.debug(
+                        f"Released concurrency slot reference: {key} for {owner_id} "
+                        f"({slot.ref_count} remaining)"
+                    )
+                    return True
+
                 del slots[owner_id]
                 logger.debug(
                     f"Released concurrency slot: {key} for {owner_id} ({len(slots)} slots)"
                 )
 
-                # Notify waiting owners
-                if key in self._waiting:
-                    for waiting_owner, event in self._waiting[key].items():
-                        if not event.is_set():
-                            event.set()
-                            break  # Only wake one
-
+                self._notify_waiter(key)
                 return True
             return False
+
+    def _notify_waiter(self, key: str) -> None:
+        """Wake one waiter for ``key``. Must be called with the key lock held."""
+        waiting = self._waiting.get(key)
+        if not waiting:
+            return
+        for waiting_owner, event in list(waiting.items()):
+            if not event.is_set():
+                event.set()
+                # Drop the waiter so that its next attempt gets a fresh event.
+                del waiting[waiting_owner]
+                break  # Only wake one
 
     async def heartbeat(self, key: str, owner_id: str) -> bool:
         lock = self._get_lock(key)
@@ -191,12 +213,14 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
 
     async def cleanup_stale(self, stale_threshold: float) -> int:
         removed = 0
-        lock = self._get_lock("__cleanup__")
-        async with lock:
-            for key in list(self._slots.keys()):
-                if key == "__cleanup__":
+        # Each key is guarded by its own lock so that cleanup cannot race with
+        # a concurrent acquire/release on that key.
+        for key in list(self._slots.keys()):
+            lock = self._get_lock(key)
+            async with lock:
+                slots = self._slots.get(key)
+                if not slots:
                     continue
-                slots = self._slots[key]
                 stale_owners = [
                     owner_id
                     for owner_id, slot in slots.items()
@@ -206,6 +230,8 @@ class InMemoryConcurrencyStore(ConcurrencyStore):
                     del slots[owner_id]
                     removed += 1
                     logger.warning(f"Cleaned up stale concurrency slot: {key} for {owner_id}")
+                if stale_owners:
+                    self._notify_waiter(key)
         return removed
 
     async def health_check(self) -> bool:
@@ -269,13 +295,21 @@ class ConcurrencyManager:
 
         try:
             yield slot
-        except Exception:
-            # Release on any exception
+        finally:
+            # Release on success, failure *and* cancellation. asyncio.CancelledError
+            # derives from BaseException (Python 3.8+), so an `except Exception`
+            # handler would leak the slot whenever the caller is cancelled.
+            await self._release_slot(scope, owner_id)
+
+    async def _release_slot(self, scope: str, owner_id: str) -> None:
+        """Release a slot, tolerating cancellation of the calling task."""
+        try:
             await self._store.release(scope, owner_id)
+        except asyncio.CancelledError:
+            # The surrounding task is being cancelled; finish the release in the
+            # background so the slot is not leaked.
+            asyncio.ensure_future(self._store.release(scope, owner_id))
             raise
-        else:
-            # Release on success
-            await self._store.release(scope, owner_id)
 
     async def heartbeat(self, scope: str, owner_id: str) -> bool:
         """Send heartbeat for a slot."""

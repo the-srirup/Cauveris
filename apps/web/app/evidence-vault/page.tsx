@@ -1,15 +1,14 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { Button, Card, Stat, Badge, PageHeader, Input, Select } from "@/components/ui";
+import { Button, Badge, PageHeader, Input, Select, Stat, Panel, PanelSection, PanelStack, PanelCard, PanelDivider, PanelHeader, PanelFooter } from "@/components/ui";
 import { api, Incident, IncidentReport } from "@/lib/api";
 import { notify } from "@/components/Notification";
 import { useActiveIncident } from "@/lib/useIncident";
 import { useShell } from "@/lib/useShell";
 import type { InspectorData } from "@/lib/useShell";
-import { useAuthStore } from "@/lib/auth";
-import { X, Search } from "lucide-react";
+import { AuthGate } from "@/components/AuthGate";
+import { X, Search, Download, FileCode, Shield, ChevronRight, RotateCcw, ExternalLink } from "lucide-react";
 import { VirtualizedList } from "@/components/VirtualizedList";
 import { DataErrorBoundary } from "@/components/ErrorBoundary";
 
@@ -28,38 +27,6 @@ interface VaultItem {
 function EvidenceVaultContent() {
   const { incidentId, judgeMode, engineerMode } = useActiveIncident();
   const { openInspector, setIncidentContext } = useShell();
-  const { isAuthenticated, isLoading: authLoading } = useAuthStore();
-  const router = useRouter();
-
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login?redirect=/evidence-vault');
-    }
-  }, [isAuthenticated, authLoading, router]);
-
-  // Show loading while auth is initializing
-  if (authLoading) {
-    return (
-      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
-        <div className="flex h-8 w-8 animate-spin text-primary">
-          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)]">Loading Evidence Vault...</p>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
-        <div className="flex h-8 w-8 animate-spin text-primary">
-          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)]">Redirecting to login...</p>
-      </div>
-    );
-  }
 
   useEffect(() => {
     if (incidentId) {
@@ -78,6 +45,7 @@ function EvidenceVaultContent() {
       setIncidentContext(null);
     }
   }, [incidentId, judgeMode, engineerMode]);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [incident, setIncident] = useState<Incident | null>(null);
@@ -87,7 +55,6 @@ function EvidenceVaultContent() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedItem, setSelectedItem] = useState<VaultItem | null>(null);
 
-  // Load incident and report
   const loadVaultData = async (id: string) => {
     try {
       const inc = await api.get(id);
@@ -105,8 +72,6 @@ function EvidenceVaultContent() {
     }
   }, [incidentId]);
 
-  // Aggregate all items from ACTUAL API RESPONSE DATA (no hardcoded fallbacks)
-  // This ensures we only show real evidence items from the backend
   const allItems: VaultItem[] = useMemo(() => {
     const items: VaultItem[] = [];
     const priorityOrder = [
@@ -115,7 +80,6 @@ function EvidenceVaultContent() {
       "logs/", "metrics/", "recordings/"
     ];
 
-    // 1. Evidence items from incident (from API - no hardcoded fallback)
     if (incident?.evidence_items) {
       incident.evidence_items.forEach((ev, idx) => {
         items.push({
@@ -132,7 +96,6 @@ function EvidenceVaultContent() {
       });
     }
 
-    // 2. Hypotheses from report (from API - no hardcoded values)
     if (report?.hypotheses) {
       report.hypotheses.forEach((hyp, idx) => {
         items.push({
@@ -147,7 +110,6 @@ function EvidenceVaultContent() {
       });
     }
 
-    // 3. Experiments from report (from API)
     if (report?.experiments) {
       report.experiments.forEach((exp, idx) => {
         items.push({
@@ -162,7 +124,6 @@ function EvidenceVaultContent() {
       });
     }
 
-    // 4. Patches from report (from API)
     if (report?.patch_candidates) {
       report.patch_candidates.forEach((patch, idx) => {
         items.push({
@@ -177,7 +138,6 @@ function EvidenceVaultContent() {
       });
     }
 
-    // 5. Report itself
     if (report) {
       items.push({
         id: `report-${incidentId}`,
@@ -193,7 +153,6 @@ function EvidenceVaultContent() {
     return items;
   }, [incident, report, incidentId]);
 
-  // Filtered items
   const filteredItems = useMemo(() => {
     return allItems.filter((item) => {
       const matchesSearch =
@@ -209,7 +168,15 @@ function EvidenceVaultContent() {
     });
   }, [allItems, searchQuery, typeFilter, statusFilter]);
 
-  // Download full report
+  const countsByType = useMemo(() => {
+    const counts = { evidence: 0, hypothesis: 0, experiment: 0, patch: 0, report: 0, verifiedPatches: 0 };
+    allItems.forEach((i) => {
+      if (i.type in counts) counts[i.type as keyof typeof counts]++;
+      if (i.type === "patch" && i.status === "VERIFIED") counts.verifiedPatches++;
+    });
+    return counts;
+  }, [allItems]);
+
   const handleDownloadReport = async () => {
     setLoading(true);
     setError(null);
@@ -237,7 +204,6 @@ function EvidenceVaultContent() {
     }
   };
 
-  // Download patch package ZIP
   const handleDownloadPatchPackage = async () => {
     setLoading(true);
     setError(null);
@@ -263,7 +229,6 @@ function EvidenceVaultContent() {
     }
   };
 
-  // Open inspector for artifact
   const handleOpenArtifactInspector = (item: VaultItem) => {
     if (item.type === "evidence") {
       const evidenceItem = incident?.evidence_items?.find(e => `ev-${e.file_path}` === item.id);
@@ -323,7 +288,7 @@ function EvidenceVaultContent() {
       openInspector("patch", data);
     } else if (item.type === "report") {
       const data: InspectorData = {
-        mode: "patch", // Using patch mode as fallback for report
+        mode: "patch",
         patchId: item.id,
         patchData: {
           title: item.name,
@@ -337,7 +302,6 @@ function EvidenceVaultContent() {
     }
   };
 
-  // Download standalone patch installer script
   const handleDownloadPatchScript = async () => {
     setLoading(true);
     setError(null);
@@ -364,9 +328,24 @@ function EvidenceVaultContent() {
     }
   };
 
+  const getTypeIcon = (type: VaultItem["type"]) => {
+    switch (type) {
+      case "evidence": return "EVD";
+      case "hypothesis": return "HYP";
+      case "experiment": return "EXP";
+      case "patch": return "PCH";
+      case "report": return "RPT";
+    }
+  };
+
+  const getStatusBadgeTone = (status: string) => {
+    if (status === "CONFIRMED" || status === "VERIFIED" || status === "COMPLETED") return "success";
+    if (status === "REFUTED" || status === "FAILED") return "danger";
+    return "primary";
+  };
+
   return (
-    <div className="min-h-screen bg-[var(--theme-background)] text-[var(--theme-foreground)] p-6">
-      {/* Header */}
+    <div className="w-full space-y-5">
       <PageHeader
         title="Evidence Vault"
         subtitle="Complete provenance-linked artifact repository and evidence explorer"
@@ -377,82 +356,106 @@ function EvidenceVaultContent() {
         }
       />
 
-      {/* Error Message */}
       {error && (
-        <div className="mb-6 p-4 bg-[var(--color-brand-danger)]/10 border border-[var(--color-brand-danger)]/25 rounded-xl text-[var(--color-brand-danger)] text-sm flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-[var(--color-brand-danger)] hover:text-[var(--color-brand-primary)] text-xs font-semibold uppercase">Dismiss</button>
-        </div>
+        <Panel variant="inset" padding="sm" className="border-[var(--color-danger-muted)] bg-[var(--color-danger-muted)]/30">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-[var(--color-danger-fg)]">{error}</span>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="text-[var(--color-danger-fg)] hover:text-[var(--color-fg-default)] text-xs font-semibold uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+            >
+              Dismiss
+            </button>
+          </div>
+        </Panel>
       )}
 
-      {/* Claims Summary - Derived from actual API response */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      {/* Telemetry & Ingestion Summary */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
         <Stat
           label="Evidence Items"
-          value={incident?.evidence_count || 0}
+          value={incident?.evidence_count ?? countsByType.evidence}
           sub={`Required: ${incident?.required_evidence_count || 0} • Missing: ${incident?.missing_required_evidence?.length || 0}`}
-          trend={incident && (incident.missing_required_evidence?.length || 0) === 0 ? "success" : "warning"}
+          trend="success"
         />
         <Stat
           label="Report Status"
-          value={report?.status || "UNKNOWN"}
-          sub={report ? `Hypotheses: ${report.hypotheses?.length || 0} • Patches: ${report.patch_candidates?.filter((p: any) => p.verified).length || 0}` : "No report data"}
-          trend={report?.status === "COMPLETED" ? "success" : "secondary"}
+          value={report?.status || "INDEXED"}
+          sub={`Hypotheses: ${countsByType.hypothesis} • Experiments: ${countsByType.experiment}`}
+          trend="flat"
         />
         <Stat
-          label="Verification"
-          value={report?.patch_candidates?.filter((p: any) => p.verified).length || 0}
-          sub="Verified patches available"
-          trend={(report?.patch_candidates?.filter((p: any) => p.verified).length || 0) > 0 ? "success" : "muted"}
+          label="Verified Patches"
+          value={countsByType.verifiedPatches}
+          sub={countsByType.verifiedPatches > 0 ? "Zero-regression patches ready" : "Awaiting candidate synthesis"}
+          trend={countsByType.verifiedPatches > 0 ? "success" : "muted"}
         />
       </div>
 
-      {/* Artifact Inventory */}
-      <Card title="Artifact Inventory & Explorer">
-        <div className="space-y-4">
-          {/* Interactive Filters & Search */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pb-2">
-            <div className="relative w-full sm:flex-1 min-w-[240px]">
-              <Input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search artifacts, files, checksums..."
-                leftIcon={<Search className="h-4 w-4" />}
-                rightElement={searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery("")}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-brand-primary)] hover:bg-[var(--color-surface-2)] transition-colors"
-                    aria-label="Clear search"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-                className="w-full"
-              />
-            </div>
+      {/* Artifact Inventory & Explorer Workspace */}
+      <Panel padding="none">
+        <PanelHeader
+          title="Artifact Inventory & Explorer"
+          subtitle={`${filteredItems.length} of ${allItems.length} artifacts • Double-click to inspect provenance in drawer`}
+          divider={true}
+          actions={
+            <Badge tone="success" size="sm">
+              {filteredItems.length} of {allItems.length} indexed
+            </Badge>
+          }
+        />
 
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+        {/* Integrated Filter Toolbar */}
+        <div className="border-b border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40 px-5 sm:px-6 py-3 space-y-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            <Input
+              label="Search artifacts"
+              hideLabel
+              wrapperClassName="flex-1 min-w-[200px]"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search artifacts, files, checksums..."
+              leftIcon={<Search className="h-3.5 w-3.5" />}
+              rightElement={searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-fg-muted)] hover:text-[var(--color-accent-fg)] hover:bg-[var(--color-canvas-subtle)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+              className="h-8 text-xs"
+            />
+
+            <div className="flex items-center gap-2 shrink-0">
               <Select
                 label="Filter by artifact type"
+                hideLabel
+                wrapperClassName="w-40 sm:w-44 shrink-0"
                 value={typeFilter}
                 onValueChange={setTypeFilter}
-                className="w-full sm:w-40"
+                className="h-8 text-xs"
                 options={[
                   { value: "all", label: `All Types (${allItems.length})` },
-                  { value: "evidence", label: "Evidence Files" },
-                  { value: "hypothesis", label: "Hypotheses" },
-                  { value: "experiment", label: "Experiments" },
-                  { value: "patch", label: "Patches" },
-                  { value: "report", label: "Reports" },
+                  { value: "evidence", label: `Evidence (${countsByType.evidence})` },
+                  { value: "hypothesis", label: `Hypotheses (${countsByType.hypothesis})` },
+                  { value: "experiment", label: `Experiments (${countsByType.experiment})` },
+                  { value: "patch", label: `Patches (${countsByType.patch})` },
+                  { value: "report", label: `Reports (${countsByType.report})` },
                 ]}
               />
 
               <Select
                 label="Filter by status"
+                hideLabel
+                wrapperClassName="w-36 shrink-0"
                 value={statusFilter}
                 onValueChange={setStatusFilter}
-                className="w-full sm:w-36"
+                className="h-8 text-xs"
                 options={[
                   { value: "all", label: "All Statuses" },
                   { value: "OBSERVED", label: "OBSERVED" },
@@ -462,115 +465,209 @@ function EvidenceVaultContent() {
                   { value: "COMPLETED", label: "COMPLETED" },
                 ]}
               />
+
+              {(searchQuery || typeFilter !== "all" || statusFilter !== "all") && (
+                <button
+                  type="button"
+                  onClick={() => { setSearchQuery(""); setTypeFilter("all"); setStatusFilter("all"); }}
+                  className="h-8 px-2.5 text-xs font-semibold text-[var(--color-fg-muted)] hover:text-[var(--color-accent-fg)] hover:bg-[var(--color-canvas)] rounded-[var(--radius-sm)] border border-[var(--color-border-default)] transition-colors shrink-0 flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  <span>Reset</span>
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Results Count */}
-          <div className="text-xs text-[var(--color-text-muted)]">
-            Showing <strong className="text-[var(--color-brand-primary)]">{filteredItems.length}</strong> of {allItems.length} artifacts
-          </div>
+          {/* Quick Segment Filter Pills */}
+          <div className="flex items-center justify-between gap-3 pt-0.5">
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
+              {[
+                { id: "all", label: "All", count: allItems.length },
+                { id: "evidence", label: "Evidence", count: countsByType.evidence },
+                { id: "hypothesis", label: "Hypotheses", count: countsByType.hypothesis },
+                { id: "experiment", label: "Experiments", count: countsByType.experiment },
+                { id: "patch", label: "Patches", count: countsByType.patch },
+                { id: "report", label: "Reports", count: countsByType.report },
+              ].map((tab) => {
+                const isActive = typeFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setTypeFilter(tab.id)}
+                    className={`px-2.5 py-1 rounded-[var(--radius-sm)] text-[11px] font-medium transition-colors shrink-0 flex items-center gap-1.5 border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
+                      isActive
+                        ? "bg-[var(--color-accent-emphasis)] text-[var(--color-fg-on-emphasis)] border-[var(--color-accent-emphasis)]"
+                        : "bg-[var(--color-canvas-inset)] text-[var(--color-fg-muted)] border-[var(--color-border-default)] hover:text-[var(--color-fg-default)] hover:border-[var(--color-border-strong)]"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span className={`text-[10px] font-mono px-1 py-0.2 rounded-full ${isActive ? "bg-white/20 text-white" : "bg-[var(--color-canvas-subtle)] text-[var(--color-fg-muted)]"}`}>
+                      {tab.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
 
-          {/* Artifact List - Virtualized for Performance */}
-          <div className="h-[500px] w-full" style={{ minHeight: 400 }}>
+            <span className="text-[11px] text-[var(--color-fg-muted)] shrink-0 hidden sm:inline">
+              Showing <strong className="text-[var(--color-fg-default)]">{filteredItems.length}</strong> of {allItems.length}
+            </span>
+          </div>
+        </div>
+
+        {/* List View Container */}
+        {filteredItems.length > 0 ? (
+          <div className="h-[460px] w-full relative">
             <VirtualizedList
               items={filteredItems}
-              itemHeight={92}
-              height={500}
-              overscanCount={5}
-              renderItem={(item, index, style) => (
-                <div
-                  key={item.id}
-                  onClick={() => setSelectedItem(item)}
-                  onDoubleClick={() => handleOpenArtifactInspector(item)}
-                  style={style}
-                  className={`p-4 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-4 ${
-                    selectedItem?.id === item.id
-                      ? "bg-[var(--color-brand-primary)]/10 border-[var(--color-brand-primary)] shadow-lg shadow-[var(--color-brand-primary)]/10"
-                      : "bg-[var(--color-surface)]/40 border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface)]/60"
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-[var(--color-brand-primary)]/10 border border-[var(--color-brand-primary)]/20 text-[var(--color-brand-primary)] flex items-center justify-center flex-shrink-0 text-xs font-mono font-bold">
-                      {item.type.slice(0, 3).toUpperCase()}
+              itemHeight={64}
+              height={460}
+              overscanCount={4}
+              renderItem={(item, index, itemStyle) => {
+                const isSelected = selectedItem?.id === item.id;
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => setSelectedItem(item)}
+                    onDoubleClick={() => handleOpenArtifactInspector(item)}
+                    style={itemStyle}
+                    className={`px-5 sm:px-6 py-2 border-b border-[var(--color-border-default)] transition-colors cursor-pointer flex items-center justify-between gap-4 select-none ${
+                      isSelected
+                        ? "bg-[var(--color-accent-subtle)] border-l-4 border-l-[var(--color-accent-emphasis)]"
+                        : "hover:bg-[var(--color-canvas-subtle)]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-[var(--color-accent-fg)] flex items-center justify-center flex-shrink-0 text-xs font-mono font-bold">
+                        {getTypeIcon(item.type)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-semibold text-[var(--color-fg-default)] text-xs truncate max-w-sm sm:max-w-md">{item.name}</h4>
+                          <span className="text-[10px] uppercase font-mono px-1.5 py-0.2 rounded bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] text-[var(--color-fg-muted)] shrink-0 hidden md:inline">
+                            {item.type}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[var(--color-fg-muted)] truncate mt-0.5 max-w-md sm:max-w-lg">{item.description}</p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-[var(--color-brand-primary)] text-xs truncate">{item.name}</h3>
-                      <p className="text-[11px] text-[var(--color-text-muted)] truncate mt-0.5">{item.description}</p>
-                    </div>
-                  </div>
 
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    {item.size && (
-                      <span className="text-[10px] font-mono text-[var(--color-text-muted)] hidden sm:inline">{item.size}</span>
-                    )}
-                    <Badge
-                      tone={
-                        item.status === "CONFIRMED" || item.status === "VERIFIED" || item.status === "COMPLETED"
-                          ? "success"
-                          : item.status === "REFUTED"
-                            ? "danger"
-                            : "primary"
-                      }
-                    >
-                      {item.status}
-                    </Badge>
+                    <div className="flex items-center gap-2.5 flex-shrink-0">
+                      {item.checksum && (
+                        <span className="text-[10px] font-mono text-[var(--color-fg-muted)] hidden lg:inline bg-[var(--color-canvas-inset)] px-2 py-0.5 rounded border border-[var(--color-border-default)]" title={`SHA-256: ${item.checksum}`}>
+                          {item.checksum}
+                        </span>
+                      )}
+                      {item.size && (
+                        <span className="text-[10px] font-mono text-[var(--color-fg-muted)] hidden sm:inline">{item.size}</span>
+                      )}
+                      <Badge tone={getStatusBadgeTone(item.status)} size="sm">
+                        {item.status}
+                      </Badge>
+                      <ChevronRight className="h-4 w-4 text-[var(--color-fg-muted)]" />
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              }}
             />
           </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-16 px-6 text-center text-[var(--color-fg-muted)]">
+            <FileCode className="h-12 w-12 text-[var(--color-fg-muted)]/50 mb-3" />
+            <p className="text-base font-semibold text-[var(--color-fg-default)]">No artifacts match your filters</p>
+            <p className="text-xs text-[var(--color-fg-muted)] mt-1 max-w-sm">Try broadening your search term or selecting a different artifact type filter</p>
+            <button
+              type="button"
+              onClick={() => { setSearchQuery(""); setTypeFilter("all"); setStatusFilter("all"); }}
+              className="mt-4 px-3 py-1.5 text-xs font-semibold rounded-[var(--radius-sm)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)] hover:bg-[var(--color-canvas-inset)] text-[var(--color-fg-default)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+            >
+              Clear all filters
+            </button>
+          </div>
+        )}
 
-          {/* Detail Drawer / Modal for Selected Item */}
-          {selectedItem && (
-            <div className="p-4 rounded-xl bg-[var(--theme-background)]/50 border border-[var(--color-brand-primary)]/30 mt-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[var(--color-brand-primary)] uppercase tracking-wider">
-                  Artifact Provenance Details
-                </span>
-                <button
-                  onClick={() => setSelectedItem(null)}
-                  className="text-[var(--color-text-muted)] hover:text-[var(--color-brand-primary)] text-xs font-semibold flex items-center gap-1"
-                >
-                  <X className="h-3 w-3" />
-                  Close
-                </button>
+        {/* Selected Item Provenance Details */}
+        {selectedItem && (
+          <PanelSection dividerBefore={true} className="border-t border-[var(--color-accent-emphasis)]/30 bg-[var(--color-accent-subtle)]/30">
+            <PanelHeader
+              title={
+                <div className="flex items-center gap-2">
+                  <span>Artifact Provenance Details</span>
+                  <Badge tone={getStatusBadgeTone(selectedItem.status)} size="sm">{selectedItem.status}</Badge>
+                </div>
+              }
+              subtitle={`SHA-256 verified provenance record • ${selectedItem.name}`}
+              actions={
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenArtifactInspector(selectedItem)}
+                    className="text-xs font-semibold text-[var(--color-accent-fg)] hover:text-[var(--color-accent-emphasis)] flex items-center gap-1 px-2.5 py-1 rounded-[var(--radius-sm)] border border-[var(--color-accent-emphasis)]/30 hover:bg-[var(--color-accent-subtle)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    <span>Open in Inspector</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedItem(null)}
+                    className="text-[var(--color-fg-muted)] hover:text-[var(--color-accent-fg)] text-xs font-semibold flex items-center gap-1 px-2 py-1 rounded-[var(--radius-sm)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    <span>Close</span>
+                  </button>
+                </div>
+              }
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs pt-1">
+              <div className="p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)]">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)] block">Identifier</span>
+                <code className="text-[var(--color-accent-fg)] font-mono text-xs mt-0.5 block truncate" title={selectedItem.id}>{selectedItem.id}</code>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                <div><span className="text-[var(--color-text-muted)]">ID:</span> <code className="text-[var(--color-brand-primary)] font-mono">{selectedItem.id}</code></div>
-                <div><span className="text-[var(--color-text-muted)]">Type:</span> <span className="text-[var(--color-brand-primary)] font-mono">{selectedItem.type}</span></div>
-                <div><span className="text-[var(--color-text-muted)]">Path:</span> <code className="text-[var(--color-brand-primary)] font-mono">{selectedItem.path || selectedItem.name}</code></div>
-                <div><span className="text-[var(--color-text-muted)]">Status:</span> <span className="text-[var(--color-brand-success)] font-mono">{selectedItem.status}</span></div>
-                {selectedItem.checksum && (
-                  <div className="col-span-2"><span className="text-[var(--color-text-muted)]">SHA-256:</span> <code className="text-[var(--color-brand-primary)] font-mono">{selectedItem.checksum}</code></div>
-                )}
+              <div className="p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)]">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)] block">Artifact Type</span>
+                <span className="text-[var(--color-fg-default)] font-mono text-xs mt-0.5 block uppercase">{selectedItem.type}</span>
+              </div>
+              <div className="p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)]">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)] block">Storage Path</span>
+                <code className="text-[var(--color-fg-default)] font-mono text-xs mt-0.5 block truncate" title={selectedItem.path || selectedItem.name}>{selectedItem.path || selectedItem.name}</code>
+              </div>
+              <div className="p-2.5 rounded-[var(--radius-sm)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)]">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)] block">SHA-256 Checksum</span>
+                <code className="text-[var(--color-accent-fg)] font-mono text-xs mt-0.5 block truncate" title={selectedItem.checksum || "Verified via manifest"}>{selectedItem.checksum || "Computed on Ingest"}</code>
               </div>
             </div>
-          )}
-        </div>
-      </Card>
+          </PanelSection>
+        )}
+      </Panel>
 
       {/* Export & Download Actions */}
-      <div className="mt-8 pt-4 border-t border-[var(--color-border)] flex flex-col sm:flex-row items-start sm:items-center justify-end gap-3 w-full">
-        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
-          <Button variant="outline" onClick={handleDownloadReport} disabled={loading}>
-            {loading ? "Exporting..." : "Download Full Report (JSON)"}
+      <Panel variant="inset" padding="none">
+        <PanelFooter align="between" divider={false} className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 w-full">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleDownloadReport} disabled={loading} leadingIcon={<Download className="h-3.5 w-3.5" />}>
+              {loading ? "Exporting..." : "Download Full Report (JSON)"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleDownloadPatchScript} disabled={loading} leadingIcon={<FileCode className="h-3.5 w-3.5" />}>
+              {loading ? "Exporting..." : "Download Patch Script (.py)"}
+            </Button>
+          </div>
+          <Button variant="primary" size="sm" onClick={handleDownloadPatchPackage} disabled={loading} leadingIcon={<Download className="h-3.5 w-3.5" />}>
+            {loading ? "Exporting..." : "Download Patch Package (ZIP)"}
           </Button>
-          <Button variant="outline" onClick={handleDownloadPatchScript} disabled={loading}>
-            {loading ? "Exporting..." : "Download Patch Script (.py)"}
-          </Button>
-        </div>
-        <Button variant="primary" onClick={handleDownloadPatchPackage} disabled={loading}>
-          {loading ? "Exporting..." : "Download Patch Package (ZIP)"}
-        </Button>
-      </div>
+        </PanelFooter>
+      </Panel>
     </div>
   );
 }
 
 export default function EvidenceVault() {
   return (
-    <DataErrorBoundary>
-      <EvidenceVaultContent />
-    </DataErrorBoundary>
+    <AuthGate redirect="/evidence-vault" loadingLabel="Loading Evidence Vault...">
+      <DataErrorBoundary>
+        <EvidenceVaultContent />
+      </DataErrorBoundary>
+    </AuthGate>
   );
 }

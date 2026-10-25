@@ -8,12 +8,12 @@ import time
 import uuid
 import json
 import secrets
-from pathlib import Path
-from typing import Optional
+import os
+from pathlib import Path, PurePath
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from threading import Lock
-from passlib.context import CryptContext
 from fastapi import (
     FastAPI,
     File,
@@ -32,10 +32,11 @@ from cauveris.schemas.incident import Incident, EvidenceItem
 from cauveris.schemas.hypothesis import Hypothesis
 from cauveris.schemas.experiment import Experiment
 from cauveris.schemas.patch import PatchCandidate, VerificationReport
+from cauveris.analysis.system_model import SystemModel, get_system_model
 from cauveris.datasets.golden_incident import GoldenIncidentGenerator
 from cauveris.state_machine.orchestrator import PipelineOrchestrator, PipelineContext
 from cauveris.ingestion.controller import IngestionController, extract_zip_safely
-from cauveris.security import scan_for_secrets, compute_file_hash
+from cauveris.security import scan_for_secrets, compute_file_hash, safe_join
 from cauveris.patch.generator import PatchGenerator
 from cauveris.logging_config import get_logger, bind_request_context
 from cauveris.auth import (
@@ -98,8 +99,8 @@ class CustomSimulationRequest(BaseModel):
 
 logger = get_logger(__name__)
 
-# Password hashing context for API keys
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Directory used to stage uploaded incident bundles before they are extracted.
+UPLOAD_DIR = Path("./temp_upload")
 
 app = FastAPI(title="Cauveris API", version="0.1.0")
 
@@ -122,15 +123,24 @@ async def startup_event():
     # Initialize concurrency manager
     init_concurrency_store(backend=settings.concurrency_backend)
     # Initialize job queue
-    init_job_queue(
+    queue = init_job_queue(
         backend=settings.job_queue_backend,
         max_size=settings.job_queue_max_size,
         default_ttl=settings.job_queue_default_ttl,
     )
+    # Serve the queue from this process unless the deployment says otherwise.
+    # A queue with no worker attached accepts jobs and never runs them.
+    if settings.job_queue_embedded_worker:
+        from cauveris.worker import start_embedded_worker
+
+        try:
+            await start_embedded_worker(queue)
+        except Exception as exc:
+            logger.error(f"Could not start the embedded job worker: {exc}")
     # Initialize auth store
     init_auth_store(backend=settings.auth_backend, redis_url=settings.auth_redis_url)
     auth_store = get_auth_store()
-    if auth_store:
+    if auth_store and settings.demo_mode:
         try:
             demo_user = await auth_store.get_user_by_email("demo@cauveris.local")
             if not demo_user:
@@ -156,6 +166,25 @@ async def startup_event():
         except Exception as e:
             logger.warning(f"Could not seed demo user: {e}")
 
+    # Production guard: refuse to run with default development secrets when demo
+    # mode is off — those secrets are public and would compromise every token.
+    if not settings.demo_mode:
+        weak_defaults = {
+            "CAUVERIS_SECRET_KEY": "dev-secret-change-in-prod",
+            "CAUVERIS_JWT_SECRET": "dev-jwt-secret-change-in-production-min-32-chars",
+        }
+        current = {
+            "CAUVERIS_SECRET_KEY": settings.secret_key,
+            "CAUVERIS_JWT_SECRET": settings.auth_jwt_secret,
+        }
+        for env_name, default_value in weak_defaults.items():
+            if current[env_name] == default_value:
+                raise RuntimeError(
+                    f"Refusing to start: {env_name} is still the default development "
+                    f"secret while CAUVERIS_DEMO_MODE is disabled. Set a real secret "
+                    f"before running in production."
+                )
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -172,13 +201,18 @@ async def shutdown_event():
     # Auth store cleanup (no explicit close needed for in-memory)
 
 
-# CORS middleware
+# CORS middleware — allowed origins come from CAUVERIS_CORS_ORIGINS (comma-separated).
+# "*" is honoured only when explicitly configured; credentials are never combined
+# with a wildcard reflection.
+_cors_origins_raw = os.getenv("CAUVERIS_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
+    allow_origins=_cors_origins if _cors_origins else ["http://localhost:3000"],
+    allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=".*" if "*" in _cors_origins else None,
 )
 
 
@@ -289,7 +323,10 @@ async def rate_limit_middleware(request: Request, call_next):
             policies = build_policies_from_settings()
             policy = policies.get(cost_class)
             if policy:
-                result = await limiter.check_limit(rate_limit_key, policy)
+                # The cost class declares how many units the request consumes;
+                # passing it makes expensive endpoints consume proportionally
+                # more of the allowance.
+                result = await limiter.check_limit(rate_limit_key, policy, policy.cost)
                 if not result.allowed:
                     from fastapi import HTTPException
 
@@ -334,9 +371,6 @@ async def idempotency_middleware(request: Request, call_next):
     idempotency_key = request.headers.get("Idempotency-Key")
     if not idempotency_key:
         return await call_next(request)
-
-    # DEBUG
-    print(f"IDEMPOTENCY: {request.method} {request.url.path} key={idempotency_key[:20]}")
 
     # Validate key format
     import re
@@ -420,6 +454,11 @@ async def idempotency_middleware(request: Request, call_next):
             headers=dict(response.headers),
             media_type=response.media_type,
         )
+
+    # The request failed with a server error. Drop the idempotency record so
+    # that a retry with the same key is not permanently rejected by a record
+    # stuck in the PROCESSING state.
+    await store.delete(idempotency_key)
 
     return response
 
@@ -580,27 +619,71 @@ def _prune_old_timestamps(timestamps: list[float], window_seconds: int) -> list[
     return [ts for ts in timestamps if ts > cutoff]
 
 
-def _check_rate_limit(key: str, limit: int, window_seconds: int) -> tuple[bool, int, int]:
+def _evaluate_rate_windows(
+    windows: list[tuple[str, int, int]],
+) -> tuple[list[bool], list[int], list[int]]:
     """
-    Check if rate limit is exceeded.
-    Returns: (allowed, current_count, retry_after_seconds)
+    Evaluate several rate-limit windows WITHOUT consuming any quota.
+
+    Each entry of ``windows`` is a ``(key, limit, window_seconds)`` triple.
+
+    Returns a ``(allowed, counts, retry_afters)`` tuple with one entry per
+    window, where ``counts`` holds the count *including* the current request
+    (i.e. the count the caller would report as "used") and ``retry_afters``
+    holds the number of seconds until the window frees up.
     """
+    allowed_flags: list[bool] = []
+    counts: list[int] = []
+    retry_afters: list[int] = []
+    now = time.time()
+
     with _incident_creation_lock:
-        timestamps = _incident_creation_timestamps[key]
-        pruned = _prune_old_timestamps(timestamps, window_seconds)
-        # Update the stored list with pruned version
-        _incident_creation_timestamps[key] = pruned
-        current_count = len(pruned)
+        for key, limit, window_seconds in windows:
+            pruned = _prune_old_timestamps(_incident_creation_timestamps[key], window_seconds)
+            # Update the stored list with pruned version
+            _incident_creation_timestamps[key] = pruned
+            current_count = len(pruned)
 
-        if current_count >= limit:
-            # Find oldest timestamp to calculate retry-after
-            oldest = min(pruned) if pruned else time.time()
-            retry_after = int(oldest + window_seconds - time.time()) + 1
-            return False, current_count, max(retry_after, 1)
+            if current_count >= limit:
+                # Find oldest timestamp to calculate retry-after
+                oldest = min(pruned) if pruned else now
+                retry_after = int(oldest + window_seconds - now) + 1
+                allowed_flags.append(False)
+                counts.append(current_count)
+                retry_afters.append(max(retry_after, 1))
+            else:
+                allowed_flags.append(True)
+                counts.append(current_count + 1)
+                retry_afters.append(0)
 
-        # Add current timestamp
-        pruned.append(time.time())
-        return True, current_count + 1, 0
+    return allowed_flags, counts, retry_afters
+
+
+def _commit_rate_windows(windows: list[tuple[str, int, int]]) -> tuple[bool, int]:
+    """
+    Atomically re-validate and consume quota for the given rate-limit windows.
+
+    Quota is consumed for *every* window only when *all* windows still have
+    room, so a request that is rejected by one window never burns quota in
+    another. Returns ``(committed, retry_after)``.
+    """
+    if not windows:
+        return True, 0
+
+    now = time.time()
+    with _incident_creation_lock:
+        for key, limit, window_seconds in windows:
+            pruned = _prune_old_timestamps(_incident_creation_timestamps[key], window_seconds)
+            _incident_creation_timestamps[key] = pruned
+            if len(pruned) >= limit:
+                oldest = min(pruned) if pruned else now
+                retry_after = int(oldest + window_seconds - now) + 1
+                return False, max(retry_after, 1)
+
+        for key, _limit, _window_seconds in windows:
+            _incident_creation_timestamps[key].append(now)
+
+    return True, 0
 
 
 def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[str], int, dict]:
@@ -612,50 +695,63 @@ def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[st
     settings = get_settings()
     user_id, org_id, is_anonymous = _get_client_identity(request)
 
-    print(f"DEBUG LIMITS: user={user_id}, org={org_id}, anon={is_anonymous}")
-    print(f"DEBUG LIMITS: _anonymous_incident_count={_anonymous_incident_count}")
-    print(f"DEBUG LIMITS: _global_active_incidents={_global_active_incidents}")
-    print(f"DEBUG LIMITS: _active_incidents_per_user={dict(_active_incidents_per_user)}")
-    print(f"DEBUG LIMITS: _active_incidents_per_org={dict(_active_incidents_per_org)}")
+    logger.debug(
+        "Incident creation limit check: user=%s org=%s anon=%s anonymous_count=%s "
+        "global_active=%s active_per_user=%s active_per_org=%s",
+        user_id,
+        org_id,
+        is_anonymous,
+        _anonymous_incident_count,
+        _global_active_incidents,
+        dict(_active_incidents_per_user),
+        dict(_active_incidents_per_org),
+    )
 
     headers = {}
 
-    # Check global limits
-    global_minute_allowed, global_minute_count, retry_after = _check_rate_limit(
-        "global:minute", settings.max_incidents_per_minute, 60
-    )
-    if not global_minute_allowed:
-        headers["Retry-After"] = str(retry_after)
+    # Phase 1: evaluate every sliding window *without* consuming quota.
+    #
+    # Evaluating and consuming in one step would let a request that is
+    # rejected by a later window (e.g. the hourly quota) burn its quota in an
+    # earlier window (e.g. the per-minute quota), so a client could exhaust
+    # the tight quota with requests that never succeeded.
+    global_windows = [
+        ("global:minute", settings.max_incidents_per_minute, 60),
+        ("global:hour", settings.max_incidents_per_hour, 3600),
+        ("global:day", settings.max_incidents_per_day, 86400),
+    ]
+    user_window = (f"user:{user_id}:minute", settings.max_incidents_per_minute, 60)
+
+    allowed, counts, retry_afters = _evaluate_rate_windows(global_windows)
+
+    if not allowed[0]:
+        headers["Retry-After"] = str(retry_afters[0])
         return (
             False,
             f"Global incident creation rate limit exceeded ({settings.max_incidents_per_minute}/minute)",
-            retry_after,
+            retry_afters[0],
             headers,
         )
 
-    global_hour_allowed, global_hour_count, retry_after = _check_rate_limit(
-        "global:hour", settings.max_incidents_per_hour, 3600
-    )
-    if not global_hour_allowed:
-        headers["Retry-After"] = str(retry_after)
+    if not allowed[1]:
+        headers["Retry-After"] = str(retry_afters[1])
         return (
             False,
             f"Global incident creation rate limit exceeded ({settings.max_incidents_per_hour}/hour)",
-            retry_after,
+            retry_afters[1],
             headers,
         )
 
-    global_day_allowed, global_day_count, retry_after = _check_rate_limit(
-        "global:day", settings.max_incidents_per_day, 86400
-    )
-    if not global_day_allowed:
-        headers["Retry-After"] = str(retry_after)
+    if not allowed[2]:
+        headers["Retry-After"] = str(retry_afters[2])
         return (
             False,
             f"Global incident creation rate limit exceeded ({settings.max_incidents_per_day}/day)",
-            retry_after,
+            retry_afters[2],
             headers,
         )
+
+    global_minute_count, global_hour_count, global_day_count = counts
 
     headers["X-RateLimit-Global-Minute-Limit"] = str(settings.max_incidents_per_minute)
     headers["X-RateLimit-Global-Minute-Remaining"] = str(
@@ -670,19 +766,27 @@ def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[st
         max(0, settings.max_incidents_per_day - global_day_count)
     )
 
+    windows_to_commit = list(global_windows)
+
     # Check per-user limits (if authenticated)
     if not is_anonymous:
-        user_minute_allowed, user_minute_count, retry_after = _check_rate_limit(
-            f"user:{user_id}:minute", settings.max_incidents_per_minute, 60
-        )
-        if not user_minute_allowed:
-            headers["Retry-After"] = str(retry_after)
+        (
+            user_allowed,
+            user_counts,
+            user_retry_afters,
+        ) = _evaluate_rate_windows([user_window])
+        user_minute_count = user_counts[0]
+
+        if not user_allowed[0]:
+            headers["Retry-After"] = str(user_retry_afters[0])
             return (
                 False,
                 f"User incident creation rate limit exceeded ({settings.max_incidents_per_minute}/minute)",
-                retry_after,
+                user_retry_afters[0],
                 headers,
             )
+
+        windows_to_commit.append(user_window)
 
         headers["X-RateLimit-User-Minute-Limit"] = str(settings.max_incidents_per_minute)
         headers["X-RateLimit-User-Minute-Remaining"] = str(
@@ -759,6 +863,19 @@ def _check_incident_creation_limits(request: Request) -> tuple[bool, Optional[st
     headers["X-Limit-Global-Active-Incidents"] = str(settings.max_global_active_incidents)
     headers["X-Current-Global-Active-Incidents"] = str(_global_active_incidents)
 
+    # Phase 2: the request passed every check - consume the quota in all
+    # windows atomically so that a concurrent request cannot slip in between
+    # the evaluation and the accounting.
+    committed, commit_retry = _commit_rate_windows(windows_to_commit)
+    if not committed:
+        headers["Retry-After"] = str(commit_retry)
+        return (
+            False,
+            f"Global incident creation rate limit exceeded ({settings.max_incidents_per_minute}/minute)",
+            commit_retry,
+            headers,
+        )
+
     return True, None, 0, headers
 
 
@@ -826,6 +943,74 @@ def _record_incident_deleted(incident_id: str):
         _anonymous_incident_count = max(0, _anonymous_incident_count - 1)
 
 
+def _hypothesis_title(hypothesis_id: str, rank: int) -> str:
+    """
+    A human-readable title for a hypothesis.
+
+    The hypothesis layer names hypotheses after the mechanism they describe
+    (``h_batching_window_latency``), so the title is derived from that name
+    rather than from a hard-coded list of ids.
+    """
+    text = str(hypothesis_id or "").replace("exp-", "").replace("hyp-", "")
+    if text.startswith("h_"):
+        text = text[2:]
+    words = text.replace("_", " ").replace("-", " ").strip()
+    if not words:
+        return f"H{rank}"
+    return f"H{rank}: {words.title()}"
+
+
+def _resolve_hypothesis(hypotheses: list, hypothesis_id: str) -> Optional[Hypothesis]:
+    """
+    Find the hypothesis an id refers to.
+
+    An id may be the full hypothesis id, a prefix of it, or a rank reference
+    ("h1" is the most confident hypothesis, "h2" the next).  The rank
+    reference keeps working when the hypotheses an incident produces change,
+    which a hard-coded id map cannot do.
+    """
+    if not hypotheses:
+        return None
+    clean = str(hypothesis_id or "").strip().lower()
+    for hyp in hypotheses:
+        hid = hyp.hypothesis_id.lower()
+        if hid == clean or clean in hid or hid.startswith(clean):
+            return hyp
+    if clean.startswith("h") and clean[1:].isdigit():
+        index = int(clean[1:]) - 1
+        if 0 <= index < len(hypotheses):
+            return hypotheses[index]
+    return hypotheses[0]
+
+
+def _incident_system_model(
+    incident: Optional[Incident], incident_id: str
+) -> Optional[SystemModel]:
+    """
+    The incident's calibrated model, built from the bundle on disk.
+
+    The digital twin, the hypothesis layer and the verifier all read this one
+    model, so they cannot disagree about what the incident was.
+    """
+    if incident is None:
+        return None
+    bundle_path = getattr(incident, "bundle_path", None)
+    if not bundle_path:
+        manifest = getattr(incident, "manifest", None) or {}
+        bundle_path = manifest.get("bundle_path") if isinstance(manifest, dict) else None
+    if not bundle_path:
+        return None
+    path = Path(bundle_path)
+    if not path.is_dir():
+        return None
+    return get_system_model(
+        str(incident_id or incident.id),
+        path,
+        timeline_events=list(getattr(incident, "timeline_events", None) or []),
+        manifest=dict(getattr(incident, "manifest", None) or {}),
+    )
+
+
 def _ensure_incident(incident_id: str) -> Optional[Incident]:
     """Ensure an incident is loaded in memory, hydrating from storage if available."""
     if incident_id in incidents:
@@ -857,7 +1042,10 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
                 break
 
     if not evidence_path.exists() or not (evidence_path / "manifest.yaml").exists():
-        if incident_id.upper() in ["CAU-0001", "GOLDEN"]:
+        # Implicit demo hydration only in demo mode — real deployments must
+        # load incidents from the evidence store or an explicit golden load.
+        settings = get_settings()
+        if incident_id.upper() in ["CAU-0001", "GOLDEN"] and settings.demo_mode:
             generator = GoldenIncidentGenerator()
             incident = generator.generate()
             incident.is_demonstration = True
@@ -1078,17 +1266,26 @@ async def login(request: Request, response: Response, body: LoginRequest):
     user.last_login = datetime.now(timezone.utc)
     await auth_store.update_user(user)
 
-    # Check concurrent session limit
+    # Check concurrent session limit.
+    #
+    # The new session counts towards the limit, so the number of sessions to
+    # revoke is ``len(active) + 1 - max``. The previous implementation revoked
+    # *every* session except the oldest one, which left the user with a single
+    # active session instead of ``max`` and silently logged the user out of
+    # every other device.
     sessions = (
         await auth_store.list_user_sessions(user.id)
         if hasattr(auth_store, "list_user_sessions")
         else []
     )
     active_sessions = [s for s in sessions if not s.is_revoked and not s.is_expired()]
-    if len(active_sessions) >= settings.auth_session_max_concurrent:
-        # Revoke oldest session
-        oldest = min(active_sessions, key=lambda s: s.created_at)
-        await auth_store.revoke_user_sessions(user.id, exclude_session_id=oldest.id)
+    max_concurrent = max(1, settings.auth_session_max_concurrent)
+    if len(active_sessions) + 1 > max_concurrent:
+        # Revoke the oldest sessions until the new one fits.
+        oldest_first = sorted(active_sessions, key=lambda s: s.created_at)
+        to_revoke = [s.id for s in oldest_first[: len(active_sessions) + 1 - max_concurrent]]
+        if to_revoke:
+            await auth_store.revoke_sessions_by_id(to_revoke)
 
     # Create session
     session = Session(
@@ -1270,6 +1467,12 @@ async def refresh_token(request: Request, response: Response, body: RefreshReque
     if not session or session.is_revoked or session.is_refresh_expired():
         raise HTTPException(status_code=401, detail="Refresh token invalid or expired")
 
+    # Token rotation reuse detection: verify the presented refresh token matches
+    # the session's current refresh token. If it doesn't, the token was already
+    # rotated (stale/replay) and must be rejected.
+    if body.refresh_token != session.refresh_token:
+        raise HTTPException(status_code=401, detail="Refresh token invalid or expired")
+
     user = await auth_store.get_user(session.user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
@@ -1385,21 +1588,21 @@ async def create_api_key(
 
     # Generate raw key
     raw_key = f"cv_{secrets.token_urlsafe(32)}"
-    key_hash = pwd_context.hash(raw_key)
-    key_prefix = raw_key[:8]
 
     api_key = APIKey(
         name=body.name,
         org_id=org_id,
         user_id=user_id,
-        key_hash=key_hash,
-        key_prefix=key_prefix,
         scopes=body.scopes or ["incidents:read"],
         rate_limit=body.rate_limit,
         expires_at=datetime.now(timezone.utc) + timedelta(days=body.expires_in_days)
         if body.expires_in_days
         else None,
     )
+    # set_key() owns the hashing scheme so that creation and verification
+    # always agree (previously the API hashed with bcrypt while the APIKey
+    # model verified with a salted SHA-256 context, so keys never matched).
+    api_key.set_key(raw_key)
     api_key = await auth_store.create_api_key(api_key)
 
     # Audit log
@@ -1812,7 +2015,10 @@ async def get_job_status(
 
     # Check ownership
     if not user.has_permission("job_queue:manage_any") and not user.has_permission("*"):
-        if job.owner_id != user_id and (job.tenant_id and job.tenant_id != org_id):
+        # A job is visible to its owner, or to members of the owning tenant.
+        # Jobs without a tenant are visible only to their owner.
+        same_tenant = job.tenant_id is not None and job.tenant_id == org_id
+        if job.owner_id != user_id and not same_tenant:
             await auth_store.write_audit_log(
                 AuditLogEntry(
                     user_id=user.id,
@@ -1860,7 +2066,10 @@ async def cancel_job(request: Request, job_id: str, user_data: tuple = Depends(g
 
     # Check ownership
     if not user.has_permission("job_queue:manage_any") and not user.has_permission("*"):
-        if job.owner_id != user_id and (job.tenant_id and job.tenant_id != org_id):
+        # A job is visible to its owner, or to members of the owning tenant.
+        # Jobs without a tenant are visible only to their owner.
+        same_tenant = job.tenant_id is not None and job.tenant_id == org_id
+        if job.owner_id != user_id and not same_tenant:
             await auth_store.write_audit_log(
                 AuditLogEntry(
                     user_id=user.id,
@@ -1935,13 +2144,42 @@ async def submit_job(request: Request, user_data: tuple = Depends(get_current_us
     if not queue:
         raise HTTPException(status_code=503, detail="Job queue not initialized")
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+
+    # Parse the priority defensively: an unknown name, a numeric priority or
+    # a non-string value must not surface as an unhandled 500.
+    raw_priority = body.get("priority", "NORMAL")
+    try:
+        if isinstance(raw_priority, JobPriority):
+            priority = raw_priority
+        elif isinstance(raw_priority, bool):
+            raise ValueError("bool is not a valid priority")
+        elif isinstance(raw_priority, int):
+            priority = JobPriority(raw_priority)
+        elif isinstance(raw_priority, str):
+            candidate = raw_priority.strip().upper()
+            if candidate.isdigit():
+                priority = JobPriority(int(candidate))
+            else:
+                priority = JobPriority[candidate]
+        else:
+            raise ValueError(f"unsupported priority type: {type(raw_priority).__name__}")
+    except (KeyError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid priority. Expected one of: {[p.name for p in JobPriority]}",
+        )
 
     # Use authenticated user's ID as owner
     job = Job(
         type=body.get("type", "unknown"),
         payload=body.get("payload", {}),
-        priority=JobPriority[body.get("priority", "NORMAL")],
+        priority=priority,
         max_retries=body.get("max_retries", 3),
         owner_id=user_id,
         tenant_id=org_id,
@@ -2279,11 +2517,19 @@ async def upload_incident(
     # Read file content
     content = await file.read()
 
-    # Save to temporary location for processing
+    # Save to temporary location for processing.
+    # The client-supplied filename is untrusted: strip any directory components
+    # and confirm the resolved path stays inside the upload directory.
     if file.filename is None:
         raise HTTPException(status_code=400, detail="File must have a filename")
-    zip_path = Path("./temp_upload") / file.filename
-    zip_path.parent.mkdir(exist_ok=True)
+    safe_name = PurePath(file.filename.replace("\\", "/")).name
+    if not safe_name or safe_name in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    try:
+        zip_path = safe_join(str(UPLOAD_DIR), safe_name)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         # Write the uploaded file to temp location
@@ -2599,11 +2845,7 @@ async def reconstruct_incident(
     )
 
     # Prevent duplicate start request if already running
-    print(f"DEBUG: pipeline_tasks keys: {list(pipeline_tasks.keys())}")
     if incident_id in pipeline_tasks:
-        print(
-            f"DEBUG: Found existing task for {incident_id}, is_running: {pipeline_tasks[incident_id].is_running()}"
-        )
         existing_orch = pipeline_tasks[incident_id]
         if existing_orch.is_running():
             raise HTTPException(
@@ -3522,20 +3764,13 @@ async def get_incident_hypotheses(
             ctx.hypotheses = hypotheses
 
     formatted_hypotheses = []
-    for h in hypotheses:
+    for rank, h in enumerate(hypotheses, start=1):
         dump = h.model_dump() if hasattr(h, "model_dump") else dict(h)
         hyp_id = dump.get("hypothesis_id", "")
         # Provide compatible fields for both frontend formats
         dump["id"] = hyp_id
-        dump["title"] = (
-            hyp_id.replace("exp-", "")
-            .replace("h1_", "H1: ")
-            .replace("h2_", "H2: ")
-            .replace("h3_", "H3: ")
-            .replace("h4_", "H4: ")
-            .replace("_", " ")
-            .title()
-        )
+        dump["rank"] = rank
+        dump["title"] = _hypothesis_title(hyp_id, rank)
         dump["description"] = dump.get("causal_claim", "")
         dump["confidence"] = int(float(dump.get("confidence_prior", 0.5)) * 100)
         dump["evidence_count"] = len(dump.get("supporting_artifact_ids", []))
@@ -3623,41 +3858,23 @@ async def test_hypothesis_endpoint(
             ctx.hypotheses = hypotheses
 
     # Find the hypothesis matching hypothesis_id
-    target_hyp = None
-    clean_target = hypothesis_id.strip().lower()
-    for h in hypotheses:
-        hid = h.hypothesis_id.lower()
-        if hid == clean_target or clean_target in hid or hid.startswith(clean_target):
-            target_hyp = h
-            break
+    target_hyp = _resolve_hypothesis(hypotheses, hypothesis_id)
 
     if not target_hyp:
-        prefix_map = {
-            "h1": "h1_batching_window",
-            "h2": "h2_qos_stale_messages",
-            "h3": "h3_clock_skew",
-            "h4": "h4_gpu_load_throttling",
-        }
-        mapped = prefix_map.get(clean_target)
-        if mapped:
-            for h in hypotheses:
-                if h.hypothesis_id == mapped:
-                    target_hyp = h
-                    break
-
-    if not target_hyp:
-        target_hyp = hypotheses[0]
+        raise HTTPException(status_code=404, detail="No hypothesis available")
 
     # Run sandbox experiment and simulation
     from cauveris.sandbox.controller import SandboxController
     from cauveris.simulation.runner import SimulationRunner
 
     sandbox = SandboxController()
-    experiments = await sandbox.plan_experiments([target_hyp])
+    experiments = await sandbox.plan_experiments([target_hyp], incident_id=incident_id)
     await sandbox.run_experiments(experiments)
 
     sim_runner = SimulationRunner()
-    sim_experiments = await sim_runner.run_simulations(experiments)
+    sim_experiments = await sim_runner.run_simulations(
+        experiments, system_model=_incident_system_model(incident, incident_id)
+    )
     exp = sim_experiments[0]
 
     is_confirmed = (exp.reproduction_rate == 0.0) or exp.failure_oracle.get(
@@ -3688,7 +3905,146 @@ async def test_hypothesis_endpoint(
         "hypothesis_supported": is_confirmed,
         "failure_oracle": exp.failure_oracle,
         "metrics": getattr(exp, "metrics", {}),
+        "trajectory": getattr(exp, "trajectory", None),
+        "trajectories": getattr(exp, "trajectories", None),
         "message": msg,
+    }
+
+
+@app.get("/api/v1/incidents/{incident_id}/system-model")
+async def get_incident_system_model(
+    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+):
+    """The calibrated incident model: the numbers every prediction is made from.
+
+    The digital twin, the hypothesis layer and the verifier all read one
+    :class:`SystemModel`, so that they cannot disagree about what the incident
+    was.  This endpoint exposes it, together with the provenance of every
+    parameter: a value that the bundle declared and a value that the model
+    defaulted to are both shown, and the difference is visible.
+
+    Requires: incident:read permission
+    """
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    # Check ownership
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
+
+    if not user.has_permission("incident:read") and not user.has_permission("*"):
+        if owner_user != user_id and owner_org != org_id:
+            await auth_store.write_audit_log(
+                AuditLogEntry(
+                    user_id=user.id,
+                    org_id=user.org_id,
+                    action="incident.read",
+                    resource_type="incident",
+                    resource_id=incident_id,
+                    resource_owner_id=owner_user,
+                    decision="deny",
+                    reason="Not owner of incident",
+                    ip_address=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("User-Agent", ""),
+                    request_id=getattr(request.state, "request_id", None),
+                )
+            )
+            raise HTTPException(status_code=403, detail="Not authorized to read this incident")
+
+    # Audit log
+    await auth_store.write_audit_log(
+        AuditLogEntry(
+            user_id=user.id,
+            org_id=user.org_id,
+            action="incident.read",
+            resource_type="incident",
+            resource_id=incident_id,
+            resource_owner_id=owner_user,
+            decision="allow",
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("User-Agent", ""),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    )
+
+    model = _incident_system_model(incident, incident_id)
+    if model is None:
+        raise HTTPException(
+            status_code=409,
+            detail="No incident bundle on disk - the system model is not available for this incident",
+        )
+
+    parameters = model.parameters.as_dict()
+    parameter_sources = dict(model.parameter_sources)
+    calibration = model.calibration
+
+    return {
+        "incident_id": incident_id,
+        "bundle_root": str(model.bundle_root) if model.bundle_root else None,
+        # A model that fell back to the declared configuration is a set of
+        # assumptions, not a fit to the incident's measurements.  Saying so is
+        # the difference between an evidence-backed prediction and a story.
+        "model_status": (
+            "fitted"
+            if model.has_fitted_model()
+            else ("declared-configuration-only" if calibration else "uncalibrated")
+        ),
+        "parameters": parameters,
+        "parameter_sources": parameter_sources,
+        "parameters_from_evidence": {
+            name: name in parameter_sources for name in parameters
+        },
+        "budget": model.budget.as_dict(),
+        "kinematics": {
+            "max_speed_mps": model.kinematics.max_speed_mps,
+            "nominal_speed_mps": model.kinematics.nominal_speed_mps,
+            "acceleration_mps2": model.kinematics.acceleration_mps2,
+            "braking_deceleration_mps2": model.kinematics.braking_deceleration_mps2,
+            "reaction_time_s": model.kinematics.reaction_time_s,
+            "safety_margin_m": model.kinematics.safety_margin_m,
+            "sample_count": model.kinematics.sample_count,
+            "source": model.kinematics.source,
+        },
+        "calibration": calibration.as_dict() if calibration else None,
+        "latency_distribution": model.latency_distribution.as_dict(),
+        "baseline_distribution": model.baseline_distribution.as_dict(),
+        "incident_distribution": model.incident_distribution.as_dict(),
+        "transport_distribution": model.transport_distribution.as_dict(),
+        "clock_skew_ms": model.clock_skew_ms,
+        "observation_window_s": model.observation_window_s,
+        "simulation_horizon_s": model.simulation_horizon_s,
+        "change_point_time": (
+            model.change_point_time.isoformat() if model.change_point_time else None
+        ),
+        "change_point_evidence": list(model.change_point_evidence),
+        "config_deltas": [
+            {
+                "key": delta.key,
+                "role": delta.role,
+                "old_value": delta.old_value,
+                "new_value": delta.new_value,
+                "source": delta.source,
+                "description": delta.description,
+                "file": delta.file,
+                "deployment_id": delta.deployment_id,
+                "deployment_time": (
+                    delta.deployment_time.isoformat() if delta.deployment_time else None
+                ),
+            }
+            for delta in model.config_deltas
+        ],
+        "notes": list(model.notes),
+        "consistency_findings": list(model.consistency_findings),
     }
 
 
@@ -3841,11 +4197,13 @@ async def run_experiments_endpoint(
     from cauveris.simulation.runner import SimulationRunner
 
     sandbox = SandboxController()
-    experiments = await sandbox.plan_experiments(hypotheses)
+    experiments = await sandbox.plan_experiments(hypotheses, incident_id=incident_id)
     await sandbox.run_experiments(experiments)
 
     sim_runner = SimulationRunner()
-    sim_experiments = await sim_runner.run_simulations(experiments)
+    sim_experiments = await sim_runner.run_simulations(
+        experiments, system_model=_incident_system_model(incident, incident_id)
+    )
 
     if ctx:
         ctx.experiments = sim_experiments
@@ -3866,6 +4224,8 @@ async def run_experiments_endpoint(
                 "result": e.reproduction_rate == 0.0,
                 "failure_oracle": e.failure_oracle,
                 "metrics": getattr(e, "metrics", {}),
+                "trajectory": getattr(e, "trajectory", None),
+                "trajectories": getattr(e, "trajectories", None),
             }
             for e in sim_experiments
         ],
@@ -3950,12 +4310,19 @@ async def simulate_custom_parameters(
     twin.freshness_budget_ms = req.freshness_budget_ms
 
     cycles = []
+    trajectories = []
     reproduction_count = 0
     for i in range(req.trials):
         step_res = twin.step(seed=5000 + i)
         cycles.append(step_res)
         if step_res["emergency_stop"]:
             reproduction_count += 1
+        traj = twin.simulate_trajectory(seed=5000 + i)
+        trajectories.append(traj)
+
+    representative_trajectory = (
+        trajectories[0]["path"] if trajectories else []
+    )
 
     reproduction_rate = reproduction_count / req.trials if req.trials > 0 else 0.0
     latencies = [c["total_latency_ms"] for c in cycles]
@@ -3981,6 +4348,8 @@ async def simulate_custom_parameters(
         "status": "CONFIRMED" if hypothesis_supported else "REFUTED",
         "parameters": req.model_dump(),
         "cycles": cycles[:10],
+        "trajectory": representative_trajectory,
+        "trajectories": trajectories,
         "message": (
             f"Intervention verified: 0 emergency stops produced (avg latency {avg_latency:.1f}ms <= {twin.freshness_budget_ms}ms limit)"
             if hypothesis_supported
@@ -4214,61 +4583,23 @@ async def list_incident_reports(
     if not report_file.exists() and incident_id.upper() == "CAU-0001":
         report_file = Path("./report/CAU-0001/incident_report.json")
 
-    size_bytes = 245760
-    gen_time = datetime.now(timezone.utc).isoformat()
+    # Only return reports that actually exist on disk. The pipeline produces one
+    # investigation report per incident; client-side rendering offers HTML/PDF
+    # print variants of the same real data.
     if report_file.exists():
         stat = report_file.stat()
-        size_bytes = stat.st_size
-        gen_time = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
-
-    reports.append(
-        {
-            "id": f"rpt-{incident_id}-001",
-            "incident_id": incident_id,
-            "title": "Full Investigation Report",
-            "generated_at": gen_time,
-            "size_bytes": size_bytes,
-            "format": "json",
-            "status": "ready",
-            "type": "investigation",
-        }
-    )
-    reports.append(
-        {
-            "id": f"rpt-{incident_id}-002",
-            "incident_id": incident_id,
-            "title": "Executive Summary",
-            "generated_at": gen_time,
-            "size_bytes": 12288,
-            "format": "pdf",
-            "status": "ready",
-            "type": "executive",
-        }
-    )
-    reports.append(
-        {
-            "id": f"rpt-{incident_id}-003",
-            "incident_id": incident_id,
-            "title": "Technical Deep Dive",
-            "generated_at": gen_time,
-            "size_bytes": 512000,
-            "format": "html",
-            "status": "ready",
-            "type": "technical",
-        }
-    )
-    reports.append(
-        {
-            "id": f"rpt-{incident_id}-004",
-            "incident_id": incident_id,
-            "title": "Compliance Report",
-            "generated_at": gen_time,
-            "size_bytes": 81920,
-            "format": "pdf",
-            "status": "ready",
-            "type": "compliance",
-        }
-    )
+        reports.append(
+            {
+                "id": f"rpt-{incident_id}-001",
+                "incident_id": incident_id,
+                "title": "Full Investigation Report",
+                "generated_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                "size_bytes": stat.st_size,
+                "format": "json",
+                "status": "ready",
+                "type": "investigation",
+            }
+        )
     return {"reports": reports}
 
 
@@ -4360,52 +4691,84 @@ class ModelTestRequest(BaseModel):
 
 @app.get("/api/v1/model-health")
 async def model_health():
-    """Model provider connectivity and health status with live connectivity test."""
-    from cauveris.model_gateway import create_model_gateway
+    """
+    Model provider connectivity and health status.
+
+    The whole chain is probed, not just the hosted provider: the chain is
+    what the pipeline actually uses, so the health check has to report what
+    the chain can do.
+
+    A deployment with no model reachable is not a broken deployment -
+    Cauveris' own evidence rules still produce the analysis - so the
+    platform's status stays healthy while ``gateway_status`` says
+    ``no_inference``.  Only an unexpected failure is a degradation.
+    """
     from cauveris.config import get_settings
+    from cauveris.model_gateway.local import LocalModelGateway
+    from cauveris.model_gateway.nebius import NebiusModelGateway
 
     settings = get_settings()
     is_live = bool(settings.nebius_api_key)
 
-    # Test gateway connectivity
-    gateway_status = "unknown"
-    gateway_latency_ms = None
+    probes: List[Dict[str, Any]] = []
     gateway_error = None
 
-    if is_live:
-        try:
-            import time
+    try:
+        import asyncio
 
-            gateway = create_model_gateway()
-            start = time.perf_counter()
-            # Simple test query
-            test_response = await gateway.generate(
-                prompt="Health check", schema=None, temperature=0.0, max_tokens=10
-            )
-            gateway_latency_ms = round((time.perf_counter() - start) * 1000, 2)
-            gateway_status = "connected"
-            provider_name = test_response.provider
-        except Exception as e:
-            gateway_status = "error"
-            gateway_error = str(e)
-            provider_name = "Nebius (failed)"
+        # Probe every provider at once: a health check that waits for the
+        # dead ones to time out one after another is worse than no check.
+        coros = []
+        if is_live:
+            coros.append(NebiusModelGateway(timeout=3.0).probe())
+        coros.append(
+            LocalModelGateway(probe_timeout=0.5).probe()
+        )
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                gateway_error = f"{type(result).__name__}: {result}"
+                continue
+            probes.extend(result)
+    except Exception as exc:
+        gateway_error = f"{type(exc).__name__}: {exc}"
+
+    reachable = [p for p in probes if p.get("reachable")]
+    inference_available = bool(reachable)
+    if inference_available:
+        gateway_status = "connected"
+        provider_name = (
+            "Nebius Token Factory"
+            if "tokenfactory" in str(reachable[0].get("endpoint", ""))
+            else "Local model server"
+        )
+    elif gateway_error:
+        gateway_status = "error"
+        provider_name = "none reachable"
     else:
-        provider_name = "LocalModelGateway (deterministic fixtures)"
+        gateway_status = "no_inference"
+        provider_name = "none reachable"
 
     return {
         "status": "healthy" if gateway_status != "error" else "degraded",
         "provider": provider_name,
-        "mode": "live_gateway" if is_live else "deterministic_local",
+        "mode": "live_gateway" if is_live else "local_only",
         "cloud_credentials_required": False,
         "nebius_configured": is_live,
+        "inference_available": inference_available,
+        "local_model_endpoints": [
+            part.strip()
+            for part in str(settings.local_model_endpoints or "").split(",")
+            if part.strip()
+        ],
         "masked_key": mask_api_key(settings.nebius_api_key),
         "base_url": settings.nebius_base_url,
         "model_fast": settings.model_fast,
         "model_reasoning": settings.model_reasoning,
         "model_escalation": settings.model_escalation,
         "gateway_status": gateway_status,
-        "gateway_latency_ms": gateway_latency_ms,
         "gateway_error": gateway_error,
+        "provider_probes": probes,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -4428,7 +4791,8 @@ async def configure_model(req: ModelConfigRequest, user: tuple = Depends(get_cur
             os.environ.pop("NEBIUS_API_KEY", None)
 
     if req.base_url:
-        settings.nebius_base_url = req.base_url.strip()
+        from cauveris.model_gateway.nebius import normalize_nebius_url
+        settings.nebius_base_url = normalize_nebius_url(req.base_url.strip())
         import os
 
         os.environ["NEBIUS_BASE_URL"] = settings.nebius_base_url
@@ -4448,14 +4812,14 @@ async def configure_model(req: ModelConfigRequest, user: tuple = Depends(get_cur
         "model_fast": settings.model_fast,
         "model_reasoning": settings.model_reasoning,
         "model_escalation": settings.model_escalation,
-        "provider": "nebius" if is_configured else "deterministic_local",
+        "provider": "nebius" if is_configured else "local_only",
         "message": "Model configuration updated successfully",
     }
 
 
 @app.delete("/api/v1/model/configure")
 async def clear_model_configure(user: tuple = Depends(get_current_user)):
-    """Clear configured model API key and revert to deterministic local fixtures."""
+    """Clear the configured hosted-provider key."""
     settings = get_settings()
     settings.nebius_api_key = None
     import os
@@ -4465,8 +4829,12 @@ async def clear_model_configure(user: tuple = Depends(get_current_user)):
         "status": "success",
         "configured": False,
         "masked_key": "",
-        "provider": "deterministic_local",
-        "message": "Model API key cleared. Reverted to deterministic local simulation.",
+        "provider": "local_only",
+        "message": (
+            "Hosted model key cleared. Any model inference now comes from a "
+            "local server; without one, Cauveris' evidence rules carry the "
+            "analysis."
+        ),
     }
 
 
@@ -4492,15 +4860,42 @@ async def test_model_connectivity(
             )
     else:
         key_to_test = user_key or settings.nebius_api_key
-        base_url_to_test = settings.nebius_base_url or "https://api.nebius.ai/v1"
+        from cauveris.model_gateway.nebius import normalize_nebius_url
+        base_url_to_test = normalize_nebius_url(settings.nebius_base_url or "https://api.tokenfactory.nebius.com/v1")
 
     if not key_to_test:
+        # No hosted key: probe the local servers for real rather than
+        # reporting a readiness that was never checked.
+        from cauveris.model_gateway.local import LocalModelGateway
+
+        gateway = LocalModelGateway(probe_timeout=2.0)
+        probed = await gateway.probe()
+        reachable = [p for p in probed if p.get("reachable")]
+        if reachable:
+            first = reachable[0]
+            return {
+                "success": True,
+                "provider": "Local model server",
+                "mode": "local_llm",
+                "latency_ms": first.get("latency_ms"),
+                "endpoints": probed,
+                "models": first.get("models", []),
+                "message": (
+                    f"Local model server reachable at {first['endpoint']} "
+                    f"({first.get('latency_ms')} ms)."
+                ),
+            }
         return {
-            "success": True,
-            "provider": "Deterministic Local Fixtures (Offline Safe)",
-            "mode": "deterministic_local",
-            "latency_ms": 14.2,
-            "message": "Local deterministic simulation engine is active and ready (zero cloud dependencies).",
+            "success": False,
+            "provider": "none reachable",
+            "mode": "local_only",
+            "endpoints": probed,
+            "error": "No local model server answered.",
+            "message": (
+                "No model provider is reachable. Cauveris' own evidence rules "
+                "still produce the analysis, but no model inference is "
+                "available."
+            ),
         }
 
     start = time.perf_counter()
@@ -4559,31 +4954,46 @@ async def test_model_connectivity(
 @app.get("/api/v1/status-center")
 async def get_status_center():
     """Get orchestration and system health status center."""
+    started = time.perf_counter()
     _ensure_incident("CAU-0001")
     incident_count = len(incidents)
     active_inc = incidents.get("CAU-0001")
     stage = pipeline_progress.get("CAU-0001", {}).get("state", "IDLE")
     settings = get_settings()
 
+    hosted_configured = bool(settings.nebius_api_key)
+    local_endpoints = [
+        part.strip()
+        for part in str(settings.local_model_endpoints or "").split(",")
+        if part.strip()
+    ]
+    if hosted_configured:
+        route = "Hosted model (Nebius) with local fallback"
+        mode = "live_gateway"
+    else:
+        route = "Local model server with evidence-rule fallback"
+        mode = "local_only"
+
     return {
         "status": "healthy",
         "incidents_count": incident_count,
         "active_incident_id": "CAU-0001" if active_inc else None,
         "current_stage": stage,
-        "model_route": "Deterministic Local Fixtures (Offline Safe)",
-        "processing_mode": "Local Deterministic Pipeline",
+        "model_route": route,
+        "processing_mode": "Evidence-calibrated pipeline",
         "backend_health": {
             "status": "healthy",
             "service": "cauveris",
             "version": "0.1.0",
-            "latency_ms": 1.2,
+            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         },
         "model_provider": {
             "status": "healthy",
-            "provider": "Deterministic Local Fixtures (Offline Safe)",
-            "mode": "deterministic_local",
+            "provider": route,
+            "mode": mode,
             "cloud_credentials_required": False,
-            "nebius_configured": bool(settings.nebius_api_key),
+            "nebius_configured": hosted_configured,
+            "local_model_endpoints": local_endpoints,
         },
         "sandbox_status": "Ready",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -5143,6 +5553,26 @@ async def get_incident_temporal_visualization(
     return build_timeline_visualization_data(
         temporal_result, incidents[incident_id].timeline_events
     )
+
+
+TELEMETRY_EVENTS: List[Dict[str, Any]] = []
+
+
+@app.post("/api/v1/telemetry/events")
+async def ingest_telemetry_events(payload: Dict[str, Any]):
+    """Ingest frontend telemetry events into server buffer."""
+    events = payload.get("events", [])
+    if isinstance(events, list):
+        TELEMETRY_EVENTS.extend(events)
+        if len(TELEMETRY_EVENTS) > 10000:
+            del TELEMETRY_EVENTS[:-10000]
+    return {"status": "ok", "received": len(events), "total": len(TELEMETRY_EVENTS)}
+
+
+@app.get("/api/v1/telemetry/events")
+async def get_telemetry_events(limit: int = 100):
+    """Retrieve ingested telemetry events."""
+    return {"events": TELEMETRY_EVENTS[-limit:], "total": len(TELEMETRY_EVENTS)}
 
 
 if __name__ == "__main__":

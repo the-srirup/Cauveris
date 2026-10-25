@@ -17,9 +17,24 @@ class ModelResponse(BaseEntity):
         None, description="Parsed structured data if applicable"
     )
     model_used: str = Field(..., description="Identifier of the model used")
-    provider: str = Field(..., description="Provider name (local, nebius, etc.)")
+    provider: str = Field(..., description="Provider name (local-llm, nebius, etc.)")
     usage: Optional[Dict[str, Any]] = Field(None, description="Token usage statistics")
     cost: Optional[float] = Field(None, description="Cost in USD")
+    #: Whether a *generative model* produced this content.
+    #:
+    #: A gateway can always return something - a cache hit, a template, a
+    #: hand-written default.  Such a response is a valid
+    #: :class:`ModelResponse`, but presenting it as an inference would be a
+    #: mock disguised as a result, so consumers check this flag before they
+    #: treat the content as something a model concluded.
+    inference: bool = Field(
+        True,
+        description="True when a generative model produced this content",
+    )
+    #: Where the content came from, when that is not implied by the provider.
+    endpoint: Optional[str] = Field(
+        None, description="The endpoint that served this response"
+    )
 
 
 class ModelGateway(ABC):

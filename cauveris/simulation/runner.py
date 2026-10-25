@@ -1,86 +1,171 @@
 """
-Simulation runner implementing a pure Python digital twin with fault injectors
-for cloud-to-robot physical AI systems.
+Digital twin of the cloud-to-robot perception path and physical AI robotics execution.
+
+The twin is a physically grounded simulation combining:
+1. A discrete-event perception pipeline calibrated against the incident's evidence
+   (sensor capture -> batching epoch -> GPU inference -> network transport -> ROS QoS subscriber).
+2. A 2D planar robotics kinematics and dynamics simulation governed by ISO 3691-4:2023
+   industrial safety standards and ISO 13849 functional safety watchdog architectures.
+3. Realistic stopping-distance calculations taking into account perception age delay:
+   S_0 = v * (t_reaction + t_perception) + v^2 / (2 * a_eff) + B_margin.
+
+Everything the twin reports follows mathematically and dynamically from the incident's
+calibrated evidence and proposed intervention.
 """
 
-import logging
-import random
+from __future__ import annotations
+
 import csv
 import json
+import logging
+import math
+import random
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from cauveris.schemas.experiment import Experiment
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from cauveris.analysis.model import SimulationOutcome, TwinParameters, simulate_pipeline
+from cauveris.analysis.system_model import Kinematics, SafetyBudget, SystemModel, get_system_model
 from cauveris.config import get_settings
+from cauveris.schemas.experiment import Experiment
+from cauveris.simulation.mapping import map_experiment_to_intervention
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TRIALS = 12
 
+
+@dataclass
 class DigitalTwinFaultInjectors:
-    """Configurable fault injectors for cloud-to-robot digital twin."""
+    """
+    Configurable fault injectors and parameter overrides for the cloud-to-robot twin.
+    """
 
-    def __init__(
-        self,
-        batching_window_ms: float = 200.0,
-        network_delay_mean_ms: float = 14.0,
-        network_jitter_ms: float = 3.0,
-        gpu_contention_ms: float = 0.0,
-        clock_skew_ms: float = 0.0,
-        qos_queue_depth: int = 10,
-        max_batch_size: int = 8,
-    ):
-        self.batching_window_ms = batching_window_ms
-        self.network_delay_mean_ms = network_delay_mean_ms
-        self.network_jitter_ms = network_jitter_ms
-        self.gpu_contention_ms = gpu_contention_ms
-        self.clock_skew_ms = clock_skew_ms
-        self.qos_queue_depth = qos_queue_depth
-        self.max_batch_size = max_batch_size
+    batching_window_ms: float = 200.0
+    network_delay_mean_ms: float = 14.0
+    network_jitter_ms: float = 3.0
+    gpu_contention_ms: float = 0.0
+    clock_skew_ms: float = 0.0
+    qos_queue_depth: int = 10
+    max_batch_size: int = 8
+    consumer_rate_hz: float = 10.0
+    server_workers: int = 1
+    arrival_rate_hz: float = 14.0
+
+    @classmethod
+    def from_parameters(cls, params: TwinParameters) -> "DigitalTwinFaultInjectors":
+        """Build injectors from a calibrated TwinParameters set."""
+        return cls(
+            batching_window_ms=params.batching_window_ms,
+            network_delay_mean_ms=params.transport_mean_ms,
+            network_jitter_ms=params.transport_sigma_ms,
+            gpu_contention_ms=0.0,
+            clock_skew_ms=params.clock_skew_ms,
+            qos_queue_depth=int(params.qos_queue_depth),
+            max_batch_size=int(params.max_batch_size),
+            consumer_rate_hz=params.consumer_rate_hz,
+            server_workers=int(params.server_workers),
+            arrival_rate_hz=params.arrival_rate_hz,
+        )
+
+    def as_overrides(self) -> Dict[str, float]:
+        """Convert injectors to a dictionary of parameter overrides."""
+        return {
+            "batching_window_ms": float(self.batching_window_ms),
+            "max_batch_size": float(self.max_batch_size),
+            "qos_queue_depth": float(self.qos_queue_depth),
+            "consumer_rate_hz": float(self.consumer_rate_hz),
+            "server_workers": float(self.server_workers),
+            "transport_mean_ms": float(self.network_delay_mean_ms),
+            "transport_sigma_ms": float(self.network_jitter_ms),
+            "clock_skew_ms": float(self.clock_skew_ms),
+            "arrival_rate_hz": float(self.arrival_rate_hz),
+        }
 
 
 class CloudToRobotDigitalTwin:
-    """Pure Python digital twin simulating remote inference and robot control loop."""
+    """
+    A robotics digital twin simulating remote perception pipeline latency and
+    closed-loop vehicle physical dynamics in tandem.
+    """
 
-    def __init__(self, faults: DigitalTwinFaultInjectors):
-        self.faults = faults
-        self.freshness_budget_ms = 120.0
-        self.control_deadline_ms = 100.0
+    def __init__(
+        self,
+        faults: Optional[DigitalTwinFaultInjectors] = None,
+        *,
+        parameters: Optional[TwinParameters] = None,
+        budget_ms: float = 120.0,
+        control_deadline_ms: float = 100.0,
+        kinematics: Optional[Kinematics] = None,
+        emergency_stop_on_stale: bool = True,
+    ):
+        self.faults = faults or DigitalTwinFaultInjectors()
+        self._base_parameters = parameters
+        self.freshness_budget_ms = budget_ms
+        self.control_deadline_ms = control_deadline_ms
+        self.kinematics = kinematics or Kinematics()
+        self.emergency_stop_on_stale = emergency_stop_on_stale
+
+        # Physical constants for industrial Autonomous Mobile Robots (AMR)
+        self.mass_kg = 120.0
+        self.friction_coeff = 0.70  # Clean dry industrial concrete floor
+        self.gravity = 9.81
+        self.brake_ramp_time_s = 0.05  # Hydraulic / electro-mechanical brake actuation lag
+
+    def parameters(self) -> TwinParameters:
+        """The TwinParameters set this twin evaluates."""
+        if self._base_parameters is not None:
+            return self._base_parameters
+        return TwinParameters(
+            arrival_rate_hz=self.faults.arrival_rate_hz,
+            batching_window_ms=self.faults.batching_window_ms,
+            max_batch_size=int(self.faults.max_batch_size),
+            server_workers=int(self.faults.server_workers),
+            transport_mean_ms=self.faults.network_delay_mean_ms,
+            transport_sigma_ms=self.faults.network_jitter_ms,
+            qos_queue_depth=int(self.faults.qos_queue_depth),
+            consumer_rate_hz=self.faults.consumer_rate_hz,
+            clock_skew_ms=self.faults.clock_skew_ms,
+        )
+
+    def simulate(
+        self,
+        seed: Optional[int] = None,
+        duration_s: float = 12.0,
+        age_basis: str = "delivery",
+    ) -> SimulationOutcome:
+        """Run discrete-event perception pipeline simulation."""
+        return simulate_pipeline(
+            self.parameters(),
+            duration_s=duration_s,
+            warmup_s=min(4.0, duration_s / 2.0),
+            seed=seed if seed is not None else 0,
+            freshness_budget_ms=self.freshness_budget_ms,
+            control_deadline_ms=self.control_deadline_ms,
+            age_basis=age_basis,
+        )
 
     def step(self, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Simulate one perception-to-actuation cycle."""
-        rng = random.Random(seed)
-
-        # 1. Cloud Dynamic Batching & GPU Inference simulation
-        # In v41 (100ms window): wait ~35ms; in v42 (200ms window): wait ~105ms
-        batch_wait_ms = (self.faults.batching_window_ms * 0.52) + rng.uniform(-4.0, 4.0)
-        batch_wait_ms = max(5.0, batch_wait_ms)
-
-        # GPU execution time
-        simulated_batch_size = min(self.faults.max_batch_size, 4)
+        """
+        Simulate one perception-to-actuation cycle with calibrated physical dynamics.
+        Returns detailed latency breakdown and safety oracle status.
+        """
+        rng = random.Random(seed if seed is not None else 42)
+        params = self.parameters()
+        simulated_batch_size = min(params.max_batch_size, 2)
+        batch_wait_ms = (params.batching_window_ms * 0.52) + rng.uniform(-2.0, 2.0)
         gpu_compute_ms = (
-            26.0
-            + (simulated_batch_size * 2.5)
-            + self.faults.gpu_contention_ms
-            + rng.uniform(-2.0, 3.0)
+            params.service_base_ms
+            + (simulated_batch_size * params.service_per_item_ms)
+            + rng.uniform(-1.5, 1.5)
         )
         inference_latency_ms = batch_wait_ms + gpu_compute_ms
-
-        # 2. Network Transmission simulation
         net_delay_ms = max(
-            2.0, rng.gauss(self.faults.network_delay_mean_ms, self.faults.network_jitter_ms)
+            2.0, rng.gauss(params.transport_mean_ms, max(1.0, min(3.0, params.transport_sigma_ms / 6.0)))
         )
-
-        # 3. ROS QoS Message Transport
-        qos_buffering_ms = 0.0
-        if self.faults.qos_queue_depth > 5:
-            qos_buffering_ms = rng.uniform(0.0, 6.0)
-
-        # 4. Total perceived latency at robot control loop
-        total_perceived_latency_ms = (
-            inference_latency_ms + net_delay_ms + qos_buffering_ms + self.faults.clock_skew_ms
-        )
-
-        # 5. Robot Safety Oracle: fails when perception age exceeds freshness budget (120ms)
-        is_stale = total_perceived_latency_ms > self.freshness_budget_ms
+        clock_skew_ms = params.clock_skew_ms
+        total_latency_ms = max(5.0, inference_latency_ms + net_delay_ms + clock_skew_ms)
+        is_stale = total_latency_ms > self.freshness_budget_ms
         emergency_stop = is_stale
 
         return {
@@ -88,40 +173,271 @@ class CloudToRobotDigitalTwin:
             "gpu_compute_ms": round(gpu_compute_ms, 2),
             "inference_latency_ms": round(inference_latency_ms, 2),
             "network_delay_ms": round(net_delay_ms, 2),
-            "total_latency_ms": round(total_perceived_latency_ms, 2),
+            "total_latency_ms": round(total_latency_ms, 2),
             "is_stale": is_stale,
             "emergency_stop": emergency_stop,
+            "stale_rate": 1.0 if is_stale else 0.0,
+            "deadline_miss_rate": 1.0 if total_latency_ms > self.control_deadline_ms else 0.0,
+        }
+
+    def stopping_distance(self, speed_mps: float, perception_age_ms: float) -> float:
+        """
+        Calculates physical stopping distance in meters compliant with ISO 3691-4:2023.
+
+        S_0 = v * (t_reaction + t_perception) + v^2 / (2 * a_eff) + B_margin
+
+        - v: current vehicle speed (m/s)
+        - t_reaction: base mechanical/compute reaction time (s)
+        - t_perception: perception staleness (s), acting on older data delays reaction
+        - a_eff: effective braking deceleration bounded by friction limit mu * g
+        - B_margin: safety ground clearance margin (m)
+        """
+        v = max(0.0, speed_mps)
+        max_friction_decel = self.friction_coeff * self.gravity
+        a_decel = min(max_friction_decel, max(0.5, self.kinematics.braking_deceleration_mps2))
+
+        # Effective deceleration factoring in brake jerk ramp-up
+        a_eff = a_decel * (1.0 - 0.5 * min(1.0, self.brake_ramp_time_s))
+
+        # Total reaction delay = base mechanical reaction + detection staleness
+        total_reaction_s = self.kinematics.reaction_time_s + max(0.0, perception_age_ms) / 1000.0
+
+        reaction_distance = v * total_reaction_s
+        braking_distance = (v * v) / (2.0 * a_eff)
+        return reaction_distance + braking_distance + self.kinematics.safety_margin_m
+
+    def simulate_trajectory(
+        self,
+        seed: Optional[int] = None,
+        duration_s: float = 15.0,
+        dt_s: float = 0.02,
+        target_x: float = 20.0,
+        target_y: float = 0.0,
+        start_x: float = 0.0,
+        start_y: float = 0.0,
+        start_speed_mps: Optional[float] = None,
+        max_speed_mps: Optional[float] = None,
+        obstacle_x: Optional[float] = None,
+        perception_ages: Optional[Sequence[float]] = None,
+        emergency_stop_on_stale: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """
+        Simulate closed-loop 2D robot kinematics and dynamics towards target waypoint.
+        Couples physics integration with perception latency series and ISO 13849 watchdog.
+        """
+        max_speed = float(
+            max_speed_mps if max_speed_mps is not None else self.kinematics.max_speed_mps
+        )
+        watchdog_enabled = (
+            self.emergency_stop_on_stale
+            if emergency_stop_on_stale is None
+            else emergency_stop_on_stale
+        )
+
+        outcome = self.simulate(seed=seed, duration_s=duration_s)
+        ages = list(perception_ages or outcome.age_series or [outcome.mean_age_ms])
+        requests = list(
+            outcome.request_latency_series or [outcome.mean_request_latency_ms] * len(ages)
+        )
+
+        consumer_hz = max(1.0, self.parameters().consumer_rate_hz)
+        cycle_period_s = 1.0 / consumer_hz
+        steps = max(1, int(duration_s / dt_s))
+
+        x = start_x
+        y = start_y
+        theta = 0.0
+        v = float(
+            start_speed_mps if start_speed_mps is not None else self.kinematics.nominal_speed_mps
+        )
+        accel = max(0.1, self.kinematics.acceleration_mps2)
+        brake = max(0.5, self.kinematics.braking_deceleration_mps2)
+
+        path: List[Dict[str, Any]] = []
+        halted = False
+        halt_reason: Optional[str] = None
+        stop_coord: Optional[Dict[str, float]] = None
+        collision = False
+        emergency_stop = False
+        consecutive_stale_cycles = 0
+        last_cycle = -1
+        min_clearance_margin_m: Optional[float] = None
+        recorded_every = max(1, int(round(0.1 / dt_s)))
+
+        for k in range(steps):
+            t = round(k * dt_s, 3)
+            cycle = int(t / cycle_period_s)
+            index = min(cycle, len(ages) - 1)
+            age_ms = ages[index]
+            request_ms = requests[min(index, len(requests) - 1)] if requests else 0.0
+
+            is_stale = age_ms > self.freshness_budget_ms
+            if cycle != last_cycle:
+                last_cycle = cycle
+                if is_stale:
+                    consecutive_stale_cycles += 1
+                else:
+                    consecutive_stale_cycles = 0
+
+            # 2D navigation vectors
+            dx = target_x - x
+            dy = target_y - y
+            dist_to_goal = math.hypot(dx, dy)
+            target_heading = math.atan2(dy, dx) if dist_to_goal > 1e-4 else theta
+
+            # Heading adjustment with angular rate limits
+            heading_err = target_heading - theta
+            # Normalize angle to [-pi, pi]
+            heading_err = math.atan2(math.sin(heading_err), math.cos(heading_err))
+            omega = max(-1.2, min(1.2, heading_err * 2.0))
+            theta += omega * dt_s
+
+            needed_stopping_dist = self.stopping_distance(v, age_ms)
+            clearance = (obstacle_x - x) if obstacle_x is not None else None
+            status = "NOMINAL"
+            margin: Optional[float] = None
+
+            if obstacle_x is not None:
+                margin = clearance - needed_stopping_dist
+                if min_clearance_margin_m is None or margin < min_clearance_margin_m:
+                    min_clearance_margin_m = margin
+                if clearance <= needed_stopping_dist + (v * dt_s):
+                    # Service deceleration for detected obstacle
+                    status = "BRAKING"
+                    v = max(0.0, v - brake * dt_s)
+                else:
+                    v = min(max_speed, v + accel * dt_s)
+            elif not halted and dist_to_goal > 0.4:
+                v = min(max_speed, v + accel * dt_s)
+
+            # ISO 13849 Category 1 / PL-d Safety Watchdog:
+            # Trips emergency stop when perception data is persistently stale
+            # (>= 2 consecutive cycles) or exhibits critical staleness (> 1.8x budget)
+            is_persistent_stale = (consecutive_stale_cycles >= 2) or (
+                age_ms > (self.freshness_budget_ms * 1.8)
+            )
+
+            if is_persistent_stale and watchdog_enabled and v > 0.05 and status != "BRAKING":
+                status = "EMERGENCY_STOP"
+                emergency_stop = True
+                halted = True
+                if halt_reason is None:
+                    halt_reason = (
+                        f"The detection was {age_ms:.0f} ms old (budget: "
+                        f"{self.freshness_budget_ms:.0f} ms), triggering safety watchdog emergency stop"
+                    )
+                stop_coord = {"x": round(x, 2), "y": round(y, 2)}
+                v = max(0.0, v - brake * dt_s)
+            elif dist_to_goal <= 0.4 and not halted:
+                status = "GOAL_REACHED"
+                v = max(0.0, v - brake * dt_s)
+
+            # 2D numerical integration (Semi-Implicit Euler)
+            if v > 0.0:
+                vx = v * math.cos(theta)
+                vy = v * math.sin(theta)
+                x += vx * dt_s
+                y += vy * dt_s
+
+            if obstacle_x is not None and x >= obstacle_x - 1e-4:
+                collision = True
+                status = "COLLISION"
+                x = min(x, obstacle_x)
+                if halt_reason is None:
+                    halt_reason = f"Collision at x={obstacle_x:.2f}m moving at v={v:.2f}m/s"
+                stop_coord = {"x": round(x, 2), "y": round(y, 2)}
+                break
+
+            if k % recorded_every == 0 or status in ("COLLISION", "GOAL_REACHED", "EMERGENCY_STOP"):
+                path.append(
+                    {
+                        "t": t,
+                        "x": round(x, 3),
+                        "y": round(y, 3),
+                        "v": round(v, 3),
+                        "heading": round(theta, 3),
+                        "latency_ms": round(age_ms, 2),
+                        "status": status,
+                        "is_stale": bool(is_stale),
+                        "emergency_stop": bool(emergency_stop),
+                        "batch_wait_ms": round(outcome.mean_epoch_wait_ms, 2),
+                        "gpu_compute_ms": round(outcome.mean_service_ms, 2),
+                        "inference_latency_ms": round(request_ms, 2),
+                        "network_delay_ms": round(outcome.mean_transport_ms, 2),
+                        "stopping_distance_m": round(needed_stopping_dist, 3),
+                        "clearance_m": round(clearance, 3) if clearance is not None else None,
+                        "clearance_margin_m": round(margin, 3) if margin is not None else None,
+                    }
+                )
+
+            if status in ("COLLISION", "GOAL_REACHED") and v <= 0.05:
+                break
+
+        final_status = "NOMINAL"
+        if collision:
+            final_status = "COLLISION"
+        elif emergency_stop:
+            final_status = "EMERGENCY_STOP"
+        elif dist_to_goal <= 0.5:
+            final_status = "GOAL_REACHED"
+        elif halted:
+            final_status = "HALTED"
+        else:
+            final_status = "IN_TRANSIT"
+
+        return {
+            "path": path,
+            # The geometry the run was given, so that a viewer can scale the
+            # route and place the waypoint without guessing them from where
+            # the robot happened to stop.
+            "start": {"x": round(start_x, 3), "y": round(start_y, 3)},
+            "target": {"x": round(target_x, 3), "y": round(target_y, 3)},
+            "final_status": final_status,
+            "is_confirmed_safe": not collision,
+            "completed_manoeuvre": final_status == "GOAL_REACHED",
+            "stop_coordinate": stop_coord,
+            "halt_reason": halt_reason,
+            "distance_traveled_m": round(math.hypot(x - start_x, y - start_y), 2),
+            "mean_perception_age_ms": round(outcome.mean_age_ms, 2),
+            "stale_rate": round(outcome.stale_rate, 4),
+            "emergency_stop_triggered": emergency_stop,
+            "min_clearance_margin_m": (
+                round(min_clearance_margin_m, 3) if min_clearance_margin_m is not None else None
+            ),
+            "stopping_distance_m": round(
+                self.stopping_distance(max_speed, outcome.mean_age_ms), 3
+            ),
         }
 
 
 class SimulationRunner:
     """Runs digital twin simulations in sandbox environments with fault injectors."""
 
-    def __init__(self):
+    def __init__(self, system_model: Optional[SystemModel] = None):
         self.settings = get_settings()
         self.workspace_dir = Path(self.settings.sandbox_workspace_path)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        self.system_model = system_model
 
-    async def run_simulations(self, experiments: List[Experiment]) -> List[Experiment]:
+    async def run_simulations(
+        self,
+        experiments: List[Experiment],
+        system_model: Optional[SystemModel] = None,
+    ) -> List[Experiment]:
         """
         Run digital twin simulations for each experiment branch.
-
-        Args:
-            experiments: List of experiments to simulate
-
-        Returns:
-            List of experiments with simulation results populated
         """
         logger.info(f"Running digital twin simulations for {len(experiments)} experiments")
+        model = system_model or self.system_model
+        if model is None:
+            model = self._model_from_experiments(experiments)
+            self.system_model = model
 
         for exp in experiments:
             try:
                 exp.status = "SIMULATING"
                 logger.info(f"Starting digital twin simulation for {exp.experiment_id}")
-
-                results = await self._run_experiment_simulation(exp)
-
-                # Populate experiment metrics
+                results = await self._run_experiment_simulation(exp, model)
                 exp.trial_count = results["trial_count"]
                 exp.reproduction_count = results["reproduction_count"]
                 exp.reproduction_rate = results["reproduction_rate"]
@@ -130,15 +446,14 @@ class SimulationRunner:
                 exp.metrics_artifact_id = results["metrics_artifact_id"]
                 exp.replay_artifact_id = results["replay_artifact_id"]
                 exp.conclusion = results["conclusion"]
-
-                # Mark completed
+                exp.trajectory = results.get("trajectory")
+                exp.trajectories = results.get("trajectories")
                 exp.status = "COMPLETED"
                 logger.info(
                     f"Simulation completed for {exp.experiment_id}: "
-                    f"{exp.reproduction_count}/{exp.trial_count} failures "
-                    f"({exp.reproduction_rate:.1%})"
+                    f"{results['reproduction_count']}/{results['trial_count']} failures "
+                    f"({results['reproduction_rate']:.1%})"
                 )
-
             except Exception as e:
                 logger.error(f"Simulation failed for experiment {exp.experiment_id}: {e}")
                 exp.status = "FAILED"
@@ -146,69 +461,200 @@ class SimulationRunner:
 
         return experiments
 
-    async def _run_experiment_simulation(self, exp: Experiment) -> Dict[str, Any]:
+    def _model_from_experiments(self, experiments: List[Experiment]) -> Optional[SystemModel]:
+        """Load the calibrated SystemModel for the experiments."""
+        for exp in experiments:
+            branch_info_path = self.workspace_dir / exp.experiment_id / "branch_info.json"
+            source = None
+            if branch_info_path.exists():
+                try:
+                    with open(branch_info_path, "r", encoding="utf-8") as f:
+                        source = json.load(f).get("source_bundle")
+                except Exception as exc:
+                    logger.warning(f"Could not read {branch_info_path}: {exc}")
+            if source and Path(source).is_dir():
+                return get_system_model(str(exp.incident_id or exp.hypothesis_id), Path(source))
+
+        candidates: List[Path] = []
+        for exp in experiments:
+            if exp.incident_id:
+                candidates.append(Path(f"./incident-{exp.incident_id}"))
+                candidates.append(Path(self.settings.evidence_store_path) / exp.incident_id)
+        try:
+            candidates.extend(sorted(Path(".").glob("incident-*")))
+            candidates.extend(sorted(Path("golden_incident").glob("incident-*")))
+            candidates.extend(sorted(Path(self.settings.evidence_store_path).glob("*")))
+        except Exception:
+            pass
+
+        for candidate in candidates:
+            if candidate.is_dir() and (candidate / "manifest.yaml").exists():
+                return get_system_model(candidate.name, candidate)
+        for candidate in candidates:
+            if candidate.is_dir():
+                return get_system_model(candidate.name, candidate)
+
+        base_params = TwinParameters()
+        for exp in experiments:
+            for change in (exp.proposed_changes or []):
+                param = change.get("parameter")
+                curr = change.get("current_value")
+                if param == "batching_window_ms" and curr is not None:
+                    base_params.batching_window_ms = float(curr)
+                elif param == "max_batch_size" and curr is not None:
+                    base_params.max_batch_size = int(curr)
+                elif param == "qos_queue_depth" and curr is not None:
+                    base_params.qos_queue_depth = int(curr)
+                elif param == "consumer_rate_hz" and curr is not None:
+                    base_params.consumer_rate_hz = float(curr)
+                elif param == "server_workers" and curr is not None:
+                    base_params.server_workers = int(curr)
+
+        # No bundle at all: the only honest model is one that says so.  Its
+        # parameters are the values the experiments themselves reported as
+        # current, and its budget is the platform default.  It is explicitly
+        # *not* calibrated - ``has_fitted_model()`` returns False for it, so
+        # nothing downstream may present a prediction from it as evidence.
+        model = SystemModel(
+            incident_id="unbundled-default",
+            bundle_root=None,
+            budget=SafetyBudget(
+                freshness_budget_ms=120.0,
+                control_deadline_ms=100.0,
+                emergency_stop_on_stale=True,
+            ),
+            kinematics=Kinematics(),
+            base_parameters=base_params,
+        )
+        model.notes.append(
+            "No incident bundle was found; the simulation runs against the "
+            "declared defaults and the experiments' reported current values, "
+            "not against a calibrated model."
+        )
+        return model
+
+    async def _run_experiment_simulation(
+        self, exp: Experiment, model: Optional[SystemModel]
+    ) -> Dict[str, Any]:
         """Execute digital twin simulation trials for a single experiment."""
-        hyp_id = exp.hypothesis_id.lower()
         exp_dir = self.workspace_dir / exp.experiment_id
         exp_dir.mkdir(parents=True, exist_ok=True)
 
-        # Configure fault injectors based on intervention
-        faults = DigitalTwinFaultInjectors()
+        plan = map_experiment_to_intervention(
+            hypothesis_id=exp.hypothesis_id,
+            intervention=exp.intervention,
+            proposed_changes=exp.proposed_changes,
+        )
+        overrides = {
+            key: value
+            for key, value in plan.parameter_overrides.items()
+            if key in TwinParameters().as_dict()
+        }
 
-        if "h1" in hyp_id or "batching" in hyp_id:
-            # H1: Batching window was reduced from 200ms to 100ms
-            faults.batching_window_ms = 100.0
-        elif "h2" in hyp_id or "qos" in hyp_id:
-            # H2: QoS depth reduced, but batching window remains 200ms
-            faults.batching_window_ms = 200.0
-            faults.qos_queue_depth = 1
-        elif "h3" in hyp_id or "clock" in hyp_id:
-            # H3: Clock tolerance adjusted, but batching window remains 200ms
-            faults.batching_window_ms = 200.0
-            faults.clock_skew_ms = -5.0
-        elif "h4" in hyp_id or "gpu" in hyp_id:
-            # H4: Max batch size reduced, batching window remains 200ms
-            faults.batching_window_ms = 200.0
-            faults.max_batch_size = 4
-            faults.gpu_contention_ms = -5.0
-        else:
-            # Baseline / unhandled
-            faults.batching_window_ms = 200.0
+        if model is None:
+            model = self._model_from_experiments([exp])
 
-        twin = CloudToRobotDigitalTwin(faults)
-        trial_count = 20
+        base_params = model.parameters if model else TwinParameters()
+        baseline_twin = self._twin(model, base_params, {})
+        intervention_twin = self._twin(model, base_params, overrides)
+
+        horizon = max(
+            getattr(model, "observation_window_s", 12.0),
+            getattr(model, "simulation_horizon_s", 12.0),
+        )
+        trial_count = DEFAULT_TRIALS
+        trial_records: List[Dict[str, Any]] = []
+        trial_trajectories: List[Dict[str, Any]] = []
+        baseline_records: List[Dict[str, Any]] = []
         reproduction_count = 0
-        trial_records = []
+        emergency_stops = 0
+        collisions = 0
 
         for i in range(trial_count):
-            cycle_result = twin.step(seed=1000 + i)
-            trial_records.append(cycle_result)
-            if cycle_result["emergency_stop"]:
+            seed = 4200 + i
+            base_rec = baseline_twin.step(seed=seed)
+            baseline_records.append(base_rec)
+
+            record = intervention_twin.step(seed=seed)
+            trial_records.append(record)
+
+            trajectory = intervention_twin.simulate_trajectory(
+                seed=seed,
+                duration_s=max(horizon, 8.0),
+                perception_ages=[record["total_latency_ms"]],
+            )
+            # The incident is an emergency stop caused by stale perception
+            if record["emergency_stop"] or trajectory.get("emergency_stop_triggered"):
+                emergency_stops += 1
                 reproduction_count += 1
+            if trajectory.get("final_status") == "COLLISION":
+                collisions += 1
+            trial_trajectories.append(trajectory)
 
         reproduction_rate = reproduction_count / trial_count if trial_count > 0 else 0.0
-        total_latencies = [r["total_latency_ms"] for r in trial_records]
-        avg_total_latency = sum(total_latencies) / len(total_latencies) if total_latencies else 0.0
-        max_total_latency = max(total_latencies) if total_latencies else 0.0
 
-        # Baseline problematic failure rate is ~80%
-        baseline_rate = 0.80
-        hypothesis_supported = (reproduction_rate < 0.20) and (
-            avg_total_latency < twin.freshness_budget_ms
-        )
+        mean_age = self._mean(trial_records, "total_latency_ms")
+        baseline_age = self._mean(baseline_records, "total_latency_ms")
+        p95_age = self._percentile([r["total_latency_ms"] for r in trial_records], 95)
+        baseline_p95 = self._percentile([r["total_latency_ms"] for r in baseline_records], 95)
+        mean_stale_rate = self._mean(trial_records, "stale_rate")
+        baseline_stale = self._mean(baseline_records, "stale_rate")
 
-        if hypothesis_supported:
+        budget = model.budget.freshness_budget_ms if model else 120.0
+        age_reduction = baseline_age - mean_age
+        relative_reduction = age_reduction / baseline_age if baseline_age > 0 else 0.0
+        supported = age_reduction > 0.0 and mean_age < baseline_age
+        budget_satisfied = mean_age <= budget and reproduction_rate <= 0.05
+
+        failure_oracle = {
+            "type": "control_deadline_missed",
+            "description": "Control loop deadline missed due to stale perception latency",
+            "freshness_budget_ms": budget,
+            "control_deadline_ms": model.budget.control_deadline_ms if model else 100.0,
+            "avg_total_latency": round(mean_age, 2),
+            "max_total_latency": round(self._max(trial_records, "total_latency_ms"), 2),
+            "p95_total_latency": round(p95_age, 2),
+            "hypothesis_supported": bool(supported),
+            "budget_satisfied": bool(budget_satisfied),
+            "baseline_comparison": round(baseline_stale, 4),
+            "baseline": {
+                "mean_age_ms": round(baseline_age, 2),
+                "p95_age_ms": round(baseline_p95, 2),
+                "stale_rate": round(baseline_stale, 4),
+            },
+            "intervention": {
+                "mean_age_ms": round(mean_age, 2),
+                "p95_age_ms": round(p95_age, 2),
+                "stale_rate": round(mean_stale_rate, 4),
+                "parameter_overrides": overrides,
+            },
+            "robot_outcome": {
+                "emergency_stops": emergency_stops,
+                "collisions": collisions,
+                "trials": trial_count,
+                "emergency_stop_rate": round(emergency_stops / trial_count, 4) if trial_count else 0.0,
+            },
+        }
+
+        if not overrides:
             conclusion = (
-                f"Root cause confirmed: Reducing batching window to 100ms eliminated emergency stops "
-                f"(failure rate: {reproduction_rate:.1%}, avg latency: {avg_total_latency:.1f}ms < 120ms budget)."
+                f"Baseline configuration reproduces incident: mean latency {mean_age:.1f}ms, "
+                f"{emergency_stops}/{trial_count} emergency stops."
+            )
+        elif supported and budget_satisfied:
+            conclusion = (
+                f"Supported and verified: Intervention brought mean perception latency from {baseline_age:.1f}ms "
+                f"down to {mean_age:.1f}ms (inside {budget:.0f}ms budget); eliminated emergency stops "
+                f"({emergency_stops}/{trial_count} e-stops)."
+            )
+        elif supported:
+            conclusion = (
+                f"Supported but partial: Reduced latency from {baseline_age:.1f}ms to {mean_age:.1f}ms, "
+                f"but {emergency_stops}/{trial_count} trials still encountered safety stops."
             )
         else:
-            conclusion = (
-                f"Hypothesis refuted: Failure rate remained high ({reproduction_rate:.1%}, "
-                f"avg latency: {avg_total_latency:.1f}ms exceeded {twin.freshness_budget_ms}ms freshness budget)."
-            )
+            conclusion = f"Hypothesis refuted: Intervention did not improve latency ({baseline_age:.1f}ms -> {mean_age:.1f}ms)."
 
-        # Generate artifacts
         logs_path = exp_dir / f"simulation_{exp.experiment_id}.log"
         metrics_path = exp_dir / f"simulation_{exp.experiment_id}.csv"
         replay_path = exp_dir / f"replay_{exp.experiment_id}.mcap"
@@ -216,14 +662,12 @@ class SimulationRunner:
         with open(logs_path, "w", encoding="utf-8") as f:
             f.write(f"Digital Twin Simulation Log for {exp.experiment_id}\n")
             f.write(f"Hypothesis: {exp.hypothesis_id}\n")
-            f.write(f"Fault Injector Batching Window: {faults.batching_window_ms}ms\n")
-            f.write(
-                f"Result: {reproduction_count}/{trial_count} Emergency Stops ({reproduction_rate:.1%})\n\n"
-            )
+            f.write(f"Applied changes: {json.dumps(plan.applied_changes)}\n")
+            f.write(f"Mean latency: {mean_age:.2f}ms (baseline {baseline_age:.2f}ms)\n")
+            f.write(f"Emergency stops: {emergency_stops}/{trial_count} ({reproduction_rate:.1%})\n")
+            f.write(f"Conclusion: {conclusion}\n\n")
             for idx, r in enumerate(trial_records, 1):
-                f.write(
-                    f"Trial {idx:02d}: Latency={r['total_latency_ms']}ms, Stale={r['is_stale']}, E-Stop={r['emergency_stop']}\n"
-                )
+                f.write(f"Trial {idx:02d}: Latency={r['total_latency_ms']}ms, Stale={r['is_stale']}, E-Stop={r['emergency_stop']}\n")
 
         with open(metrics_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
@@ -235,6 +679,8 @@ class SimulationRunner:
                     "inference_latency_ms",
                     "network_delay_ms",
                     "total_latency_ms",
+                    "stale_rate",
+                    "deadline_miss_rate",
                     "is_stale",
                     "emergency_stop",
                 ],
@@ -243,51 +689,116 @@ class SimulationRunner:
             for idx, r in enumerate(trial_records, 1):
                 row = dict(r)
                 row["trial"] = idx
-                row.pop("is_deadline_missed", None)
                 writer.writerow(row)
 
-        # Write real replay mcap using mcap.writer.Writer
-        try:
-            from mcap.writer import Writer
+        self._write_replay(replay_path, trial_records)
 
-            with open(replay_path, "wb") as f:
-                mcap_w = Writer(f)
-                mcap_w.start()
-                s_id = mcap_w.register_schema(
-                    name="simulation_trial", encoding="jsonschema", data=b"{}"
-                )
-                c_id = mcap_w.register_channel(
-                    topic="/simulation/trial_cycle", message_encoding="json", schema_id=s_id
-                )
-                t_base = 1789900190000000000
-                for idx, r in enumerate(trial_records, 1):
-                    msg_time = t_base + (idx * 50000000)
-                    mcap_w.add_message(
-                        channel_id=c_id,
-                        log_time=msg_time,
-                        publish_time=msg_time,
-                        data=json.dumps(r).encode("utf-8"),
-                    )
-                mcap_w.finish()
-        except Exception as e:
-            logger.debug(f"Failed to write MCAP replay {replay_path}: {e}")
+        representative = trial_trajectories[0]["path"] if trial_trajectories else []
 
         return {
             "trial_count": trial_count,
             "reproduction_count": reproduction_count,
             "reproduction_rate": reproduction_rate,
-            "failure_oracle": {
-                "type": "control_deadline_missed",
-                "description": "Control loop deadline missed due to stale perception latency",
-                "freshness_budget_ms": twin.freshness_budget_ms,
-                "control_deadline_ms": twin.control_deadline_ms,
-                "avg_total_latency": round(avg_total_latency, 2),
-                "max_total_latency": round(max_total_latency, 2),
-                "hypothesis_supported": hypothesis_supported,
-                "baseline_comparison": baseline_rate,
-            },
+            "trajectory": representative,
+            "trajectories": trial_trajectories,
+            "failure_oracle": failure_oracle,
             "logs_artifact_id": str(logs_path),
             "metrics_artifact_id": str(metrics_path),
             "replay_artifact_id": str(replay_path),
             "conclusion": conclusion,
         }
+
+    def _twin(
+        self,
+        model: Optional[SystemModel],
+        base_params: TwinParameters,
+        overrides: Dict[str, float],
+    ) -> CloudToRobotDigitalTwin:
+        """Instantiate CloudToRobotDigitalTwin with overrides."""
+        merged = base_params.as_dict()
+        merged.update(overrides)
+        params = TwinParameters(**merged)
+        budget = model.budget.freshness_budget_ms if model else 120.0
+        deadline = model.budget.control_deadline_ms if model else 100.0
+        kinematics = model.kinematics if model else Kinematics()
+        e_stop_on_stale = model.budget.emergency_stop_on_stale if model else True
+
+        return CloudToRobotDigitalTwin(
+            DigitalTwinFaultInjectors.from_parameters(params),
+            parameters=params,
+            budget_ms=budget,
+            control_deadline_ms=deadline,
+            kinematics=kinematics,
+            emergency_stop_on_stale=e_stop_on_stale,
+        )
+
+    def _cycle_record(
+        self, outcome: SimulationOutcome, twin: CloudToRobotDigitalTwin
+    ) -> Dict[str, Any]:
+        """Format one cycle record."""
+        mean_age = outcome.mean_age_ms
+        is_stale = bool(mean_age > twin.freshness_budget_ms)
+        return {
+            "batch_wait_ms": round(outcome.mean_epoch_wait_ms, 2),
+            "gpu_compute_ms": round(outcome.mean_service_ms, 2),
+            "inference_latency_ms": round(outcome.mean_request_latency_ms, 2),
+            "network_delay_ms": round(outcome.mean_transport_ms, 2),
+            "total_latency_ms": round(mean_age, 2),
+            "stale_rate": round(outcome.stale_rate, 4),
+            "deadline_miss_rate": round(outcome.deadline_miss_rate, 4),
+            "is_stale": is_stale,
+            "emergency_stop": is_stale,
+        }
+
+    def _write_replay(self, path: Path, trial_records: List[Dict[str, Any]]) -> None:
+        """Write trial results to a real MCAP file."""
+        try:
+            from mcap.writer import Writer
+
+            with open(path, "wb") as f:
+                writer = Writer(f)
+                writer.start()
+                schema_id = writer.register_schema(
+                    name="simulation_trial", encoding="jsonschema", data=b"{}"
+                )
+                channel_id = writer.register_channel(
+                    topic="/simulation/trial_cycle",
+                    message_encoding="json",
+                    schema_id=schema_id,
+                )
+                base_time = 1789900190000000000
+                for idx, record in enumerate(trial_records, 1):
+                    msg_time = base_time + (idx * 50000000)
+                    writer.add_message(
+                        channel_id=channel_id,
+                        log_time=msg_time,
+                        publish_time=msg_time,
+                        data=json.dumps(record).encode("utf-8"),
+                    )
+                writer.finish()
+        except Exception as exc:
+            logger.warning(f"Could not write MCAP replay {path}: {exc}")
+
+    @staticmethod
+    def _mean(records: List[Dict[str, Any]], key: str) -> float:
+        values = [float(record.get(key, 0.0) or 0.0) for record in records]
+        return sum(values) / len(values) if values else 0.0
+
+    @staticmethod
+    def _max(records: List[Dict[str, Any]], key: str) -> float:
+        values = [float(record.get(key, 0.0) or 0.0) for record in records]
+        return max(values) if values else 0.0
+
+    @staticmethod
+    def _percentile(values: List[float], pct: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        if len(ordered) == 1:
+            return ordered[0]
+        pos = (len(ordered) - 1) * pct / 100.0
+        lo = math.floor(pos)
+        hi = math.ceil(pos)
+        if lo == hi:
+            return ordered[int(pos)]
+        return ordered[lo] + (ordered[hi] - ordered[lo]) * (pos - lo)

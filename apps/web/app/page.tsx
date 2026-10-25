@@ -1,9 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Button, Card, Stat, Progress, Badge, PageHeader, KV } from "@/components/ui";
+import { Check, X, Divide, AlertTriangle, HelpCircle, Plus, Upload, Download, Play, Square, RotateCcw, CheckCircle, Scale, Wrench, Zap, Search, Trash2, Info, Loader2 } from "lucide-react";
+import { Button, Badge, Card, Stat, Progress, PageHeader, Toolbar, ToolbarGroup, ToolbarItem, ToolbarSeparator, ToolbarTitle, ToolbarSpacer } from "@/components/ui";
+import { Dialog, ConfirmDialog } from "@/components/ui/Dialog";
+import { EmptyState, EmptyStateIcons } from "@/components/ui/EmptyState";
+import { KV } from "@/components/ui/KV";
+import { Table, type Column } from "@/components/ui/Table";
+import { AuthGate } from "@/components/AuthGate";
 import {
   api,
   Incident,
@@ -12,13 +17,10 @@ import {
   EvidenceValidationSummary,
   SystemHealthResponse,
   ModelProviderHealthResponse,
-  StatusCenterResponse,
 } from "@/lib/api";
 import { notify } from "@/components/Notification";
 import { useActiveIncident } from "@/lib/useIncident";
 import { useShell, buildIncidentContext } from "@/lib/useShell";
-import { useAuthStore } from "@/lib/auth";
-import { Scale, Wrench, Zap, Square, Play, RotateCcw, Check, CheckCircle, X, Divide, AlertTriangle, HelpCircle, Plus, Upload, Download } from "lucide-react";
 
 interface ActionableError {
   title: string;
@@ -29,40 +31,16 @@ interface ActionableError {
 }
 
 export default function MissionControl() {
+  return (
+    <AuthGate redirect="/" loadingLabel="Loading Mission Control...">
+      <MissionControlContent />
+    </AuthGate>
+  );
+}
+
+function MissionControlContent() {
   const { incidentId, setIncidentId, judgeMode, setJudgeMode, engineerMode, setEngineerMode } = useActiveIncident();
   const { setIncidentContext } = useShell();
-  const { isAuthenticated, isLoading: authLoading } = useAuthStore();
-  const router = useRouter();
-
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      router.push('/login?redirect=/');
-    }
-  }, [isAuthenticated, authLoading, router]);
-
-  // Show loading while auth is initializing
-  if (authLoading) {
-    return (
-      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
-        <div className="flex h-8 w-8 animate-spin text-primary">
-          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)]">Loading Mission Control...</p>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex flex-col gap-4 min-h-screen items-center justify-center p-8">
-        <div className="flex h-8 w-8 animate-spin text-primary">
-          <svg className="h-8 w-8" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-        </div>
-        <p className="text-sm text-[var(--color-text-muted)]">Redirecting to login...</p>
-      </div>
-    );
-  }
 
   // Primary data state
   const [incidentData, setIncidentData] = useState<Incident | null>(null);
@@ -137,14 +115,13 @@ export default function MissionControl() {
         setModelProviderName(modelRes.provider);
       }
     } catch {
-      setModelProviderOnline(true); // Fallback to local offline deterministic mode
+      setModelProviderOnline(true);
       setModelProviderName("Local Fixtures (Offline Safe)");
     }
 
-    // Set actionable error only if backend actually failed AND we don't already have a backend error
     if (backendError) {
       setActionableError((prev) => {
-        if (prev?.type === "backend") return prev; // Already showing backend error
+        if (prev?.type === "backend") return prev;
         return {
           title: "Cauveris Backend Unavailable",
           message: "Cannot communicate with Cauveris API at port 8000. Ensure the FastAPI backend server is active.",
@@ -154,7 +131,6 @@ export default function MissionControl() {
         };
       });
     } else {
-      // Clear backend error if it was showing
       setActionableError((prev) => (prev?.type === "backend" ? null : prev));
     }
   }, []);
@@ -178,12 +154,10 @@ export default function MissionControl() {
   // -------------------------------------------------------------
   const loadIncidentDetails = useCallback(async (id: string) => {
     try {
-      // 1. Fetch incident record
       const inc = await api.get(id);
       setIncidentData(inc);
       setIsDemonstration(Boolean(inc.is_demonstration || id === "CAU-0001"));
 
-      // 2. Fetch current pipeline progress / stages
       try {
         const events: PipelineEventsResponse = await api.getEvents(id);
         if (events) {
@@ -219,7 +193,6 @@ export default function MissionControl() {
         }
       }
 
-      // 3. Fetch evidence validation summary
       try {
         const valSummary = await api.validate(id);
         setEvidenceSummary(valSummary);
@@ -227,7 +200,6 @@ export default function MissionControl() {
         // Validation will be run manually or on demand
       }
 
-      // 4. Fetch full report if completed
       try {
         const report = await api.getReport(id);
         if (report && !report.message) {
@@ -285,7 +257,6 @@ export default function MissionControl() {
       );
       setIncidentContext(ctx);
     } else if (incidentId) {
-      // Set minimal context while loading
       setIncidentContext({
         id: incidentId,
         title: "Loading...",
@@ -300,7 +271,18 @@ export default function MissionControl() {
     } else {
       setIncidentContext(null);
     }
-  }, [incidentData, pipelineState, activeStageId, pipelineStages, evidenceSummary, modelProviderName, backendOnline, judgeMode, engineerMode, incidentId]);
+  }, [
+    incidentData,
+    pipelineState,
+    activeStageId,
+    pipelineStages,
+    evidenceSummary,
+    modelProviderName,
+    backendOnline,
+    judgeMode,
+    engineerMode,
+    incidentId,
+  ]);
 
   // Real-time polling when pipeline is RUNNING
   useEffect(() => {
@@ -361,19 +343,17 @@ export default function MissionControl() {
   }, [pipelineState, incidentId, loadIncidentDetails]);
 
   // -------------------------------------------------------------
-  // Operations: Load Golden Incident (Real Backend)
+  // Operations
   // -------------------------------------------------------------
   const handleLoadGolden = async () => {
     setLoading(true);
     setActionableError(null);
     try {
-      // 1. Create golden incident via actual backend
       const res = await api.create(true);
       const newId = res.incident_id || "CAU-0001";
       setIncidentId(newId);
       setIsDemonstration(true);
 
-      // 2. Fetch fresh incident state and stages
       await loadIncidentsList();
       await loadIncidentDetails(newId);
 
@@ -392,13 +372,9 @@ export default function MissionControl() {
     }
   };
 
-  // -------------------------------------------------------------
-  // Operations: Start Investigation (Real Pipeline Execution)
-  // -------------------------------------------------------------
   const handleStartInvestigation = async () => {
     if (!incidentId) return;
 
-    // Prevent duplicate start requests on client side
     if (isStarting || pipelineState === "RUNNING") {
       notify("Investigation is already currently executing.", "warning");
       return;
@@ -434,9 +410,6 @@ export default function MissionControl() {
     }
   };
 
-  // -------------------------------------------------------------
-  // Operations: Cancel Investigation
-  // -------------------------------------------------------------
   const handleCancelInvestigation = async () => {
     if (!incidentId) return;
     setIsCancelling(true);
@@ -460,9 +433,6 @@ export default function MissionControl() {
     }
   };
 
-  // -------------------------------------------------------------
-  // Operations: Reset Demo / Incident
-  // -------------------------------------------------------------
   const handleResetDemo = async () => {
     if (!incidentId) return;
     setIsResetting(true);
@@ -483,9 +453,6 @@ export default function MissionControl() {
     }
   };
 
-  // -------------------------------------------------------------
-  // Operations: Validate Evidence
-  // -------------------------------------------------------------
   const handleValidateEvidence = async () => {
     if (!incidentId) return;
     setIsValidating(true);
@@ -519,9 +486,6 @@ export default function MissionControl() {
     }
   };
 
-  // -------------------------------------------------------------
-  // Operations: Upload Bundle
-  // -------------------------------------------------------------
   const handleTriggerUpload = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -572,9 +536,6 @@ export default function MissionControl() {
     }
   };
 
-  // -------------------------------------------------------------
-  // Operations: Create Custom Incident
-  // -------------------------------------------------------------
   const handleCreateCustomIncident = async () => {
     if (!newTitle.trim()) {
       notify("Please provide an incident title", "warning");
@@ -602,9 +563,6 @@ export default function MissionControl() {
     }
   };
 
-  // -------------------------------------------------------------
-  // Interactive Simulation (Engineer Mode)
-  // -------------------------------------------------------------
   const handleRunCustomSimulation = async () => {
     if (!incidentId) return;
     setSimRunning(true);
@@ -631,51 +589,105 @@ export default function MissionControl() {
   // -------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------
-  const getStageTone = (status: string) => {
+  const getStageVariant = (status: string): "default" | "success" | "danger" | "warning" | "done" => {
     switch (status) {
       case "SUCCESS":
+      case "COMPLETED":
         return "success";
       case "RUNNING":
-        return "primary";
+        return "default";
       case "DEGRADED":
-        return "amber";
+        return "warning";
       case "FAILED":
-        return "danger";
       case "CANCELLED":
         return "danger";
       case "SKIPPED":
-        return "muted";
+        return "done";
       default:
-        return "neutral";
+        return "default";
     }
   };
 
   const isPipelineActive = pipelineState === "RUNNING";
   const isTerminal = ["SUCCESS", "COMPLETED", "DEGRADED", "FAILED", "CANCELLED"].includes(pipelineState);
 
-  return (
-    <div className="min-h-screen bg-[var(--theme-background)] text-[var(--theme-foreground)] p-6">
-      {/* Hidden file input for zip uploads */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        accept=".zip"
-        className="hidden"
-      />
+  // Columns for Recent Investigations table
+  const incidentColumns: Column<Incident>[] = useMemo(
+    () => [
+      {
+        key: "id",
+        header: "Incident ID",
+        width: "120px",
+        render: (row: Incident) => (
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs font-semibold text-[var(--color-fg-default)]">{row.id}</span>
+            {row.is_demonstration && (
+              <Badge variant="warning" size="sm">DEMO</Badge>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: "title",
+        header: "Title",
+        render: (row: Incident) => (
+          <span className="text-sm text-[var(--color-fg-default)] truncate max-w-xs">{row.title || "Untitled"}</span>
+        ),
+      },
+      {
+        key: "system_name",
+        header: "System",
+        width: "150px",
+        render: (row: Incident) => <span className="text-xs font-mono text-[var(--color-fg-muted)]">{row.system_name || "embedded"}</span>,
+      },
+      {
+        key: "evidence_count",
+        header: "Evidence",
+        width: "100px",
+        align: "right",
+        render: (row: Incident) => (
+          <span className="text-xs font-mono text-[var(--color-fg-muted)]">
+            {row.evidence_count} artifacts
+          </span>
+        ),
+      },
+      {
+        key: "actions",
+        header: "",
+        width: "80px",
+        align: "center",
+        render: (row: Incident) => {
+          const isActive = row.id === incidentId;
+          return isActive ? (
+            <Badge variant="primary" size="sm">ACTIVE</Badge>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={() => {
+              setIncidentId(row.id);
+              loadIncidentDetails(row.id);
+              notify(`Switched active investigation to ${row.id}`, "info");
+            }}>
+              Resume
+            </Button>
+          );
+        },
+      },
+    ],
+    [incidentId, loadIncidentDetails]
+  );
 
-      {/* Header */}
+  return (
+    <div className="w-full space-y-5">
+      {/* Hidden file input for zip uploads */}
+      <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".zip" className="hidden" />
+
+      {/* Page Header */}
       <PageHeader
         title="Mission Control"
-        subtitle="Operational entry point & autonomous reality debugger for robotic systems"
+        description="Operational entry point & autonomous reality debugger for robotic systems"
         badge={
           <div className="flex items-center gap-2">
-            {isDemonstration && (
-              <Badge tone="amber" dot={true}>
-                DEMO BENCHMARK DATA
-              </Badge>
-            )}
-            <Badge tone={incidentId ? "primary" : "neutral"} dot={true}>
+            {isDemonstration && <Badge variant="warning" dot>DEMO BENCHMARK DATA</Badge>}
+            <Badge variant={incidentId ? "primary" : "default"} dot>
               {incidentId ? `Incident: ${incidentId}` : "System Ready"}
             </Badge>
           </div>
@@ -684,273 +696,217 @@ export default function MissionControl() {
 
       {/* Reconnecting banner */}
       {isReconnecting && (
-        <div className="mb-4 p-3 bg-[var(--color-brand-warning)]/10 border border-[var(--color-brand-warning)]/30 rounded-xl text-[var(--color-brand-warning)] text-xs flex items-center justify-between animate-pulse">
+        <div className="mb-4 p-3 bg-[var(--color-attention-muted)] border border-[var(--color-attention-subtle)] rounded-[var(--radius-md)] text-[var(--color-attention-fg)] text-xs flex items-center justify-between animate-pulse" role="alert">
           <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-[var(--color-brand-warning)] animate-ping" />
+            <span className="h-2 w-2 rounded-full bg-[var(--color-attention-fg)] animate-ping" aria-hidden="true" />
             <span>Reconnecting to Cauveris API... polling restored upon connection.</span>
           </div>
-          <button
-            onClick={() => checkHealth()}
-            className="px-2 py-0.5 bg-[var(--color-brand-warning)]/20 hover:bg-[var(--color-brand-warning)]/30 rounded text-[11px] font-semibold"
-          >
+          <Button variant="ghost" size="sm" onClick={checkHealth}>
             Retry Now
-          </button>
+          </Button>
         </div>
       )}
 
       {/* Actionable Error Display */}
       {actionableError && (
-        <div className="mb-6 p-4 bg-[var(--color-brand-danger)]/10 border border-[var(--color-brand-danger)]/30 rounded-2xl text-foreground flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg shadow-danger/5">
+        <div className="mb-6 p-4 bg-[var(--color-danger-muted)] border border-[var(--color-danger-subtle)] rounded-[var(--radius-md)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4" role="alert">
           <div className="flex items-start gap-3">
-            <div className="p-2 rounded-xl bg-[var(--color-brand-danger)]/20 text-[var(--color-brand-danger)] flex-shrink-0 mt-0.5">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="p-2 rounded-[var(--radius-md)] bg-[var(--color-danger-muted)] text-[var(--color-danger-fg)] flex-shrink-0 mt-0.5">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
             </div>
             <div>
-              <p className="text-sm font-bold text-[var(--color-brand-danger)]">{actionableError.title}</p>
-              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{actionableError.message}</p>
+              <p className="text-sm font-semibold text-[var(--color-danger-fg)]">{actionableError.title}</p>
+              <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">{actionableError.message}</p>
             </div>
           </div>
           <div className="flex items-center gap-2 self-end sm:self-center">
             {actionableError.onAction && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={actionableError.onAction}
-              >
+              <Button variant="primary" size="sm" onClick={actionableError.onAction}>
                 {actionableError.actionLabel || "Resolve"}
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setActionableError(null)}
-            >
+            <Button variant="ghost" size="sm" onClick={() => setActionableError(null)}>
               Dismiss
             </Button>
           </div>
         </div>
       )}
 
-      {/* Operational Status Bar: Backend Health, Model Provider Health, Mode Toggles */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6 p-3 bg-[var(--color-surface)]/60 border border-[var(--color-border)] rounded-2xl">
-        <div className="flex flex-wrap items-center gap-2.5 min-w-0">
-          {/* Backend Status */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[var(--theme-background)]/40 border border-[var(--color-border)] text-xs shrink-0">
-            <span className={`h-2 w-2 rounded-full ${backendOnline ? "bg-[var(--color-brand-success)] shadow-[0_0_8px_rgba(34,197,94,0.4)]" : "bg-[var(--color-brand-danger)] animate-pulse"}`} />
-            <span className="text-[var(--color-text-muted)]">Backend:</span>
-            <span className={`font-mono font-semibold ${backendOnline ? "text-[var(--color-brand-success)]" : "text-[var(--color-brand-danger)]"}`}>
-              {backendOnline ? (backendLatency ? `LIVE (${backendLatency}ms)` : "ONLINE") : "UNAVAILABLE"}
+      {/* Operational Status Bar */}
+      <Card padding="sm" className="mb-6">
+        <Toolbar aria-label="System Status">
+          <ToolbarGroup>
+            <span className="text-xs text-[var(--color-fg-muted)]">Backend:</span>
+            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-xs">
+              <span className={`h-2 w-2 rounded-full ${backendOnline ? "bg-[var(--color-success-fg)]" : "bg-[var(--color-danger-fg)] animate-pulse"}`} aria-hidden="true" />
+              <span className={`font-mono font-semibold ${backendOnline ? "text-[var(--color-success-fg)]" : "text-[var(--color-danger-fg)]"}`}>
+                {backendOnline ? (backendLatency ? `LIVE (${backendLatency}ms)` : "ONLINE") : "UNAVAILABLE"}
+              </span>
             </span>
-          </div>
+          </ToolbarGroup>
 
-          {/* Model Provider Status */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[var(--theme-background)]/40 border border-[var(--color-border)] text-xs min-w-0 max-w-full">
-            <span className={`h-2 w-2 rounded-full shrink-0 ${modelProviderOnline ? "bg-[var(--color-brand-success)] shadow-[0_0_8px_rgba(34,197,94,0.4)]" : "bg-[var(--color-brand-warning)]"}`} />
-            <span className="text-[var(--color-text-muted)] shrink-0">Model:</span>
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="font-mono text-[var(--color-brand-primary)] font-semibold truncate max-w-[200px] sm:max-w-[280px]" title={modelProviderName}>
-                {modelProviderName.replace(/\s*\(.*?\)/, '').trim() || "Local Fixtures"}
+          <ToolbarSeparator orientation="vertical" />
+
+          <ToolbarGroup>
+            <span className="text-xs text-[var(--color-fg-muted)]">Model:</span>
+            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-xs min-w-0 max-w-[300px]">
+              <span className={`h-2 w-2 rounded-full shrink-0 ${modelProviderOnline ? "bg-[var(--color-success-fg)]" : "bg-[var(--color-attention-fg)]"}`} aria-hidden="true" />
+              <span className="font-mono text-[var(--color-accent-fg)] font-semibold truncate" title={modelProviderName}>
+                {modelProviderName.replace(/\s*\(.*?\)/, "").trim() || "Local Fixtures"}
               </span>
               {(modelProviderName.includes("Offline Safe") || modelProviderName.toLowerCase().includes("local")) && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap shrink-0">
-                  Offline Safe
-                </span>
+                <Badge variant="success" size="sm">Offline Safe</Badge>
               )}
-            </div>
-          </div>
+            </span>
+          </ToolbarGroup>
 
-          {/* Processing Mode */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[var(--theme-background)]/40 border border-[var(--color-border)] text-xs shrink-0">
-            <span className="text-[var(--color-text-muted)]">Mode:</span>
-            <span className="font-semibold text-[var(--color-text-primary)] flex items-center gap-1.5">
-              {judgeMode && <Scale className="h-3 w-3 text-amber" />}
+          <ToolbarSeparator orientation="vertical" />
+
+          <ToolbarGroup>
+            <span className="text-xs text-[var(--color-fg-muted)]">Mode:</span>
+            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-xs font-semibold">
+              {judgeMode && <Scale className="h-3 w-3 text-[var(--color-attention-fg)]" />}
               {judgeMode ? "Judge Mode (Formal)" : engineerMode ? (
                 <>
-                  <Wrench className="h-3 w-3 text-cyan" />
+                  <Wrench className="h-3 w-3 text-[var(--color-fg-default)]" />
                   Engineer Studio
                 </>
               ) : (
                 <>
-                  <Zap className="h-3 w-3 text-[var(--color-brand-primary)]" />
+                  <Zap className="h-3 w-3 text-[var(--color-fg-default)]" />
                   Autonomous
                 </>
               )}
             </span>
-          </div>
-        </div>
-      </div>
+          </ToolbarGroup>
 
-      {/* Primary Action Controls Bar */}
+          <ToolbarSpacer />
+
+          <ToolbarGroup>
+            <Button variant="ghost" size="sm" onClick={() => setJudgeMode(!judgeMode)} aria-pressed={judgeMode}>
+              <Scale className={`h-3.5 w-3.5 ${judgeMode ? "text-[var(--color-attention-fg)]" : "text-[var(--color-fg-muted)]"}`} />
+              Judge
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setEngineerMode(!engineerMode)} aria-pressed={engineerMode}>
+              <Wrench className={`h-3.5 w-3.5 ${engineerMode ? "text-[var(--color-fg-default)]" : "text-[var(--color-fg-muted)]"}`} />
+              Engineer
+            </Button>
+          </ToolbarGroup>
+        </Toolbar>
+      </Card>
+
+      {/* Primary Action Controls */}
       <Card className="mb-8">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-3">
-              <h2 className="text-base font-bold text-[var(--color-text-primary)]">Investigation Lifecycle Controls</h2>
+              <h2 className="text-base font-semibold text-[var(--color-fg-default)]">Investigation Lifecycle Controls</h2>
               {isDemonstration && (
-                <span className="px-2 py-0.5 text-[10px] font-mono uppercase rounded bg-[var(--color-brand-warning)]/15 text-[var(--color-brand-warning)] border border-secondary/30">
-                  Golden Benchmark [CAU-0001]
-                </span>
+                <Badge variant="warning" size="sm">Golden Benchmark [CAU-0001]</Badge>
               )}
             </div>
-            <p className="text-xs text-[var(--color-text-muted)]">
+            <p className="text-xs text-[var(--color-fg-muted)]">
               Trigger autonomous reconstruction, validate evidence integrity, or reset state for clean reruns.
             </p>
           </div>
 
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
-            {/* Primary Actions Group */}
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-              {/* Create Incident */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowCreateModal(true)}
-                disabled={loading || isPipelineActive}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>Create Incident</span>
+            <ToolbarGroup className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowCreateModal(true)} disabled={loading || isPipelineActive} leadingIcon={<Plus className="h-3.5 w-3.5" />}>
+                Create Incident
               </Button>
 
-              {/* Upload Bundle */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleTriggerUpload}
-                disabled={loading || isPipelineActive}
-              >
-                <Upload className="h-3.5 w-3.5" />
-                <span>Upload Bundle (.zip)</span>
+              <Button variant="outline" size="sm" onClick={handleTriggerUpload} disabled={loading || isPipelineActive} leadingIcon={<Upload className="h-3.5 w-3.5" />}>
+                Upload Bundle
               </Button>
 
-              {/* Load Golden Incident */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleLoadGolden}
-                disabled={loading || isPipelineActive}
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span>{loading ? "Initializing..." : "Load Golden Incident"}</span>
+              <Button variant="outline" size="sm" onClick={handleLoadGolden} disabled={loading || isPipelineActive} leadingIcon={<Download className="h-3.5 w-3.5" />} loading={loading} loadingText="Initializing...">
+                Load Golden
               </Button>
 
-              {/* Validate Evidence */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleValidateEvidence}
-                disabled={!incidentId || isValidating || isPipelineActive}
-              >
-                <CheckCircle className="h-3.5 w-3.5" />
-                <span>{isValidating ? "Validating..." : "Validate Evidence"}</span>
+              <Button variant="outline" size="sm" onClick={handleValidateEvidence} disabled={!incidentId || isValidating || isPipelineActive} leadingIcon={<CheckCircle className="h-3.5 w-3.5" />} loading={isValidating} loadingText="Validating...">
+                Validate Evidence
               </Button>
-            </div>
+            </ToolbarGroup>
 
-            {/* Dangerous/Primary Actions Group */}
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-              {/* Cancel Investigation (Active only when running) */}
+            <ToolbarSeparator orientation="vertical" className="hidden sm:block" />
+
+            <ToolbarGroup className="flex flex-wrap gap-2">
               {isPipelineActive && (
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={handleCancelInvestigation}
-                  disabled={isCancelling}
-                >
-                  <Square className="h-3.5 w-3.5 fill-current" />
-                  <span>{isCancelling ? "Cancelling..." : "Cancel Investigation"}</span>
+                <Button variant="danger" size="sm" onClick={handleCancelInvestigation} disabled={isCancelling} leadingIcon={<Square className="h-3.5 w-3.5 fill-current" />}>
+                  {isCancelling ? "Cancelling..." : "Cancel"}
                 </Button>
               )}
 
-              {/* Start Investigation */}
               {!isPipelineActive && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleStartInvestigation}
-                  disabled={!incidentId || isStarting || !backendOnline}
-                >
-                  <Play className="h-3.5 w-3.5 fill-current" />
-                  <span>{isStarting ? "Starting..." : "Start Investigation"}</span>
+                <Button variant="primary" size="sm" onClick={handleStartInvestigation} disabled={!incidentId || isStarting || !backendOnline} leadingIcon={<Play className="h-3.5 w-3.5 fill-current" />} loading={isStarting} loadingText="Starting...">
+                  Start Investigation
                 </Button>
               )}
 
-              {/* Reset Demo */}
               {incidentId && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleResetDemo}
-                  disabled={isResetting || isPipelineActive}
-                  title="Reset active investigation to ready state for a clean rerun"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  <span>{isResetting ? "Resetting..." : "Reset"}</span>
+                <Button variant="ghost" size="sm" onClick={handleResetDemo} disabled={isResetting || isPipelineActive} leadingIcon={<RotateCcw className="h-3.5 w-3.5" />} title="Reset active investigation to ready state for a clean rerun">
+                  {isResetting ? "Resetting..." : "Reset"}
                 </Button>
               )}
-            </div>
-        </div>
+            </ToolbarGroup>
+          </div>
         </div>
       </Card>
 
       {/* Top Metrics Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        {/* Incident Status */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <Card title="Incident Status">
           <Stat
             label="Pipeline State"
             value={pipelineState}
-            sub={incidentData?.system_name ? `System: ${incidentData.system_name}` : (incidentId ? `Target: ${incidentId}` : "Select or create incident")}
+            sub={incidentData?.system_name ? `System: ${incidentData.system_name}` : incidentId ? `Target: ${incidentId}` : "Select or create incident"}
             trend={pipelineState === "SUCCESS" || pipelineState === "COMPLETED" ? "success" : pipelineState === "FAILED" || pipelineState === "CANCELLED" ? "danger" : pipelineState === "RUNNING" ? "up" : "flat"}
           />
           <div className="mt-3 flex items-center justify-between text-xs">
-            <span className="text-[var(--color-text-muted)]">Target Space:</span>
-            <span className="font-mono text-[var(--color-brand-primary)] bg-[var(--color-brand-primary)]/10 px-2 py-0.5 rounded border border-[var(--color-brand-primary)]/20">
+            <span className="text-[var(--color-fg-muted)]">Target Space:</span>
+            <span className="font-mono text-[var(--color-accent-fg)] bg-[var(--color-accent-muted)] px-2 py-0.5 rounded-[var(--radius-sm)] border border-[var(--color-accent-subtle)]">
               {incidentId || "None"}
             </span>
           </div>
         </Card>
 
-        {/* Evidence Validation Summary */}
-        <Card
-          title="Evidence Validation"
-          action={
-            <button
-              onClick={() => setShowEvidenceDrawer(true)}
-              className="text-xs font-semibold text-[var(--color-brand-primary)] hover:underline"
-            >
-              Inspect Items
-            </button>
-          }
-        >
+        <Card title="Evidence Validation" action={
+          <Button variant="ghost" size="sm" onClick={() => setShowEvidenceDrawer(true)}>
+            Inspect Items
+          </Button>
+        }>
           <Stat
             label="Artifacts Verified"
             value={evidenceSummary ? `${evidenceSummary.evidence_count} items` : `${incidentData?.evidence_count || 0} items`}
             sub={evidenceSummary ? `Status: ${evidenceSummary.validation_status} (${evidenceSummary.required_evidence_count} required)` : "Awaiting validation run"}
-            trend={evidenceSummary?.is_valid ? "success" : (evidenceSummary?.missing_required_evidence?.length ? "danger" : "flat")}
+            trend={evidenceSummary?.is_valid ? "success" : evidenceSummary?.missing_required_evidence?.length ? "danger" : "flat"}
           />
           <Progress
             value={
               evidenceSummary
                 ? Math.min(100, Math.round((evidenceSummary.evidence_count / Math.max(1, evidenceSummary.required_evidence_count)) * 100))
-                : (incidentData ? Math.min(100, Math.round((incidentData.evidence_count / Math.max(1, incidentData.required_evidence_count || 14)) * 100)) : 0)
+                : incidentData
+                  ? Math.min(100, Math.round((incidentData.evidence_count / Math.max(1, incidentData.required_evidence_count || 14)) * 100))
+                  : 0
             }
-            tone={evidenceSummary?.is_valid ? "success" : "primary"}
+            variant={evidenceSummary?.is_valid ? "success" : "default"}
             className="mt-3"
           />
         </Card>
 
-        {/* Investigation Pipeline Progression */}
         <Card title="Pipeline Progress">
           <Stat
             label="Overall Progress"
             value={`${pipelineProgress}%`}
-            sub={activeStageId ? `Executing: ${activeStageId}` : (pipelineState === "SUCCESS" ? "Terminal State: Complete" : "Pipeline Idle")}
+            sub={activeStageId ? `Executing: ${activeStageId}` : pipelineState === "SUCCESS" ? "Terminal: Complete" : "Pipeline Idle"}
             trend={pipelineState === "SUCCESS" ? "success" : pipelineState === "RUNNING" ? "up" : "flat"}
           />
           <Progress
             value={pipelineProgress}
-            tone={pipelineState === "SUCCESS" ? "success" : pipelineState === "FAILED" ? "danger" : "primary"}
+            variant={pipelineState === "SUCCESS" ? "success" : pipelineState === "FAILED" ? "danger" : "default"}
             className="mt-3"
           />
         </Card>
@@ -958,28 +914,31 @@ export default function MissionControl() {
 
       {/* Main Investigation Pipeline & Recent Investigations Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        {/* Pipeline Stage Progression (Spans 2 columns) */}
+        {/* Pipeline Stage Progression */}
         <div className="lg:col-span-2 space-y-6">
           <Card
             title="Investigation Pipeline Progression"
             action={
-              <Badge tone={getStageTone(pipelineState)}>
+              <Badge variant={getStageVariant(pipelineState)}>
                 {pipelineState}
               </Badge>
             }
           >
-            <div className="space-y-3">
-              <p className="text-xs text-[var(--color-text-muted)] mb-3">
-                Autonomous multi-stage causality pipeline with strict dependency gating. A failed required stage blocks dependent stages.
-              </p>
+            <p className="text-xs text-[var(--color-fg-muted)] mb-4">
+              Autonomous multi-stage causality pipeline with strict dependency gating. A failed required stage blocks dependent stages.
+            </p>
 
-              {pipelineStages.length === 0 ? (
-                <div className="p-8 text-center border border-dashed border-[var(--color-border)] rounded-xl text-[var(--color-text-muted)] text-xs">
-                  Loading stage graph... Click &quot;Load Golden Incident&quot; or start an investigation to initialize stages.
-                </div>
-              ) : (
-                pipelineStages.map((stage, idx) => {
-                  const stageTone = getStageTone(stage.status);
+            {pipelineStages.length === 0 ? (
+              <EmptyState
+                icon={EmptyStateIcons.code}
+                title="No Pipeline Stages Loaded"
+                description='Click "Load Golden Incident" or start an investigation to initialize the causality pipeline stages.'
+                size="md"
+              />
+            ) : (
+              <div className="space-y-3">
+                {pipelineStages.map((stage, idx) => {
+                  const stageVariant = getStageVariant(stage.status);
                   const isBlocked = stage.status === "SKIPPED";
                   const isFailed = stage.status === "FAILED";
                   const isDegraded = stage.status === "DEGRADED";
@@ -988,16 +947,16 @@ export default function MissionControl() {
                   return (
                     <div
                       key={stage.id}
-                      className={`p-3.5 rounded-xl border transition-all ${
+                      className={`p-3.5 rounded-[var(--radius-md)] border transition-all ${
                         isCurrent
-                          ? "bg-[var(--color-brand-primary)]/5 border-[var(--color-brand-primary)]/40 ring-1 ring-[var(--color-brand-primary)]/30"
+                          ? "bg-[var(--color-accent-muted)] border-[var(--color-accent-subtle)] ring-1 ring-[var(--color-accent-fg)]/30"
                           : isFailed
-                            ? "bg-[var(--color-brand-danger)]/10 border-[var(--color-brand-danger)]/40"
+                            ? "bg-[var(--color-danger-muted)] border-[var(--color-danger-subtle)]"
                             : isDegraded
-                              ? "bg-[var(--color-brand-warning)]/10 border-[var(--color-brand-warning)]/40"
+                              ? "bg-[var(--color-attention-muted)] border-[var(--color-attention-subtle)]"
                               : isBlocked
-                                ? "bg-[var(--color-surface)]/20 border-[var(--color-border)] opacity-60"
-                                : "bg-[var(--color-surface)]/40 border-[var(--color-border)]"
+                                ? "bg-[var(--color-canvas-subtle)]/20 border-[var(--color-border-muted)] opacity-60"
+                                : "bg-[var(--color-canvas-subtle)] border-[var(--color-border-default)]"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -1005,62 +964,55 @@ export default function MissionControl() {
                           <div
                             className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold mt-0.5 ${
                               stage.status === "SUCCESS"
-                                ? "bg-[var(--color-brand-success)] text-background"
+                                ? "bg-[var(--color-success-emphasis)] text-[var(--color-fg-on-emphasis)]"
                                 : stage.status === "RUNNING"
-                                  ? "bg-[var(--color-brand-primary)] text-background animate-pulse"
+                                  ? "bg-[var(--color-accent-emphasis)] text-[var(--color-fg-on-emphasis)] animate-pulse"
                                   : isFailed
-                                    ? "bg-[var(--color-brand-danger)] text-[var(--color-text-primary)]"
+                                    ? "bg-[var(--color-danger-emphasis)] text-[var(--color-fg-on-emphasis)]"
                                     : isDegraded
-                                      ? "bg-[var(--color-brand-warning)] text-background"
-                                      : "bg-[var(--color-surface)]/50 text-[var(--color-text-muted)]"
+                                      ? "bg-[var(--color-attention-emphasis)] text-[var(--color-fg-on-emphasis)]"
+                                      : "bg-[var(--color-canvas-muted)] text-[var(--color-fg-muted)]"
                             }`}
                           >
                             {stage.status === "SUCCESS" ? <Check className="h-4 w-4" /> : isFailed ? <X className="h-4 w-4" /> : isBlocked ? <Divide className="h-4 w-4" /> : <span className="text-[10px]">{idx + 1}</span>}
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-[var(--color-text-primary)]">{stage.name}</span>
+                              <span className="text-sm font-semibold text-[var(--color-fg-default)]">{stage.name}</span>
                               {stage.required ? (
-                                <span className="text-[10px] text-[var(--color-text-muted)] font-mono uppercase bg-white/5 px-1.5 py-0.5 rounded">
-                                  Required
-                                </span>
+                                <Badge variant="warning" size="sm">Required</Badge>
                               ) : (
-                                <span className="text-[10px] text-[var(--color-text-muted)] font-mono uppercase bg-white/5 px-1.5 py-0.5 rounded">
-                                  Optional
-                                </span>
+                                <Badge variant="muted" size="sm">Optional</Badge>
                               )}
                             </div>
-                            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{stage.description}</p>
+                            <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">{stage.description}</p>
 
-                            {/* Dependencies indicator */}
                             {stage.depends_on.length > 0 && (
-                              <div className="text-[11px] text-[var(--color-text-muted)]/80 font-mono mt-1 flex items-center gap-1">
+                              <div className="text-[11px] text-[var(--color-fg-muted)]/80 font-mono mt-1 flex items-center gap-1">
                                 <span>Depends on:</span>
                                 {stage.depends_on.map((d) => (
-                                  <span key={d} className="text-[var(--color-brand-primary)]/80 bg-[var(--color-brand-primary)]/5 px-1 py-0.2 rounded">
+                                  <span key={d} className="text-[var(--color-accent-fg)]/80 bg-[var(--color-accent-muted)] px-1 py-0.2 rounded-[var(--radius-sm)]">
                                     {d}
                                   </span>
                                 ))}
                               </div>
                             )}
 
-                            {/* Error or blocked notice */}
                             {stage.error && (
-                              <div className={`text-xs mt-1.5 font-medium ${isFailed ? "text-[var(--color-brand-danger)]" : "text-[var(--color-brand-warning)]"} flex items-center gap-1`}>
-                                <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                              <div className={`text-xs mt-1.5 font-medium ${isFailed ? "text-[var(--color-danger-fg)]" : "text-[var(--color-attention-fg)]"} flex items-center gap-1`}>
+                                <AlertTriangle className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
                                 <span>{stage.error}</span>
                               </div>
                             )}
                           </div>
                         </div>
 
-                        {/* Status Badge & Duration */}
                         <div className="text-right flex flex-col items-end gap-1 flex-shrink-0">
-                          <Badge tone={stageTone} dot={stage.status === "RUNNING"}>
+                          <Badge variant={stageVariant} dot={stage.status === "RUNNING"}>
                             {stage.status}
                           </Badge>
                           {stage.duration_ms && (
-                            <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                            <span className="text-[10px] font-mono text-[var(--color-fg-muted)]">
                               {stage.duration_ms}ms
                             </span>
                           )}
@@ -1068,143 +1020,94 @@ export default function MissionControl() {
                       </div>
                     </div>
                   );
-                })
-              )}
-            </div>
+                })}
+              </div>
+            )}
           </Card>
         </div>
 
-        {/* Right Column: Recent Investigations & Mode Panes */}
+        {/* Right Column: Recent Investigations & Navigation */}
         <div className="space-y-6">
-          {/* Recent Investigations List */}
           <Card title="Recent Investigations">
-            <div className="space-y-2.5">
-              <p className="text-xs text-[var(--color-text-muted)] mb-2">
-                Discovered workspaces on backend. Select any investigation to inspect or resume.
-              </p>
-
-              {availableIncidents.length === 0 ? (
-                <div className="p-4 text-center text-xs text-[var(--color-text-muted)] border border-dashed border-[var(--color-border)] rounded-xl">
-                  No investigations recorded yet. Click &quot;Load Golden Incident&quot; above.
-                </div>
-              ) : (
-                availableIncidents.map((inc) => {
-                  const isActive = inc.id === incidentId;
-                  return (
-                    <div
-                      key={inc.id}
-                      className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
-                        isActive
-                          ? "bg-[var(--color-brand-primary)]/10 border-[var(--color-brand-primary)]/40 ring-1 ring-[var(--color-brand-primary)]/30"
-                          : "bg-[var(--color-surface)]/30 border-[var(--color-border)] hover:border-[var(--color-border-strong)]"
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold text-[var(--color-text-primary)] truncate">{inc.id}</span>
-                          {inc.is_demonstration && (
-                            <span className="text-[9px] font-mono bg-[var(--color-brand-warning)]/15 text-[var(--color-brand-warning)] px-1 py-0.2 rounded border border-secondary/25">
-                              DEMO
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-[var(--color-text-muted)] truncate">{inc.title || "Untitled incident"}</p>
-                        <div className="text-[10px] text-[var(--color-text-muted)] font-mono mt-0.5 flex items-center gap-2">
-                          <span>{inc.evidence_count} artifacts</span>
-                          <span>•</span>
-                          <span>{inc.system_name || "embedded"}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        {isActive ? (
-                          <Badge tone="primary">ACTIVE</Badge>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setIncidentId(inc.id);
-                              loadIncidentDetails(inc.id);
-                              notify(`Switched active investigation to ${inc.id}`, "info");
-                            }}
-                          >
-                            Resume
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
+            <Table
+              columns={incidentColumns}
+              data={availableIncidents}
+              rowKey={(row) => row.id}
+              emptyMessage='No investigations recorded yet. Click "Load Golden Incident" above.'
+              emptyIcon={EmptyStateIcons.folder}
+              aria-label="Recent investigations"
+            />
           </Card>
 
-          {/* Deep Navigation Links to Other Cauveris Views */}
           <Card title="Specialized Diagnostic Views">
             <div className="space-y-2 text-xs">
               <Link
                 href="/evidence-vault"
-                className="flex items-center justify-between p-2.5 rounded-xl bg-surface/30 border border-[var(--color-border)] hover:border-[var(--color-brand-primary)]/40 hover:bg-[var(--color-brand-primary)]/5 transition-all text-[var(--color-text-primary)]"
+                className="flex items-center justify-between p-2.5 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] hover:border-[var(--color-accent-subtle)] hover:bg-[var(--color-accent-muted)] transition-all text-[var(--color-fg-default)]"
               >
                 <span>Evidence Vault (Artifact Explorer)</span>
-                <span className="text-[var(--color-brand-primary)] font-mono">→</span>
+                <span className="text-[var(--color-accent-fg)] font-mono">→</span>
               </Link>
               <Link
                 href="/reality-rewind"
-                className="flex items-center justify-between p-2.5 rounded-xl bg-surface/30 border border-[var(--color-border)] hover:border-[var(--color-brand-primary)]/40 hover:bg-[var(--color-brand-primary)]/5 transition-all text-[var(--color-text-primary)]"
+                className="flex items-center justify-between p-2.5 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] hover:border-[var(--color-accent-subtle)] hover:bg-[var(--color-accent-muted)] transition-all text-[var(--color-fg-default)]"
               >
                 <span>Reality Rewind (Timeline Analysis)</span>
-                <span className="text-[var(--color-brand-primary)] font-mono">→</span>
+                <span className="text-[var(--color-accent-fg)] font-mono">→</span>
               </Link>
               <Link
                 href="/causal-constellation"
-                className="flex items-center justify-between p-2.5 rounded-xl bg-surface/30 border border-[var(--color-border)] hover:border-[var(--color-brand-primary)]/40 hover:bg-[var(--color-brand-primary)]/5 transition-all text-[var(--color-text-primary)]"
+                className="flex items-center justify-between p-2.5 rounded-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] hover:border-[var(--color-accent-subtle)] hover:bg-[var(--color-accent-muted)] transition-all text-[var(--color-fg-default)]"
               >
                 <span>Causal Constellation (DAG Graph)</span>
-                <span className="text-[var(--color-brand-primary)] font-mono">→</span>
+                <span className="text-[var(--color-accent-fg)] font-mono">→</span>
               </Link>
               <Link
                 href="/ghost-lab"
-                className="flex items-center justify-between p-2.5 rounded-xl bg-surface/30 border border-[var(--color-border)] hover:border-[var(--color-brand-primary)]/40 hover:bg-[var(--color-brand-primary)]/5 transition-all text-[var(--color-text-primary)]"
+                className="flex items-center justify-between p-2.5 rounded-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] hover:border-[var(--color-accent-subtle)] hover:bg-[var(--color-accent-muted)] transition-all text-[var(--color-fg-default)]"
               >
                 <span>Ghost Lab (Sandbox Counterfactuals)</span>
-                <span className="text-[var(--color-brand-primary)] font-mono">→</span>
+                <span className="text-[var(--color-accent-fg)] font-mono">→</span>
               </Link>
               <Link
                 href="/patch-forge"
-                className="flex items-center justify-between p-2.5 rounded-xl bg-surface/30 border border-[var(--color-border)] hover:border-[var(--color-brand-primary)]/40 hover:bg-[var(--color-brand-primary)]/5 transition-all text-[var(--color-text-primary)]"
+                className="flex items-center justify-between p-2.5 rounded-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] hover:border-[var(--color-accent-subtle)] hover:bg-[var(--color-accent-muted)] transition-all text-[var(--color-fg-default)]"
               >
                 <span>Patch Forge (Verified Patches)</span>
-                <span className="text-[var(--color-brand-primary)] font-mono">→</span>
+                <span className="text-[var(--color-accent-fg)] font-mono">→</span>
               </Link>
             </div>
           </Card>
         </div>
       </div>
 
-      {/* Mode Configurations (Judge Mode Checklist & Engineer Mode Sliders) */}
+      {/* Mode Configurations */}
       {(judgeMode || engineerMode) && (
         <div className="flex flex-col lg:flex-row gap-6">
-          {/* Judge Mode Gate Checklist Panel */}
           {judgeMode && (
             <Card title="Judge Mode: 9-Point Invariant Verification Gates" className="lg:min-w-[300px] max-w-full">
               <div className="space-y-2.5">
                 {[
                   { name: "Deterministic Replay", status: "PASSED", score: "1.00", detail: "Zero divergence across replay cycles", verified: true },
                   { name: "Failure Reproduction Oracle", status: reportData ? "PASSED" : "PENDING", score: reportData ? "100%" : "Pending run", detail: "Failure reproduced in baseline, eliminated with patch", verified: Boolean(reportData) },
-                  { name: "Perception Freshness Budget", status: "PASSED", score: "106ms <= 120ms", detail: "Perception age stays strictly under budget", verified: true },
+                  { name: "Perception Freshness Budget", status: "PASSED", score: "106ms ≤ 120ms", detail: "Perception age stays strictly under budget", verified: true },
                   { name: "Control Loop Deadline", status: "PASSED", score: "100ms", detail: "Actuation commands dispatched within period", verified: true },
                   { name: "Zero Behavioral Regressions", status: "PASSED", score: "0/20 regressions", detail: "Pre-existing test suite passes completely", verified: true },
                 ].map((gate, i) => (
-                  <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-[var(--color-surface-2)]/50 border border-[var(--color-border)] text-xs">
-                    <div>
-                      <p className="font-semibold text-[var(--color-text-primary)]">{gate.name}</p>
-                      <p className="text-[10px] text-[var(--color-text-muted)]">{gate.detail}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`font-mono text-[11px] ${gate.verified ? "text-[var(--color-brand-success)]" : "text-[var(--color-brand-warning)]"}`}>{gate.score}</span>
-                      <Badge tone={gate.verified ? "success" : "amber"}>{gate.status}</Badge>
+                  <div key={i} className="p-2 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-xs">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-[var(--color-fg-default)]">{gate.name}</p>
+                        <p className="text-[10px] text-[var(--color-fg-muted)]">{gate.detail}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-mono text-[11px] ${gate.verified ? "text-[var(--color-success-fg)]" : "text-[var(--color-attention-fg)]"}`}>
+                          {gate.score}
+                        </span>
+                        <Badge variant={gate.verified ? "success" : "warning"}>
+                          {gate.status}
+                        </Badge>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1212,19 +1115,18 @@ export default function MissionControl() {
             </Card>
           )}
 
-          {/* Engineer Mode Interactive Studio Panel */}
           {engineerMode && (
             <Card title="Engineer Mode: Live Digital Twin Studio" className="lg:max-w-[420px] w-full min-w-0">
               <div className="space-y-4">
-                <p className="text-xs text-[var(--color-text-muted)]">
+                <p className="text-xs text-[var(--color-fg-muted)]">
                   Adjust simulated parameters and run counterfactual cycles through the digital twin.
                 </p>
 
                 <div className="space-y-3">
                   <div>
                     <div className="flex justify-between text-xs font-mono mb-1">
-                      <span className="text-[var(--color-text-primary)]">Batching Window:</span>
-                      <span className="text-[var(--color-brand-primary)] font-bold">{simBatchWindow}ms</span>
+                      <span className="text-[var(--color-fg-default)]">Batching Window:</span>
+                      <span className="text-[var(--color-accent-fg)] font-bold">{simBatchWindow}ms</span>
                     </div>
                     <input
                       type="range"
@@ -1233,14 +1135,14 @@ export default function MissionControl() {
                       step="10"
                       value={simBatchWindow}
                       onChange={(e) => setSimBatchWindow(Number(e.target.value))}
-                      className="w-full accent-primary h-2 bg-[var(--color-surface)]/50 rounded cursor-pointer"
+                      className="w-full accent-[var(--color-accent-emphasis)] h-2 bg-[var(--color-canvas-muted)] rounded-[var(--radius-full)] cursor-pointer"
                     />
                   </div>
 
                   <div>
                     <div className="flex justify-between text-xs font-mono mb-1">
-                      <span className="text-[var(--color-text-primary)]">ROS QoS Queue Depth:</span>
-                      <span className="text-[var(--color-brand-primary)] font-bold">{simQosDepth}</span>
+                      <span className="text-[var(--color-fg-default)]">ROS QoS Queue Depth:</span>
+                      <span className="text-[var(--color-accent-fg)] font-bold">{simQosDepth}</span>
                     </div>
                     <input
                       type="range"
@@ -1249,43 +1151,29 @@ export default function MissionControl() {
                       step="1"
                       value={simQosDepth}
                       onChange={(e) => setSimQosDepth(Number(e.target.value))}
-                      className="w-full accent-primary h-2 bg-[var(--color-surface)]/50 rounded cursor-pointer"
+                      className="w-full accent-[var(--color-accent-emphasis)] h-2 bg-[var(--color-canvas-muted)] rounded-[var(--radius-full)] cursor-pointer"
                     />
                   </div>
                 </div>
 
                 <div className="flex gap-2">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className="flex-1"
-                    onClick={handleRunCustomSimulation}
-                    disabled={simRunning}
-                  >
+                  <Button variant="primary" size="sm" className="flex-1" onClick={handleRunCustomSimulation} disabled={simRunning}>
                     {simRunning ? "Simulating..." : "Run Simulation"}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setSimBatchWindow(100);
-                      setSimQosDepth(1);
-                      setSimClockSkew(0);
-                    }}
-                  >
+                  <Button variant="outline" size="sm" onClick={() => { setSimBatchWindow(100); setSimQosDepth(1); setSimClockSkew(0); }}>
                     Reset
                   </Button>
                 </div>
 
                 {simResult && (
-                  <div className={`p-3 rounded-xl border text-xs space-y-2 ${simResult.hypothesis_supported ? "bg-[var(--color-brand-success)]/10 border-[var(--color-brand-success)]/30 text-[var(--color-brand-success)]" : "bg-[var(--color-brand-danger)]/10 border-[var(--color-brand-danger)]/30 text-[var(--color-brand-danger)]"}`}>
+                  <div className={`p-3 rounded-[var(--radius-md)] border text-xs space-y-2 ${simResult.hypothesis_supported ? "bg-[var(--color-success-muted)] border-[var(--color-success-subtle)] text-[var(--color-success-fg)]" : "bg-[var(--color-danger-muted)] border-[var(--color-danger-subtle)] text-[var(--color-danger-fg)]"}`}>
                     <div className="flex items-center justify-between font-bold">
                       <span>Status: {simResult.status}</span>
-                      <Badge tone={simResult.hypothesis_supported ? "success" : "danger"}>
+                      <Badge variant={simResult.hypothesis_supported ? "success" : "danger"}>
                         Failure Rate: {(simResult.reproduction_rate * 100).toFixed(0)}%
                       </Badge>
                     </div>
-                    <p className="text-[11px] text-[var(--color-text-muted)]">{simResult.message}</p>
+                    <p className="text-[11px] text-[var(--color-fg-muted)]">{simResult.message}</p>
                   </div>
                 )}
               </div>
@@ -1294,117 +1182,109 @@ export default function MissionControl() {
         </div>
       )}
 
-      {/* Modal: Create Incident */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-background)]/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md bg-surface border border-[var(--color-border)] rounded-2xl p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-[var(--color-text-primary)] mb-2">Create New Incident</h3>
-            <p className="text-xs text-[var(--color-text-muted)] mb-4">
-              Initialize an empty incident investigation container ready for bundle upload.
-            </p>
+      {/* Create Incident Dialog */}
+      <Dialog
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title="Create New Incident"
+        description="Initialize an empty incident investigation container ready for bundle upload."
+        size="md"
+        footer={
+          <>
+            <Button variant="ghost" size="md" onClick={() => setShowCreateModal(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="md" onClick={handleCreateCustomIncident} disabled={loading}>
+              {loading ? "Creating..." : "Create Incident"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3.5">
+          <div>
+            <label htmlFor="incident-title" className="block text-xs font-medium text-[var(--color-fg-default)] mb-1">
+              Incident Title
+            </label>
+            <input
+              id="incident-title"
+              type="text"
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder="e.g. Robot gripper communication loss on v43"
+              className="w-full px-3 py-2 bg-[var(--color-canvas)] border border-[var(--color-border-default)] rounded-[var(--radius-md)] text-xs text-[var(--color-fg-default)] placeholder:text-[var(--color-fg-subtle)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-fg)] focus:ring-offset-2 focus:ring-offset-[var(--color-canvas)] focus:border-transparent transition-colors duration-80"
+            />
+          </div>
 
-            <div className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-medium text-[var(--color-text-primary)] mb-1">Incident Title</label>
-                <input
-                  type="text"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="e.g. Robot gripper communication loss on v43"
-                  className="w-full px-3 py-2 bg-[var(--color-surface)]/50 border border-[var(--color-border)] rounded-xl text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-brand-primary)]"
-                />
-              </div>
+          <div>
+            <label htmlFor="system-name" className="block text-xs font-medium text-[var(--color-fg-default)] mb-1">
+              Target Robotic System
+            </label>
+            <input
+              id="system-name"
+              type="text"
+              value={newSystemName}
+              onChange={(e) => setNewSystemName(e.target.value)}
+              placeholder="e.g. warehouse-amr-01"
+              className="w-full px-3 py-2 bg-[var(--color-canvas)] border border-[var(--color-border-default)] rounded-[var(--radius-md)] text-xs text-[var(--color-fg-default)] placeholder:text-[var(--color-fg-subtle)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-fg)] focus:ring-offset-2 focus:ring-offset-[var(--color-canvas)] focus:border-transparent transition-colors duration-80"
+            />
+          </div>
 
-              <div>
-                <label className="block text-xs font-medium text-[var(--color-text-primary)] mb-1">Target Robotic System</label>
-                <input
-                  type="text"
-                  value={newSystemName}
-                  onChange={(e) => setNewSystemName(e.target.value)}
-                  placeholder="e.g. warehouse-amr-01"
-                  className="w-full px-3 py-2 bg-[var(--color-surface)]/50 border border-[var(--color-border)] rounded-xl text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-brand-primary)]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-[var(--color-text-primary)] mb-1">Description</label>
-                <textarea
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  rows={3}
-                  placeholder="Context and symptoms of failure..."
-                  className="w-full px-3 py-2 bg-[var(--color-surface)]/50 border border-[var(--color-border)] rounded-xl text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-brand-primary)]"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2.5 mt-6">
-              <Button variant="ghost" size="sm" onClick={() => setShowCreateModal(false)}>
-                Cancel
-              </Button>
-              <Button variant="primary" size="sm" onClick={handleCreateCustomIncident} disabled={loading}>
-                {loading ? "Creating..." : "Create Incident"}
-              </Button>
-            </div>
+          <div>
+            <label htmlFor="description" className="block text-xs font-medium text-[var(--color-fg-default)] mb-1">
+              Description
+            </label>
+            <textarea
+              id="description"
+              value={newDescription}
+              onChange={(e) => setNewDescription(e.target.value)}
+              rows={3}
+              placeholder="Context and symptoms of failure..."
+              className="w-full px-3 py-2 bg-[var(--color-canvas)] border border-[var(--color-border-default)] rounded-[var(--radius-md)] text-xs text-[var(--color-fg-default)] placeholder:text-[var(--color-fg-subtle)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-fg)] focus:ring-offset-2 focus:ring-offset-[var(--color-canvas)] focus:border-transparent transition-colors duration-80 resize-y"
+            />
           </div>
         </div>
-      )}
+      </Dialog>
 
-      {/* Drawer / Modal: Evidence Summary Breakdown */}
-      {showEvidenceDrawer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-background)]/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-2xl bg-surface border border-[var(--color-border)] rounded-2xl p-6 shadow-2xl max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border)]">
-              <div>
-                <h3 className="text-base font-bold text-[var(--color-text-primary)]">Evidence Validation Breakdown</h3>
-                <p className="text-xs text-[var(--color-text-muted)]">
-                  Incident: {incidentId} • {evidenceSummary?.evidence_count || 0} total artifacts
-                </p>
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => setShowEvidenceDrawer(false)}>
-                <X className="h-3.5 w-3.5 mr-1.5" />
-                Close
-              </Button>
-            </div>
-
-            <div className="overflow-y-auto my-4 space-y-2 pr-1">
-              {evidenceSummary?.evidence_items && evidenceSummary.evidence_items.length > 0 ? (
-                evidenceSummary.evidence_items.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="p-2.5 rounded-xl bg-[var(--color-surface-2)]/50 border border-[var(--color-border)] flex items-center justify-between gap-3 text-xs"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[var(--color-text-primary)] font-medium truncate">{item.file_path}</span>
-                        {item.is_required && (
-                          <span className="text-[9px] font-mono text-[var(--color-brand-primary)] bg-[var(--color-brand-primary)]/10 px-1 py-0.2 rounded">
-                            REQUIRED
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[10px] text-[var(--color-text-muted)] font-mono">{item.file_type} • {item.size_bytes} bytes</span>
-                    </div>
-                    <Badge tone={item.status === "OBSERVED" ? "success" : "danger"}>
-                      {item.status}
-                    </Badge>
+      {/* Evidence Validation Breakdown Dialog */}
+      <Dialog
+        open={showEvidenceDrawer}
+        onClose={() => setShowEvidenceDrawer(false)}
+        title="Evidence Validation Breakdown"
+        description={`Incident: ${incidentId} • ${evidenceSummary?.evidence_count || 0} total artifacts`}
+        size="lg"
+        footer={
+          <Button variant="primary" size="sm" onClick={() => setShowEvidenceDrawer(false)}>
+            Done
+          </Button>
+        }
+      >
+        <div className="overflow-y-auto my-2 space-y-2 pr-1 max-h-[50vh]">
+          {evidenceSummary?.evidence_items && evidenceSummary.evidence_items.length > 0 ? (
+            evidenceSummary.evidence_items.map((item, idx) => (
+              <div key={idx} className="p-2.5 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] flex items-center justify-between gap-3 text-xs">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[var(--color-fg-default)] font-medium truncate max-w-md">{item.file_path}</span>
+                    {item.is_required && (
+                      <Badge variant="primary" size="sm">REQUIRED</Badge>
+                    )}
                   </div>
-                ))
-              ) : (
-                <div className="p-8 text-center text-xs text-[var(--color-text-muted)]">
-                  No individual evidence items found. Run evidence validation to parse artifacts.
+                  <span className="text-[10px] text-[var(--color-fg-muted)] font-mono">{item.file_type} • {item.size_bytes} bytes</span>
                 </div>
-              )}
-            </div>
-
-            <div className="pt-3 border-t border-[var(--color-border)] flex justify-end">
-              <Button variant="primary" size="sm" onClick={() => setShowEvidenceDrawer(false)}>
-                Done
-              </Button>
-            </div>
-          </div>
+                <Badge variant={item.status === "OBSERVED" ? "success" : "danger"}>{item.status}</Badge>
+              </div>
+            ))
+          ) : (
+            <EmptyState
+              icon={EmptyStateIcons.document}
+              title="No Evidence Items Found"
+              description="Run evidence validation to parse and display individual artifacts."
+              size="sm"
+              align="center"
+            />
+          )}
         </div>
-      )}
+      </Dialog>
     </div>
   );
 }

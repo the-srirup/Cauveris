@@ -1,0 +1,25 @@
+# Text files are stored with LF endings in the repository and checked out with
+# LF endings on every platform.  This project is developed on several
+# operating systems, and without this a Windows checkout (`core.autocrlf=true`)
+# converts LF to CRLF on disk; a later write that preserves the existing
+# ending then produces CRLFCRLF, which Python reads as *two* newlines per
+# line and which silently corrupts every embedded template string.
+* text=auto eol=lf
+
+# Binary payloads are never touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mp4 binary
+*.mov binary
+*.webm binary
+*.mcap binary
+*.zip binary
+*.gz binary
+*.whl binary
+
+# Lock files carry no meaningful line endings and are large.
+package-lock.json -diff
+uv.lock -diff

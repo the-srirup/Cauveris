@@ -85,8 +85,8 @@ async def test_hypothesis_generator():
 
     assert len(hypotheses) >= 4
     hyp_ids = [h.hypothesis_id for h in hypotheses]
-    assert "h1_batching_window" in hyp_ids
-    h1 = next(h for h in hypotheses if h.hypothesis_id == "h1_batching_window")
+    assert "h1_batching_window" in hyp_ids or "h_batching_window_latency" in hyp_ids
+    h1 = next(h for h in hypotheses if h.hypothesis_id in ("h1_batching_window", "h_batching_window_latency"))
     assert h1.confidence_prior > 0.8
     assert "batching" in h1.intervention.lower()
 
@@ -109,10 +109,15 @@ async def test_sandbox_and_simulation():
     sim_runner = SimulationRunner()
     sim_experiments = await sim_runner.run_simulations(experiments)
 
-    h1_exp = next(e for e in sim_experiments if "h1" in e.hypothesis_id)
+    h1_exp = next(e for e in sim_experiments if "h1" in e.hypothesis_id or "batching" in e.hypothesis_id)
     assert h1_exp.status in ["COMPLETED", "SIMULATED"]
     assert h1_exp.reproduction_rate == 0.0  # 0 emergency stops when batching window is reduced
     assert h1_exp.failure_oracle.get("hypothesis_supported") is True
+
+    # The window the experiment reduced the batching window to has to be the
+    # one the calibrated model proved meets the incident's freshness budget.
+    intervention = h1_exp.failure_oracle.get("intervention", {})
+    assert intervention.get("stale_rate", 1.0) <= 0.02
 
 
 @pytest.mark.asyncio
@@ -133,16 +138,18 @@ async def test_patch_generator_and_verification_engine():
     patches = await patch_gen.generate(sim_experiments)
     assert len(patches) > 0
 
-    h1_patch = next(p for p in patches if "h1" in p.candidate_id)
+    h1_patch = next(p for p in patches if ("h1" in p.candidate_id or "batching" in p.candidate_id))
     assert h1_patch.lines_changed == 1
-    assert "batching_window_ms: 100" in h1_patch.unified_diff
+    # The diff is computed from the real bundle file, so it names the value
+    # the calibrated model proved meets the incident's freshness budget.
+    assert "batching_window_ms: 100" in h1_patch.unified_diff or "batching_window_ms: 25" in h1_patch.unified_diff
     assert h1_patch.score > 0.9
 
     verifier = VerificationEngine()
     reports = await verifier.verify(patches)
     assert len(reports) == len(patches)
 
-    h1_report = next(r for r in reports if "h1" in r.patch_candidate_id)
+    h1_report = next(r for r in reports if ("h1" in r.patch_candidate_id or "batching" in r.patch_candidate_id))
     assert h1_report.verified is True
     assert h1_report.details.get("checks_passed") == 9
     assert h1_patch.verified is True
@@ -183,3 +190,60 @@ async def test_end_to_end_pipeline_orchestrator():
     assert (patch_pkg_dir / "PULL_REQUEST.md").exists()
     assert (patch_pkg_dir / "reviewer-checklist.md").exists()
     assert (patch_pkg_dir / "rollback.sh").exists()
+
+
+@pytest.mark.asyncio
+async def test_the_report_proves_the_fix_with_evidence():
+    """
+    The report's before/after evidence has to be evidence, not decoration.
+
+    A report that shows the same numbers before and after the patch proves
+    nothing, and a reviewer who notices that stops trusting every other
+    number in the package.  So the package is checked for the thing it
+    exists to show: the pre-fix pipeline violates the incident's freshness
+    budget, the patched pipeline does not, and the difference is carried by
+    the batching window the patch actually installs.
+    """
+    import csv
+    import json
+
+    generator = GoldenIncidentGenerator()
+    incident = generator.generate()
+    orchestrator = PipelineOrchestrator()
+    context = await orchestrator.process_incident(incident)
+    assert context.error is None
+
+    package = Path(context.final_report["patch_package_path"])
+    before_after = package / "before_after"
+
+    def read_metrics(name: str):
+        with open(before_after / "metrics" / name, encoding="utf-8") as handle:
+            return list(csv.DictReader(handle))
+
+    before = read_metrics("before_metrics.csv")
+    after = read_metrics("after_metrics.csv")
+    assert before and after
+
+    before_stale = sum(int(row["is_stale"]) for row in before)
+    after_stale = sum(int(row["is_stale"]) for row in after)
+    assert before_stale == len(before), "the pre-fix pipeline is not shown violating the budget"
+    assert after_stale == 0, "the patched pipeline is not shown meeting the budget"
+
+    before_wait = sum(float(row["batch_wait_ms"]) for row in before) / len(before)
+    after_wait = sum(float(row["batch_wait_ms"]) for row in after) / len(after)
+    assert after_wait < before_wait, "the batching window did not change in the evidence"
+
+    # The traces have to name the same windows the patch installs.
+    with open(before_after / "traces" / "before_traces.json", encoding="utf-8") as handle:
+        before_traces = json.load(handle)
+    with open(before_after / "traces" / "after_traces.json", encoding="utf-8") as handle:
+        after_traces = json.load(handle)
+
+    before_window = before_traces["spans"][0]["attributes"]["batch_window_ms"]
+    after_window = after_traces["spans"][0]["attributes"]["batch_window_ms"]
+    assert before_window == 200.0
+    assert after_window == 25.0
+
+    # And the safety verdict has to follow from those numbers.
+    assert before_traces["spans"][2]["status"]["code"] == 2
+    assert after_traces["spans"][2]["status"]["code"] == 0

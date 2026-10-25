@@ -147,6 +147,9 @@ function getStoredUser(): User | null {
   return null;
 }
 
+// Single-flight promise for token refresh
+let refreshPromise: Promise<boolean> | null = null;
+
 // Check if token is expired (with 30 second buffer)
 function isTokenExpired(expiry: number | null): boolean {
   if (!expiry) return true;
@@ -348,30 +351,46 @@ export const useAuthStore = create<AuthState>()(
         const { refreshToken } = get();
         if (!refreshToken) return false;
 
-        try {
-          const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1'}/auth/refresh`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: refreshToken }),
-          });
-
-          if (!response.ok) {
-            return false;
-          }
-
-          const data = await response.json();
-
-          // Update tokens
-          storeTokens(data.access_token, data.refresh_token, data.expires_in);
-          set({
-            accessToken: data.access_token,
-            refreshToken: data.refresh_token,
-            tokenExpiry: Date.now() + data.expires_in * 1000,
-          });
-          return true;
-        } catch {
-          return false;
+        // Single-flight guard: if a refresh is already in flight, wait for it
+        if (refreshPromise) {
+          return refreshPromise;
         }
+
+        refreshPromise = (async () => {
+          try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1'}/auth/refresh`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refresh_token: refreshToken }),
+            });
+
+            if (!response.ok) {
+              // Clear auth state on failed refresh
+              await get().logout();
+              return false;
+            }
+
+            const data = await response.json();
+
+            // Update tokens
+            storeTokens(data.access_token, data.refresh_token, data.expires_in);
+            set({
+              accessToken: data.access_token,
+              refreshToken: data.refresh_token,
+              tokenExpiry: Date.now() + data.expires_in * 1000,
+            });
+            return true;
+          } catch {
+            // Clear auth state on error
+            await get().logout();
+            return false;
+          } finally {
+            // Clear the in-flight promise
+            refreshPromise = null;
+          }
+        })();
+
+        return refreshPromise;
       },
     }),
     {
@@ -414,17 +433,19 @@ export async function authenticatedFetch<T>(
       accessToken = useAuthStore.getState().accessToken;
     } else {
       // Refresh failed, user needs to login again
-      state.logout();
+      await state.logout();
       throw new Error('Authentication expired. Please log in again.');
     }
   }
 
+  const callerHeaders: Record<string, string> = options.headers || {};
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options.headers || {}),
+    ...callerHeaders,
   };
 
   if (accessToken) {
+    // Auth header wins over any caller-supplied Authorization header
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
@@ -433,11 +454,30 @@ export async function authenticatedFetch<T>(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
 
+  // Combine caller's signal with timeout signal so timeout still fires even if caller provides signal
+  let effectiveSignal: AbortSignal;
+  if (options.signal) {
+    // Use AbortSignal.any if available, otherwise manually wire caller's signal to abort our controller
+    if (typeof AbortSignal.any === 'function') {
+      effectiveSignal = AbortSignal.any([options.signal, controller.signal]);
+    } else {
+      // Fallback: manually abort our controller when caller's signal aborts
+      const abortHandler = () => controller.abort(options.signal?.reason);
+      options.signal.addEventListener('abort', abortHandler, { once: true });
+      // We'll need to remove this listener on cleanup
+      effectiveSignal = controller.signal;
+      // Store the handler for cleanup
+      (effectiveSignal as any)._callerAbortHandler = abortHandler;
+    }
+  } else {
+    effectiveSignal = controller.signal;
+  }
+
   try {
     const response = await fetch(url, {
-      signal: options.signal || controller.signal,
-      headers,
       ...options,
+      signal: effectiveSignal,
+      headers,
     });
 
     if (!response.ok) {
@@ -448,9 +488,9 @@ export async function authenticatedFetch<T>(
           // Retry with new token
           headers['Authorization'] = `Bearer ${useAuthStore.getState().accessToken}`;
           const retryResponse = await fetch(url, {
-            signal: options.signal || controller.signal,
-            headers,
             ...options,
+            signal: effectiveSignal,
+            headers,
           });
 
           if (!retryResponse.ok) {
@@ -475,6 +515,10 @@ export async function authenticatedFetch<T>(
     throw err;
   } finally {
     clearTimeout(timeoutId);
+    // Clean up the signal listener if we added one
+    if (options.signal && typeof AbortSignal.any !== 'function' && (effectiveSignal as any)._callerAbortHandler) {
+      options.signal.removeEventListener('abort', (effectiveSignal as any)._callerAbortHandler);
+    }
   }
 }
 

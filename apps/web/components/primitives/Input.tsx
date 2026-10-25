@@ -53,10 +53,12 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
       rightIcon,
       leftElement,
       rightElement,
+      onValueChange,
       size,
       state,
       className,
       id,
+      onChange,
       ...props
     },
     ref
@@ -96,6 +98,10 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             })} ${paddingLeft} ${paddingRight} ${className || ""}`}
             aria-describedby={describedBy}
             aria-invalid={!!error}
+            onChange={(e) => {
+              onChange?.(e);
+              onValueChange?.(e.target.value);
+            }}
             {...props}
           />
           {hasRight && (

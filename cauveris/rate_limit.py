@@ -15,9 +15,10 @@ Supports:
 
 import time
 import asyncio
+import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Dict, List, Callable
+from typing import Any, Optional, Dict, List, Callable
 from collections import defaultdict
 from threading import Lock
 from enum import Enum
@@ -86,7 +87,11 @@ class RateLimitPolicy:
     cost: int = 1  # Cost in tokens for token bucket
 
 
-# Cost class definitions mapping endpoints to policies
+# Cost class definitions mapping endpoints to policies.
+#
+# Window limits are expressed in the same unit as the class cost: a request of
+# a class with cost N consumes N units of every window's allowance. The
+# comment after each limit gives the resulting number of *requests* per window.
 COST_CLASS_POLICIES: Dict[str, RateLimitPolicy] = {
     "LOW_COST": RateLimitPolicy(
         name="low_cost",
@@ -120,40 +125,40 @@ COST_CLASS_POLICIES: Dict[str, RateLimitPolicy] = {
     "UPLOAD": RateLimitPolicy(
         name="upload",
         windows=[
-            RateLimitConfig(limit=10, window_seconds=60),  # 10/min
-            RateLimitConfig(limit=50, window_seconds=3600),  # 50/hr
+            RateLimitConfig(limit=50, window_seconds=60),  # 10 uploads/min
+            RateLimitConfig(limit=250, window_seconds=3600),  # 50 uploads/hr
         ],
         cost=5,
     ),
     "COMPUTE": RateLimitPolicy(
         name="compute",
         windows=[
-            RateLimitConfig(limit=5, window_seconds=60),  # 5/min
-            RateLimitConfig(limit=30, window_seconds=3600),  # 30/hr
+            RateLimitConfig(limit=50, window_seconds=60),  # 5 computes/min
+            RateLimitConfig(limit=300, window_seconds=3600),  # 30 computes/hr
         ],
         cost=10,
     ),
     "EXPERIMENT": RateLimitPolicy(
         name="experiment",
         windows=[
-            RateLimitConfig(limit=3, window_seconds=60),  # 3/min
-            RateLimitConfig(limit=10, window_seconds=3600),  # 10/hr
+            RateLimitConfig(limit=60, window_seconds=60),  # 3 experiments/min
+            RateLimitConfig(limit=200, window_seconds=3600),  # 10 experiments/hr
         ],
         cost=20,
     ),
     "PATCH": RateLimitPolicy(
         name="patch",
         windows=[
-            RateLimitConfig(limit=5, window_seconds=60),  # 5/min
-            RateLimitConfig(limit=20, window_seconds=3600),  # 20/hr
+            RateLimitConfig(limit=75, window_seconds=60),  # 5 patches/min
+            RateLimitConfig(limit=300, window_seconds=3600),  # 20 patches/hr
         ],
         cost=15,
     ),
     "DOWNLOAD": RateLimitPolicy(
         name="download",
         windows=[
-            RateLimitConfig(limit=20, window_seconds=60),  # 20/min
-            RateLimitConfig(limit=200, window_seconds=3600),  # 200/hr
+            RateLimitConfig(limit=40, window_seconds=60),  # 20 downloads/min
+            RateLimitConfig(limit=400, window_seconds=3600),  # 200 downloads/hr
         ],
         cost=2,
     ),
@@ -167,16 +172,16 @@ COST_CLASS_POLICIES: Dict[str, RateLimitPolicy] = {
     "MODEL": RateLimitPolicy(
         name="model",
         windows=[
-            RateLimitConfig(limit=20, window_seconds=60),  # 20/min
-            RateLimitConfig(limit=100, window_seconds=3600),  # 100/hr
+            RateLimitConfig(limit=1000, window_seconds=60),  # 20 model calls/min
+            RateLimitConfig(limit=5000, window_seconds=3600),  # 100 model calls/hr
         ],
         cost=50,
     ),
     "CRITICAL_COST": RateLimitPolicy(
         name="critical_cost",
         windows=[
-            RateLimitConfig(limit=2, window_seconds=60),  # 2/min
-            RateLimitConfig(limit=10, window_seconds=3600),  # 10/hr
+            RateLimitConfig(limit=200, window_seconds=60),  # 2 critical calls/min
+            RateLimitConfig(limit=1000, window_seconds=3600),  # 10 critical calls/hr
         ],
         cost=100,
     ),
@@ -250,12 +255,25 @@ class InMemoryRateLimiter(RateLimiter):
         policy: RateLimitPolicy,
         cost: int = 1,
     ) -> RateLimitResult:
-        """Check all windows in the policy."""
+        """Check all windows in the policy.
+
+        The cost is only consumed once the request is known to be allowed in
+        *every* window: consuming a window before a later window rejects the
+        request would charge quota for a request that never ran. The limit
+        check also accounts for the cost, so a single expensive request cannot
+        push a window past its limit.
+        """
+        cost = max(1, int(cost))
         overall_allowed = True
-        overall_remaining = float("inf")
         overall_reset = 0
         overall_retry_after = None
-        current_counts = {}
+        current_counts: Dict[int, int] = {}
+
+        # Evaluate every window first, without consuming any quota.
+        window_states = []
+        tightest_remaining = float("inf")
+        tightest_count = 0
+        tightest_limit = 0
 
         for window_config in policy.windows:
             window_key = f"{key}:{window_config.window_seconds}s"
@@ -265,35 +283,44 @@ class InMemoryRateLimiter(RateLimiter):
                 timestamps = self._data.get(window_key, [])
                 pruned = self._prune_window(timestamps, window_config.window_seconds)
                 self._data[window_key] = pruned
-
                 current_count = len(pruned)
-                current_counts[window_config.window_seconds] = current_count
 
-                remaining = window_config.limit - current_count
-                if remaining < overall_remaining:
-                    overall_remaining = remaining
+            current_counts[window_config.window_seconds] = current_count
+            window_states.append((window_config, window_key, lock, pruned, current_count))
 
-                if current_count >= window_config.limit:
-                    overall_allowed = False
-                    oldest = min(pruned) if pruned else time.time()
-                    retry_after = int(oldest + window_config.window_seconds - time.time()) + 1
-                    if overall_retry_after is None or retry_after < overall_retry_after:
-                        overall_retry_after = max(retry_after, 1)
+            # The request must fit in this window once its cost is applied.
+            if current_count + cost > window_config.limit:
+                overall_allowed = False
+                oldest = min(pruned) if pruned else time.time()
+                retry_after = int(oldest + window_config.window_seconds - time.time()) + 1
+                if overall_retry_after is None or retry_after < overall_retry_after:
+                    overall_retry_after = max(retry_after, 1)
 
-                reset_seconds = window_config.window_seconds
-                if reset_seconds > overall_reset:
-                    overall_reset = reset_seconds
+            remaining = window_config.limit - current_count - cost
+            if remaining < tightest_remaining:
+                tightest_remaining = remaining
+                tightest_count = current_count
+                tightest_limit = window_config.limit
 
-                # If allowed, add the timestamp(s) for the cost
-                if overall_allowed:
+            if window_config.window_seconds > overall_reset:
+                overall_reset = window_config.window_seconds
+
+        # Only now is the request known to be allowed: consume the cost.
+        if overall_allowed:
+            now = time.time()
+            for window_config, window_key, lock, _pruned, _count in window_states:
+                with lock:
+                    timestamps = self._data.get(window_key, [])
+                    pruned = self._prune_window(timestamps, window_config.window_seconds)
                     for _ in range(cost):
-                        pruned.append(time.time())
+                        pruned.append(now)
+                    self._data[window_key] = pruned
 
         return RateLimitResult(
             allowed=overall_allowed,
-            current_count=max(current_counts.values()) if current_counts else 0,
-            limit=min(w.limit for w in policy.windows),
-            remaining=max(0, int(overall_remaining)) if overall_allowed else 0,
+            current_count=tightest_count + (cost if overall_allowed else 0),
+            limit=tightest_limit,
+            remaining=max(0, int(tightest_remaining)) if overall_allowed else 0,
             reset_seconds=overall_reset,
             retry_after=overall_retry_after,
             policy_name=policy.name,
@@ -325,6 +352,65 @@ class InMemoryRateLimiter(RateLimiter):
         self._healthy = False
 
 
+# Atomic sliding-window check/consume script.
+#
+# The check and the consumption have to happen in a single atomic step: doing
+# them in two round trips lets concurrent requests both pass the check and
+# collectively exceed the limit. The script also refuses to consume any window
+# unless *every* window has room for the request's cost.
+#
+# KEYS: one sliding-window key per policy window.
+# ARGV: [window_count, now, unique_token,
+#        (window_seconds, limit, cost) * window_count]
+# Returns: [allowed, retry_after, count_per_window...]
+_SLIDING_WINDOW_SCRIPT = """
+local n = tonumber(ARGV[1])
+local now = tonumber(ARGV[2])
+local unique = ARGV[3]
+local allowed = 1
+local retry = 0
+local counts = {}
+
+for i = 1, n do
+  local base = 3 + (i - 1) * 3
+  local window = tonumber(ARGV[base + 1])
+  local limit = tonumber(ARGV[base + 2])
+  local cost = tonumber(ARGV[base + 3])
+  local key = KEYS[i]
+  redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+  local count = redis.call('ZCARD', key)
+  counts[i] = count
+  if count + cost > limit then
+    allowed = 0
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    if oldest[2] then
+      local r = math.ceil(tonumber(oldest[2]) + window - now)
+      if r > retry then retry = r end
+    end
+  end
+end
+
+if allowed == 1 then
+  for i = 1, n do
+    local base = 3 + (i - 1) * 3
+    local window = tonumber(ARGV[base + 1])
+    local cost = tonumber(ARGV[base + 3])
+    local key = KEYS[i]
+    for j = 1, cost do
+      redis.call('ZADD', key, now + (j * 0.0001), unique .. ':' .. j)
+    end
+    redis.call('EXPIRE', key, window + 60)
+  end
+end
+
+local result = {allowed, retry}
+for i = 1, n do
+  result[#result + 1] = counts[i]
+end
+return result
+"""
+
+
 # Redis rate limiter (requires redis-py)
 class RedisRateLimiter(RateLimiter):
     """
@@ -346,6 +432,7 @@ class RedisRateLimiter(RateLimiter):
         self._redis = None
         self._healthy = False
         self._connection_pool = None
+        self._script = None
 
     async def _ensure_connection(self):
         """Lazy initialization of Redis connection."""
@@ -370,6 +457,12 @@ class RedisRateLimiter(RateLimiter):
     def _make_key(self, key: str, window_seconds: int) -> str:
         return f"{self._key_prefix}{key}:{window_seconds}s"
 
+    def _get_script(self):
+        """Return the (lazily registered) atomic rate limit script."""
+        if self._script is None:
+            self._script = self._redis.register_script(_SLIDING_WINDOW_SCRIPT)
+        return self._script
+
     async def check_limit(
         self,
         key: str,
@@ -377,6 +470,18 @@ class RedisRateLimiter(RateLimiter):
         cost: int = 1,
     ) -> RateLimitResult:
         await self._ensure_connection()
+        cost = max(1, int(cost))
+
+        if not policy.windows:
+            # A policy without windows cannot limit anything.
+            return RateLimitResult(
+                allowed=True,
+                current_count=0,
+                limit=0,
+                remaining=0,
+                reset_seconds=0,
+                policy_name=policy.name,
+            )
 
         if not self._healthy or self._redis is None:
             if self._fail_open:
@@ -403,67 +508,44 @@ class RedisRateLimiter(RateLimiter):
                 )
 
         now = time.time()
-        overall_allowed = True
-        overall_remaining = float("inf")
-        overall_reset = 0
-        overall_retry_after = None
-        current_counts = {}
 
         try:
-            # Use pipeline for atomic operations
-            pipe = self._redis.pipeline()
-
+            window_keys = [self._make_key(key, w.window_seconds) for w in policy.windows]
+            args: List[Any] = [len(policy.windows), now, secrets.token_hex(8)]
             for window_config in policy.windows:
-                window_key = self._make_key(key, window_config.window_seconds)
-                cutoff = now - window_config.window_seconds
+                args.extend([window_config.window_seconds, window_config.limit, cost])
 
-                # Remove expired entries
-                pipe.zremrangebyscore(window_key, 0, cutoff)
+            script = self._get_script()
+            raw = await script(keys=window_keys, args=args)
 
-                # Count current entries
-                pipe.zcard(window_key)
+            allowed = bool(int(raw[0]))
+            overall_retry_after = int(raw[1]) or None
+            counts = [int(c) for c in raw[2:]]
 
-                # If we're going to add entries, prepare them
-                # We'll add after checking all windows
-
-            results = await pipe.execute()
+            overall_reset = 0
+            tightest_remaining = float("inf")
+            tightest_count = 0
+            tightest_limit = 0
 
             for i, window_config in enumerate(policy.windows):
-                current_count = results[i * 2 + 1]  # zcard result
-                current_counts[window_config.window_seconds] = current_count
+                current_count = counts[i] if i < len(counts) else 0
+                remaining = window_config.limit - current_count - cost
+                if remaining < tightest_remaining:
+                    tightest_remaining = remaining
+                    tightest_count = current_count
+                    tightest_limit = window_config.limit
+                if window_config.window_seconds > overall_reset:
+                    overall_reset = window_config.window_seconds
 
-                remaining = window_config.limit - current_count
-                if remaining < overall_remaining:
-                    overall_remaining = remaining
-
-                if current_count >= window_config.limit:
-                    overall_allowed = False
-                    # Get oldest entry to calculate retry-after
-                    window_key = self._make_key(key, window_config.window_seconds)
-                    oldest_entries = await self._redis.zrange(window_key, 0, 0, withscores=True)
-                    if oldest_entries:
-                        oldest = oldest_entries[0][1]
-                        retry_after = int(oldest + window_config.window_seconds - now) + 1
-                        if overall_retry_after is None or retry_after < overall_retry_after:
-                            overall_retry_after = max(retry_after, 1)
-
-                reset_seconds = window_config.window_seconds
-                if reset_seconds > overall_reset:
-                    overall_reset = reset_seconds
-
-            # If allowed, add new entries
-            if overall_allowed:
-                pipe = self._redis.pipeline()
-                for window_config in policy.windows:
-                    window_key = self._make_key(key, window_config.window_seconds)
-                    for j in range(cost):
-                        # Use timestamp + small offset to ensure uniqueness
-                        score = now + (j * 0.001)
-                        member = f"{now}:{j}"
-                        pipe.zadd(window_key, {member: score})
-                        # Set TTL to window + buffer
-                        pipe.expire(window_key, window_config.window_seconds + 60)
-                await pipe.execute()
+            return RateLimitResult(
+                allowed=allowed,
+                current_count=tightest_count + (cost if allowed else 0),
+                limit=tightest_limit,
+                remaining=max(0, int(tightest_remaining)) if allowed else 0,
+                reset_seconds=overall_reset,
+                retry_after=overall_retry_after,
+                policy_name=policy.name,
+            )
 
         except Exception as e:
             logger.error(f"Redis rate limiter error: {e}")
@@ -487,15 +569,9 @@ class RedisRateLimiter(RateLimiter):
                     policy_name=policy.name,
                 )
 
-        return RateLimitResult(
-            allowed=overall_allowed,
-            current_count=max(current_counts.values()) if current_counts else 0,
-            limit=min(w.limit for w in policy.windows),
-            remaining=max(0, int(overall_remaining)) if overall_allowed else 0,
-            reset_seconds=overall_reset,
-            retry_after=overall_retry_after,
-            policy_name=policy.name,
-        )
+        # NOTE: Should never reach here. The try block returns on success,
+        # and the except block returns on failure.
+        raise RuntimeError("Unexpected code path in check_limit")
 
     async def get_current_usage(self, key: str, window_seconds: int) -> int:
         await self._ensure_connection()
@@ -582,18 +658,20 @@ def get_rate_limiter() -> RateLimiter:
 async def check_rate_limit(
     key: str,
     cost_class: str = "NORMAL_READ",
-    cost: int = 1,
+    cost: Optional[int] = None,
     custom_policy: Optional[RateLimitPolicy] = None,
 ) -> RateLimitResult:
     """
     Convenience function to check rate limit using global limiter.
-    Uses cost class policies by default.
+    Uses cost class policies by default. When ``cost`` is not supplied the
+    cost declared by the policy is used.
     """
     limiter = get_rate_limiter()
     policy = custom_policy or COST_CLASS_POLICIES.get(
         cost_class, COST_CLASS_POLICIES["NORMAL_READ"]
     )
-    return await limiter.check_limit(key, policy, cost)
+    effective_cost = policy.cost if cost is None else cost
+    return await limiter.check_limit(key, policy, effective_cost)
 
 
 # Decorator for easy endpoint protection

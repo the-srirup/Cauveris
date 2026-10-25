@@ -26,9 +26,9 @@ export function ShellLayout({ children }: ShellLayoutProps) {
 
   // Dynamic widths for CSS grid tracks:
   // Desktop:
-  //   Sidebar: 240px (expanded) or 64px (collapsed)
+  //   Sidebar: 240px (expanded) or 64px (collapsed - icon-only width)
   //   Inspector: 360px (open) or 0px (closed)
-  // Mobile/Tablet (<lg / isDrawer):
+  // Mobile/Tablet (isDrawer):
   //   Sidebar & Inspector are fixed overlay drawers and do not consume desktop grid columns
   const sidebarWidthPx = isSidebarDrawer ? 0 : isNavCollapsed ? 64 : 240;
   const inspectorWidthPx = isInspectorDrawer || !isInspectorVisible ? 0 : 360;
@@ -103,8 +103,8 @@ export function ShellLayout({ children }: ShellLayoutProps) {
         data-inspector-open={isInspectorVisible}
         className={
           isLoginPage
-            ? "relative h-full w-full flex items-center justify-center bg-[var(--theme-background)]"
-            : "relative h-full w-full lg:grid lg:grid-rows-[48px_1fr_auto] transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none"
+            ? "relative h-full w-full flex items-center justify-center bg-[var(--color-canvas)]"
+            : "relative h-full w-full lg:grid lg:grid-rows-[var(--shell-topbar-height)_1fr_var(--shell-tray-closed-height)] transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none"
         }
         style={
           isLoginPage
@@ -133,7 +133,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
             {/* Main Content Area - Row 2, Col 2 (flexibly expands/contracts) */}
             <main
               id="main-content"
-              className="relative min-w-0 w-full overflow-y-auto lg:row-start-2 lg:col-start-2 pt-[48px] lg:pt-0 pb-[32px] lg:pl-[var(--space-6)] lg:pr-[var(--space-6)] transition-all duration-200 ease-out motion-reduce:transition-none"
+              className="relative min-w-0 w-full overflow-y-auto lg:row-start-2 lg:col-start-2 pt-[calc(var(--shell-topbar-height)+1.5rem)] lg:pt-6 pb-[calc(var(--shell-tray-closed-height)+1.5rem)] lg:pb-6 px-5 sm:px-8 transition-all duration-200 ease-out motion-reduce:transition-none"
               role="main"
             >
               <ClientErrorBoundary>{children}</ClientErrorBoundary>
@@ -148,7 +148,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
               <RightInspector />
             </div>
 
-                      </>
+          </>
         )}
 
         {isLoginPage && (

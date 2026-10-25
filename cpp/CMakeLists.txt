@@ -1,104 +1,89 @@
-cmake_minimum_required(VERSION 3.18)
-project(cauveris_kernels LANGUAGES CXX CUDA VERSION 0.1.0)
+cmake_minimum_required(VERSION 3.24)
 
-# Set C++ standard
+# nvcc refuses to compile for a host compiler that is newer than the one it
+# was tested against.  The flag has to be in place before project() runs,
+# because the compiler identification compiles a probe program.  It is a
+# warning about the pairing of the two tools, not about the code.
+option(CAUVERIS_ALLOW_UNSUPPORTED_COMPILER
+       "Pass -allow-unsupported-compiler to nvcc" ON)
+if(CAUVERIS_ALLOW_UNSUPPORTED_COMPILER)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler")
+endif()
+
+project(cauveris_kernels LANGUAGES CXX CUDA VERSION 0.2.0)
+
+# ---------------------------------------------------------------------------
+# Standards and build type
+# ---------------------------------------------------------------------------
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# CUDA standard
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_STANDARD_EXTENSIONS OFF)
 
-# Build configuration
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-# CUDA architectures - use native for development, can be overridden
-if(NOT CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES "80;86;89;90" CACHE STRING "CUDA architectures to build for")
-endif()
+# The CUDA runtime is linked statically into the extension.  A shared runtime
+# would make the import fail on any machine that does not have the matching
+# CUDA redistributable on its PATH, and the engine has to work wherever the
+# Python package is installed.
+set(CMAKE_CUDA_RUNTIME_LIBRARY Static)
 
-# Output directories
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+# ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
 
-# ============================================================================
-# Find Dependencies
-# ============================================================================
-
-# CUDA
-find_package(CUDA REQUIRED)
-
-# Python
-find_package(Python3 COMPONENTS Development REQUIRED)
-
-# pybind11 - use config mode
+find_package(CUDAToolkit REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(pybind11 CONFIG REQUIRED)
 
-# ============================================================================
-# Include Directories
-# ============================================================================
+# nvcc refuses to compile for a host compiler that is newer than the one it
+# was tested against.  It is a warning about the pairing, not about the code,
+# so the check is allowed here and can be turned off for a matched toolchain.
+option(CAUVERIS_ALLOW_UNSUPPORTED_COMPILER
+       "Pass -allow-unsupported-compiler to nvcc" ON)
 
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${Python3_INCLUDE_DIRS}
-    ${pybind11_INCLUDE_DIRS}
-)
-
-# ============================================================================
-# Compile Options
-# ============================================================================
-
-# Common compile options
 if(MSVC)
-    add_compile_options(
-        /W3
-        /O2
-        /DNDEBUG
-        /D_CRT_SECURE_NO_WARNINGS
-    )
+    add_compile_options(/W3 /O2 /DNDEBUG /D_CRT_SECURE_NO_WARNINGS)
 else()
-    add_compile_options(
-        -Wall
-        -Wextra
-        -Wno-unused-parameter
-        -O3
-        -DNDEBUG
-        -fPIC
-    )
+    add_compile_options(-Wall -Wextra -Wno-unused-parameter -O3 -DNDEBUG -fPIC)
 endif()
 
-# CUDA compile options
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${CMAKE_CXX_FLAGS}")
-set(CMAKE_CUDA_FLAGS_DEBUG "${CMAKE_CUDA_FLAGS_DEBUG} -G -lineinfo")
-set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} -O3 -use_fast_math")
+# No -use_fast_math: the kernels reproduce the NumPy reference model, and
+# fast math swaps the transcendentals for approximations.  The whole point of
+# the GPU path is that it agrees with the CPU path.
+add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
 
-# Enable FP16 tensor cores for Volta+
-add_compile_options(
-    $<$<COMPILE_LANGUAGE:CUDA>:-D__CUDA_NO_HALF2_OPERATORS__=0>
-    $<$<COMPILE_LANGUAGE:CUDA>:-D__CUDA_NO_HALF_CONVERSIONS__=0>
-)
+# ---------------------------------------------------------------------------
+# CUDA architectures
+#
+# "native" asks CMake to compile for the GPU in the build machine.  A build
+# machine without a GPU (a CI runner, a Docker image) has no native
+# architecture, so the list can be overridden from the outside.
+# ---------------------------------------------------------------------------
 
-# ============================================================================
-# Source Files
-# ============================================================================
+if(NOT CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES "native" CACHE STRING "CUDA architectures to build for")
+endif()
+
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
 
 set(KERNEL_SOURCES
-    cuda/local_kernels.cu
-    cuda/convolution.cu
-    cuda/solver.cu
-    cuda/matrix_ops.cu
+    cuda/propagation_kernels.cu
+    cuda/device.cu
+    cuda/linalg.cu
 )
 
 set(BINDING_SOURCES
     bindings/pybind11_module.cpp
 )
-
-# ============================================================================
-# Core Library Target
-# ============================================================================
 
 add_library(cauveris_kernels_core STATIC ${KERNEL_SOURCES})
 
@@ -107,49 +92,27 @@ target_include_directories(cauveris_kernels_core PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(cauveris_kernels_core PUBLIC
-    ${CUDA_LIBRARIES}
-    nvrtc  # For JIT compilation support
-)
-
-# Compile with C++17
+target_link_libraries(cauveris_kernels_core PUBLIC CUDA::cudart)
 target_compile_features(cauveris_kernels_core PRIVATE cxx_std_17)
-
-# ============================================================================
-# Python Module Target
-# ============================================================================
 
 pybind11_add_module(cauveris_kernels_py ${BINDING_SOURCES})
 
-target_link_libraries(cauveris_kernels_py PRIVATE
-    cauveris_kernels_core
-    ${Python3_LIBRARIES}
-    ${CUDA_LIBRARIES}
-)
+target_link_libraries(cauveris_kernels_py PRIVATE cauveris_kernels_core)
+target_include_directories(cauveris_kernels_py PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-target_include_directories(cauveris_kernels_py PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
+set_target_properties(cauveris_kernels_py PROPERTIES PREFIX "")
 
-# Set output name without platform-specific suffix
-set_target_properties(cauveris_kernels_py PROPERTIES
-    PREFIX ""
-    SUFFIX "${PYTHON_MODULE_EXTENSION}"
-)
-
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Installation
-# ============================================================================
-
-install(TARGETS cauveris_kernels_core
-    ARCHIVE DESTINATION lib
-    LIBRARY DESTINATION lib
-    RUNTIME DESTINATION bin
-)
+#
+# scikit-build-core collects the files installed here into the wheel root.
+# The extension is a top level module so that it does not fight with the
+# "cauveris" Python package that ships in the same environment.
+# ---------------------------------------------------------------------------
 
 install(TARGETS cauveris_kernels_py
-    LIBRARY DESTINATION ${Python3_SITEARCH}/cauveris
-    RUNTIME DESTINATION ${Python3_SITEARCH}/cauveris
+    LIBRARY DESTINATION .
+    RUNTIME DESTINATION .
 )
 
 install(DIRECTORY include/
@@ -157,32 +120,15 @@ install(DIRECTORY include/
     FILES_MATCHING PATTERN "*.h"
 )
 
-# ============================================================================
-# Package Config
-# ============================================================================
-
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/cauverisConfigVersion.cmake
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
+install(TARGETS cauveris_kernels_core
+    ARCHIVE DESTINATION lib
 )
-
-# Export targets for downstream use
-export(EXPORT cauveris-targets
-    FILE ${CMAKE_CURRENT_BINARY_DIR}/cauverisTargets.cmake
-)
-
-# ============================================================================
-# Print Configuration Summary
-# ============================================================================
 
 message(STATUS "=== Cauveris Kernels Build Configuration ===")
 message(STATUS "  Project version: ${PROJECT_VERSION}")
-message(STATUS "  CUDA version: ${CUDA_VERSION}")
+message(STATUS "  CUDA toolkit: ${CUDAToolkit_VERSION}")
 message(STATUS "  CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
-message(STATUS "  Python version: ${Python3_VERSION}")
-message(STATUS "  Python include: ${Python3_INCLUDE_DIRS}")
-message(STATUS "  pybind11 version: ${pybind11_VERSION}")
+message(STATUS "  Python: ${Python3_VERSION}")
+message(STATUS "  pybind11: ${pybind11_VERSION}")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "=============================================")

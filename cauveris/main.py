@@ -17,9 +17,104 @@ def setup_logging(debug: bool = False):
     setup_structured_logging(level=level, json_output=True)
 
 
+def _run_golden_incident() -> int:
+    """
+    Run the full investigation pipeline on the golden CAU-0001 incident.
+
+    Regenerates the deterministic golden bundle on disk (idempotent), then runs
+    every stage of the real orchestrator: ingestion, timeline, temporal analysis,
+    hypotheses, sandbox experiments, digital-twin simulation, patch forge,
+    9-point invariant verification, and report generation. Prints the outcome.
+    """
+    import asyncio
+    import json
+
+    from cauveris.datasets.golden_incident import GoldenIncidentGenerator
+    from cauveris.state_machine.orchestrator import PipelineOrchestrator
+    from cauveris.schemas.base import StatusLabel
+
+    async def run() -> int:
+        incident = GoldenIncidentGenerator().generate()
+        orchestrator = PipelineOrchestrator()
+        orchestrator.set_progress_callback(
+            lambda summary: print(f"  [{summary.get('state', '?'):>9}] {summary.get('active_stage_id') or summary.get('state', '')}")
+        )
+        print(f"Running full pipeline on golden incident {incident.id} ...")
+        context = await orchestrator.process_incident(incident)
+        summary = orchestrator.get_pipeline_summary()
+
+        print()
+        print(f"Pipeline state: {summary['state']}")
+        if summary.get("error"):
+            print(f"Error: {summary['error']}")
+
+        hypotheses = context.hypotheses or []
+        experiments = context.experiments or []
+        patches = context.patch_candidates or []
+        reports = context.verification_reports or []
+
+        print(f"Hypotheses: {len(hypotheses)}")
+        for h in hypotheses:
+            conf = getattr(h, "confidence_prior", None)
+            print(f"  - {h.hypothesis_id}: {h.causal_claim[:100]} (prior={conf:.2f})" if conf is not None else f"  - {h.hypothesis_id}: {h.causal_claim[:100]}")
+
+        print(f"Experiments: {len(experiments)}")
+        for e in experiments:
+            rr = getattr(e, "reproduction_rate", 0.0) or 0.0
+            status = getattr(e.status, "value", str(e.status))
+            print(f"  - {e.experiment_id}: {e.branch_name} [{status}] reproduction_rate={rr:.2f}")
+
+        print(f"Patch candidates: {len(patches)}")
+        for p in patches:
+            print(f"  - {p.candidate_id}: score={p.score:.3f} verified_files={p.affected_files}")
+
+        print(f"Verification reports: {len(reports)}")
+        for r in reports:
+            gates = {
+                "applies": getattr(r, "applies_cleanly", False),
+                "regress_before": getattr(r, "regression_test_fails_before", False),
+                "regress_after": getattr(r, "regression_test_passes_after", False),
+                "no_repro": getattr(r, "original_failure_not_reproduced", False),
+                "tests": getattr(r, "existing_tests_pass", False),
+                "safety": getattr(r, "safety_invariants_pass", False),
+                "perf": getattr(r, "performance_within_budget", False),
+                "forbidden": getattr(r, "forbidden_change_scan_passes", False),
+                "rollback": getattr(r, "rollback_test_passes", False),
+            }
+            print(f"  - {r.patch_candidate_id}: verified={r.verified}")
+            print(f"    gates: {json.dumps(gates)}")
+
+        if context.final_report and isinstance(context.final_report, dict):
+            paths = context.final_report.get("paths") or context.final_report.get("artifacts") or {}
+            if paths:
+                print("Report artifacts:")
+                for k, v in paths.items():
+                    print(f"  - {k}: {v}")
+
+        successful = getattr(incident.status, "value", str(incident.status)) in (
+            StatusLabel.PATCHED.value,
+            StatusLabel.VERIFIED_IN_SANDBOX.value,
+        )
+        if summary["state"] == "SUCCESS" and any(getattr(r, "verified", False) for r in reports):
+            print(f"\nSUCCESS: verified patch produced for {incident.id}.")
+            return 0
+        if successful:
+            return 0
+        print("\nPipeline did not produce a verified patch (see output above).")
+        return 1
+
+    return asyncio.run(run())
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Cauveris - Autonomous Reality Debugger")
+    parser.add_argument(
+        "--golden",
+        action="store_true",
+        dest="golden",
+        help="Run the full investigation pipeline on the golden CAU-0001 incident and print results",
+    )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Serve command (default)
@@ -27,6 +122,11 @@ def main():
     serve_parser.add_argument("--host", default="0.0.0.0", help="Host to bind the server to")
     serve_parser.add_argument("--port", type=int, default=8000, help="Port to bind the server to")
     serve_parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+
+    # Golden incident command (also exposed as --golden top-level flag)
+    subparsers.add_parser(
+        "golden", help="Run the full pipeline on the golden CAU-0001 incident"
+    )
 
     # Export patch command
     export_parser = subparsers.add_parser(
@@ -56,6 +156,10 @@ def main():
 
     # Handle no command (default to serve)
     args = parser.parse_args()
+
+    # --golden flag / golden subcommand: run the full pipeline on the golden incident
+    if getattr(args, "golden", False) or args.command == "golden":
+        sys.exit(_run_golden_incident())
 
     # If no command provided, default to serve
     if args.command is None:

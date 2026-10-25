@@ -7,6 +7,32 @@ from pydantic import Field
 from typing import Optional, List, Dict, Any
 
 
+class ConfigEdit(BaseEntity):
+    """
+    One structured configuration change a patch makes.
+
+    A unified diff records *how the bytes differ*, which makes it a poor
+    instrument for changing a configuration file: the target workspace's
+    copy of the file may carry a different comment, a different order or a
+    different quoting style, and then the diff no longer applies even though
+    the change it describes is exactly the change that is needed.
+
+    This records the change itself - *this key in this file goes from this
+    value to that value* - so a patch can be applied to a file that is
+    semantically the same file, and so that the state of a target space can
+    be determined by reading the value rather than by matching a context.
+    """
+
+    file: str = Field(..., description="Path of the edited file, relative to the bundle root")
+    key: str = Field(..., description="Dotted path of the key inside the file")
+    parameter: str = Field(..., description="Name of the pipeline parameter the key controls")
+    format: str = Field(
+        "yaml", description="Syntax of the file: yaml, json or source"
+    )
+    current_value: Any = Field(None, description="Value the key has in the bundle")
+    target_value: Any = Field(..., description="Value the key is changed to")
+
+
 class PatchCandidate(BaseEntity):
     """A candidate patch for fixing the incident."""
 
@@ -16,6 +42,10 @@ class PatchCandidate(BaseEntity):
     )
     lines_changed: int = Field(0, description="Number of lines changed")
     unified_diff: str = Field(..., description="Unified diff of the patch")
+    config_edits: List[ConfigEdit] = Field(
+        default_factory=list,
+        description="The structured configuration changes the patch makes",
+    )
     regression_test_patch: Optional[str] = Field(None, description="Patch adding regression test")
     build_state: str = Field("unknown", description="Build status: success, failure, or unknown")
     existing_test_state: str = Field("unknown", description="Existing test suite status")
