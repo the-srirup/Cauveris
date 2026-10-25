@@ -19,18 +19,40 @@ SECRET_PATTERNS = [
     (r'(?i)api[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "API Key"),
     (r'(?i)access[_-]?token[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Access Token"),
     (r'(?i)secret[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Secret Key"),
+    # JWT secrets and tokens
+    (r'(?i)jwt[_-]?secret[\s]*[:=][\s]*[\'"]([^\'"]{32,})[\'"]', "JWT Secret"),
+    (r'(?i)jwt[_-]?token[\s]*[:=][\s]*[\'"]([^\'"]{50,})[\'"]', "JWT Token"),
     # AWS
     (r"AKIA[0-9A-Z]{16}", "AWS Access Key ID"),
     (
         r'(?i)aws[_-]?secret[_-]?access[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]',
         "AWS Secret Key",
     ),
+    (r'(?i)aws[_-]?access[_-]?key[_-]?id[\s]*[:=][\s]*[\'"]?([A-Z0-9]{20})', "AWS Access Key ID"),
+    # GCP
+    (r'(?i)google[_-]?api[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{30,})[\'"]', "Google API Key"),
+    (r"(?i)service[_-]?account[_-]?key[\s]*[:=]", "Service Account Key"),
     # Database URLs
-    (r'(?i)(postgres|postgresql|mysql|mongodb)://[^\s\'"]+', "Database URL"),
-    # Generic high-entropy strings that might be secrets
-    (r'(?i)(password|passwd|pwd)[\s]*[:=][\s]*[\'"]([^\'"]{8,})[\'"]', "Password"),
-    (r"(?i)private[_-]?key[\s]*[:=]", "Private Key"),
+    (r'(?i)(postgres|postgresql|mysql|mongodb|redis|amqp|elasticsearch)://[^\s\'"]+', "Database URL"),
+    (r'(?i)database[_-]?url[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Database URL"),
+    # Private Keys
     (r"-----BEGIN [A-Z ]+PRIVATE KEY-----", "Private Key Block"),
+    (r"-----BEGIN RSA PRIVATE KEY-----", "RSA Private Key"),
+    (r"-----BEGIN EC PRIVATE KEY-----", "EC Private Key"),
+    (r"-----BEGIN OPENSSH PRIVATE KEY-----", "OpenSSH Private Key"),
+    (r'(?i)private[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Private Key"),
+    (r'(?i)pem[_-]?file[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "PEM File"),
+    # Credentials
+    (r'(?i)(password|passwd|pwd)[\s]*[:=][\s]*[\'"]([^\'"]{8,})[\'"]', "Password"),
+    (r'(?i)credential[_-]?file[\s]*[:=]', "Credential File"),
+    # Heroku / General secrets
+    (r"(?i)heroku[_-]?api[_-]?key[\s]*[:=]", "Heroku API Key"),
+    (r'(?i)stripe[_-]?secret[_-]?key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Stripe Secret Key"),
+    # OAuth / API tokens
+    (r'(?i)client[_-]?secret[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "Client Secret"),
+    (r'(?i)api[_-]?token[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "API Token"),
+    # Generic high-entropy secrets
+    (r'(?i)x-api-key[\s]*[:=][\s]*[\'"]([^\'"]{20,})[\'"]', "X-API-Key"),
 ]
 
 
