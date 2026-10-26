@@ -24,8 +24,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from cauveris.analysis.model import SimulationOutcome, TwinParameters, simulate_pipeline
+from cauveris.analysis.model import (
+    FAILURE_DEPENDENCY_TIMEOUT,
+    FAILURE_LOCK_CONTENTION,
+    FAILURE_RESOURCE_EXHAUSTION,
+    SimulationOutcome,
+    TwinParameters,
+    simulate_pipeline,
+)
 from cauveris.analysis.system_model import Kinematics, SafetyBudget, SystemModel, get_system_model
+from cauveris.bundles import bundle_belongs_to, bundle_incident_id
 from cauveris.config import get_settings
 from cauveris.schemas.experiment import Experiment
 from cauveris.simulation.mapping import map_experiment_to_intervention
@@ -33,6 +41,49 @@ from cauveris.simulation.mapping import map_experiment_to_intervention
 logger = logging.getLogger(__name__)
 
 DEFAULT_TRIALS = 12
+
+
+#: How each failure mechanism is described when it is the one the incident
+#: exhibited.  The description says what happened, in the system's own terms,
+#: because "the request failed" is not something an operator can act on.
+_MECHANISM_DESCRIPTIONS = {
+    FAILURE_RESOURCE_EXHAUSTION: (
+        "The workload exceeded its resource envelope and the process was killed, "
+        "so the requests it was serving were lost"
+    ),
+    FAILURE_DEPENDENCY_TIMEOUT: (
+        "The request exceeded the deadline the client set, so it was cancelled "
+        "and its work was discarded"
+    ),
+    FAILURE_LOCK_CONTENTION: (
+        "Requests waited for a contended shared resource for longer than the "
+        "caller was willing to wait, and were abandoned"
+    ),
+}
+
+
+def _dominant_mechanism(failures: Dict[str, int]) -> str:
+    """
+    The mechanism an incident exhibited.
+
+    When no request failed at all, the incident was a latency incident: the
+    data arrived, and it was too old to act on.
+    """
+    if not failures:
+        return "control_deadline_missed"
+    # The mechanism that fired most often is the one the incident was about.
+    return max(sorted(failures), key=lambda mechanism: failures[mechanism])
+
+
+def _mechanism_description(mechanism: str, failures: Dict[str, int]) -> str:
+    """A sentence describing the mechanism the incident exhibited."""
+    base = _MECHANISM_DESCRIPTIONS.get(
+        mechanism, "Control loop deadline missed due to stale perception latency"
+    )
+    count = failures.get(mechanism, 0)
+    if mechanism == "control_deadline_missed":
+        return base
+    return f"{base} ({count} of the simulated requests failed this way)"
 
 
 @dataclass
@@ -52,6 +103,18 @@ class DigitalTwinFaultInjectors:
     server_workers: int = 1
     arrival_rate_hz: float = 14.0
 
+    #: The resource envelope the workload runs in, and the working set it
+    #: needs.  Their ratio is the pressure it runs under.
+    resource_limit_mb: float = 0.0
+    resource_demand_mb: float = 0.0
+    resource_pressure_penalty_ms: float = 0.0
+    #: The deadline the client gives the request.
+    request_timeout_ms: float = 0.0
+    #: The contended shared resource.
+    lock_contention_prob: float = 0.0
+    lock_hold_ms: float = 0.0
+    lock_timeout_ms: float = 0.0
+
     @classmethod
     def from_parameters(cls, params: TwinParameters) -> "DigitalTwinFaultInjectors":
         """Build injectors from a calibrated TwinParameters set."""
@@ -66,6 +129,13 @@ class DigitalTwinFaultInjectors:
             consumer_rate_hz=params.consumer_rate_hz,
             server_workers=int(params.server_workers),
             arrival_rate_hz=params.arrival_rate_hz,
+            resource_limit_mb=params.resource_limit_mb,
+            resource_demand_mb=params.resource_demand_mb,
+            resource_pressure_penalty_ms=params.resource_pressure_penalty_ms,
+            request_timeout_ms=params.request_timeout_ms,
+            lock_contention_prob=params.lock_contention_prob,
+            lock_hold_ms=params.lock_hold_ms,
+            lock_timeout_ms=params.lock_timeout_ms,
         )
 
     def as_overrides(self) -> Dict[str, float]:
@@ -80,6 +150,13 @@ class DigitalTwinFaultInjectors:
             "transport_sigma_ms": float(self.network_jitter_ms),
             "clock_skew_ms": float(self.clock_skew_ms),
             "arrival_rate_hz": float(self.arrival_rate_hz),
+            "resource_limit_mb": float(self.resource_limit_mb),
+            "resource_demand_mb": float(self.resource_demand_mb),
+            "resource_pressure_penalty_ms": float(self.resource_pressure_penalty_ms),
+            "request_timeout_ms": float(self.request_timeout_ms),
+            "lock_contention_prob": float(self.lock_contention_prob),
+            "lock_hold_ms": float(self.lock_hold_ms),
+            "lock_timeout_ms": float(self.lock_timeout_ms),
         }
 
 
@@ -126,6 +203,13 @@ class CloudToRobotDigitalTwin:
             qos_queue_depth=int(self.faults.qos_queue_depth),
             consumer_rate_hz=self.faults.consumer_rate_hz,
             clock_skew_ms=self.faults.clock_skew_ms,
+            resource_limit_mb=self.faults.resource_limit_mb,
+            resource_demand_mb=self.faults.resource_demand_mb,
+            resource_pressure_penalty_ms=self.faults.resource_pressure_penalty_ms,
+            request_timeout_ms=self.faults.request_timeout_ms,
+            lock_contention_prob=self.faults.lock_contention_prob,
+            lock_hold_ms=self.faults.lock_hold_ms,
+            lock_timeout_ms=self.faults.lock_timeout_ms,
         )
 
     def simulate(
@@ -149,6 +233,13 @@ class CloudToRobotDigitalTwin:
         """
         Simulate one perception-to-actuation cycle with calibrated physical dynamics.
         Returns detailed latency breakdown and safety oracle status.
+
+        The cycle can fail in three ways that are not latencies at all: the
+        workload can exceed its resource envelope, the request can lose a
+        race for a contended lock, and the request can exceed the deadline
+        the client set.  Each is reported under ``failure_reason`` so that
+        the verifier can check the mechanism the incident actually exhibited
+        rather than only the latency.
         """
         rng = random.Random(seed if seed is not None else 42)
         params = self.parameters()
@@ -159,25 +250,60 @@ class CloudToRobotDigitalTwin:
             + (simulated_batch_size * params.service_per_item_ms)
             + rng.uniform(-1.5, 1.5)
         )
-        inference_latency_ms = batch_wait_ms + gpu_compute_ms
+
+        # The resource envelope.  Above the limit the workload is killed.
+        pressure = (
+            params.resource_demand_mb / params.resource_limit_mb
+            if params.resource_limit_mb > 0
+            else 0.0
+        )
+        gpu_compute_ms += params.resource_pressure_penalty_ms * pressure
+
+        # The lock: a contended acquire waits for as long as the holder keeps
+        # the resource, and gives up when that outlasts the caller's patience.
+        lock_wait_ms = 0.0
+        if params.lock_contention_prob > 0.0 and rng.random() < params.lock_contention_prob:
+            lock_wait_ms = params.lock_hold_ms
+
+        inference_latency_ms = batch_wait_ms + lock_wait_ms + gpu_compute_ms
         net_delay_ms = max(
             2.0, rng.gauss(params.transport_mean_ms, max(1.0, min(3.0, params.transport_sigma_ms / 6.0)))
         )
         clock_skew_ms = params.clock_skew_ms
         total_latency_ms = max(5.0, inference_latency_ms + net_delay_ms + clock_skew_ms)
+
+        # The failure mechanisms, in the order a real request meets them.
+        failure_reason: Optional[str] = None
+        if pressure > 1.0:
+            failure_reason = FAILURE_RESOURCE_EXHAUSTION
+        elif params.lock_timeout_ms > 0.0 and lock_wait_ms > params.lock_timeout_ms:
+            failure_reason = FAILURE_LOCK_CONTENTION
+        elif (
+            params.request_timeout_ms > 0.0
+            and inference_latency_ms > params.request_timeout_ms
+        ):
+            failure_reason = FAILURE_DEPENDENCY_TIMEOUT
+
+        # A failed request produces no result at all.  It is not a slow
+        # request that happened to be slow - nothing arrived, so there is
+        # nothing for the robot to act on.
         is_stale = total_latency_ms > self.freshness_budget_ms
-        emergency_stop = is_stale
+        emergency_stop = is_stale or failure_reason is not None
 
         return {
             "batch_wait_ms": round(batch_wait_ms, 2),
             "gpu_compute_ms": round(gpu_compute_ms, 2),
             "inference_latency_ms": round(inference_latency_ms, 2),
             "network_delay_ms": round(net_delay_ms, 2),
+            "lock_wait_ms": round(lock_wait_ms, 2),
             "total_latency_ms": round(total_latency_ms, 2),
             "is_stale": is_stale,
             "emergency_stop": emergency_stop,
             "stale_rate": 1.0 if is_stale else 0.0,
             "deadline_miss_rate": 1.0 if total_latency_ms > self.control_deadline_ms else 0.0,
+            "resource_pressure": round(pressure, 4),
+            "failure_reason": failure_reason,
+            "request_failed": failure_reason is not None,
         }
 
     def stopping_distance(self, speed_mps: float, perception_age_ms: float) -> float:
@@ -540,7 +666,14 @@ class SimulationRunner:
         model = system_model or self.system_model
         if model is None:
             model = self._model_from_experiments(experiments)
-            self.system_model = model
+            # The model is *not* kept on the runner: a runner that is reused
+            # for a second incident would simulate it against the first
+            # incident's model.
+        if model is None:
+            logger.warning(
+                "No system model could be built for these experiments; the twin "
+                "runs against its declared defaults rather than a calibrated model."
+            )
 
         for exp in experiments:
             try:
@@ -570,19 +703,66 @@ class SimulationRunner:
 
         return experiments
 
+    @staticmethod
+    def _source_bundle(branch_info_path: Path) -> Optional[str]:
+        """The bundle a branch was cut from, as its branch description says."""
+        if not branch_info_path.exists():
+            return None
+        try:
+            with open(branch_info_path, "r", encoding="utf-8") as f:
+                source = json.load(f).get("source_bundle")
+        except Exception as exc:
+            logger.warning(f"Could not read {branch_info_path}: {exc}")
+            return None
+        return str(source) if source else None
+
     def _model_from_experiments(self, experiments: List[Experiment]) -> Optional[SystemModel]:
-        """Load the calibrated SystemModel for the experiments."""
+        """
+        Load the calibrated SystemModel for the experiments.
+
+        The bundle the experiments were branched from is used, so that the
+        simulation runs against the incident that was fed in.  A bundle that
+        belongs to a different incident is refused rather than silently
+        simulated against.
+        """
+        # 1. The bundle the branch was cut from - the strongest evidence of
+        #    which incident these experiments are about.  The branch is read
+        #    from the experiment's own branch directory: an experiment id is
+        #    the same for every incident that has a hypothesis of that name,
+        #    so a shared workspace would hand this incident another
+        #    incident's branch.
         for exp in experiments:
-            branch_info_path = self.workspace_dir / exp.experiment_id / "branch_info.json"
-            source = None
-            if branch_info_path.exists():
-                try:
-                    with open(branch_info_path, "r", encoding="utf-8") as f:
-                        source = json.load(f).get("source_bundle")
-                except Exception as exc:
-                    logger.warning(f"Could not read {branch_info_path}: {exc}")
+            branch_dir = getattr(exp, "branch_path", None)
+            if not branch_dir:
+                continue
+            source = self._source_bundle(Path(branch_dir) / "branch_info.json")
             if source and Path(source).is_dir():
-                return get_system_model(str(exp.incident_id or exp.hypothesis_id), Path(source))
+                model = get_system_model(
+                    str(exp.incident_id or exp.hypothesis_id), Path(source)
+                )
+                if model is not None:
+                    return model
+
+        # 1b. The shared workspace, for experiments that were not set up
+        #     through the sandbox (a caller running the twin directly).
+        for exp in experiments:
+            branch_dir = getattr(exp, "branch_path", None)
+            if branch_dir:
+                continue
+            branch_info_path = self.workspace_dir / exp.experiment_id / "branch_info.json"
+            source = self._source_bundle(branch_info_path)
+            if source and Path(source).is_dir():
+                model = get_system_model(
+                    str(exp.incident_id or exp.hypothesis_id), Path(source)
+                )
+                if model is not None:
+                    return model
+
+        # 2. The bundle the hypothesis was derived from.
+        for exp in experiments:
+            declared = getattr(exp, "bundle_path", None)
+            if declared and Path(declared).is_dir():
+                return get_system_model(str(exp.incident_id or exp.hypothesis_id), Path(declared))
 
         candidates: List[Path] = []
         for exp in experiments:
@@ -591,17 +771,37 @@ class SimulationRunner:
                 candidates.append(Path(self.settings.evidence_store_path) / exp.incident_id)
         try:
             candidates.extend(sorted(Path(".").glob("incident-*")))
-            candidates.extend(sorted(Path("golden_incident").glob("incident-*")))
+            candidates.extend(sorted(Path(".").glob("golden_incident/incident-*")))
             candidates.extend(sorted(Path(self.settings.evidence_store_path).glob("*")))
         except Exception:
             pass
 
+        wanted = ""
+        for exp in experiments:
+            if exp.incident_id:
+                wanted = str(exp.incident_id).strip()
+                break
+
+        def _owned(candidate: Path) -> bool:
+            """Whether a searched directory belongs to the incident at hand."""
+            if not wanted:
+                return True
+            if bundle_belongs_to(candidate, wanted):
+                return True
+            logger.debug(
+                f"Ignoring the bundle at {candidate}: it belongs to incident "
+                f"{bundle_incident_id(candidate)}, not to {wanted}."
+            )
+            return False
+
         for candidate in candidates:
-            if candidate.is_dir() and (candidate / "manifest.yaml").exists():
-                return get_system_model(candidate.name, candidate)
+            if not candidate.is_dir() or not _owned(candidate):
+                continue
+            if (candidate / "manifest.yaml").exists():
+                return get_system_model(wanted or candidate.name, candidate)
         for candidate in candidates:
-            if candidate.is_dir():
-                return get_system_model(candidate.name, candidate)
+            if candidate.is_dir() and _owned(candidate):
+                return get_system_model(wanted or candidate.name, candidate)
 
         base_params = TwinParameters()
         for exp in experiments:
@@ -646,7 +846,15 @@ class SimulationRunner:
         self, exp: Experiment, model: Optional[SystemModel]
     ) -> Dict[str, Any]:
         """Execute digital twin simulation trials for a single experiment."""
-        exp_dir = self.workspace_dir / exp.experiment_id
+        # The artefacts are written into the experiment's own branch, so a
+        # second incident with an experiment of the same name does not
+        # overwrite this one's results.
+        branch_dir = getattr(exp, "branch_path", None)
+        exp_dir = (
+            Path(branch_dir)
+            if branch_dir
+            else self.workspace_dir / exp.experiment_id
+        )
         exp_dir.mkdir(parents=True, exist_ok=True)
 
         plan = map_experiment_to_intervention(
@@ -678,21 +886,34 @@ class SimulationRunner:
         reproduction_count = 0
         emergency_stops = 0
         collisions = 0
+        #: Failures by mechanism, counted on each side of the intervention.
+        #: The two sides are what the verdict is made from: a mechanism that
+        #: fired on the baseline and does not fire after the change has been
+        #: eliminated, whatever the latency did.
+        baseline_failures: Dict[str, int] = {}
+        intervention_failures: Dict[str, int] = {}
 
         for i in range(trial_count):
             seed = 4200 + i
             base_rec = baseline_twin.step(seed=seed)
             baseline_records.append(base_rec)
+            base_reason = base_rec.get("failure_reason")
+            if base_reason:
+                baseline_failures[base_reason] = baseline_failures.get(base_reason, 0) + 1
 
             record = intervention_twin.step(seed=seed)
             trial_records.append(record)
+            reason = record.get("failure_reason")
+            if reason:
+                intervention_failures[reason] = intervention_failures.get(reason, 0) + 1
 
             trajectory = intervention_twin.simulate_trajectory(
                 seed=seed,
                 duration_s=max(horizon, 8.0),
                 perception_ages=[record["total_latency_ms"]],
             )
-            # The incident is an emergency stop caused by stale perception
+            # The incident is an emergency stop: either the data was too old
+            # to act on, or the request failed outright and nothing arrived.
             if record["emergency_stop"] or trajectory.get("emergency_stop_triggered"):
                 emergency_stops += 1
                 reproduction_count += 1
@@ -712,12 +933,36 @@ class SimulationRunner:
         budget = model.budget.freshness_budget_ms if model else 120.0
         age_reduction = baseline_age - mean_age
         relative_reduction = age_reduction / baseline_age if baseline_age > 0 else 0.0
-        supported = age_reduction > 0.0 and mean_age < baseline_age
+
+        # Every mechanism the baseline exhibited has to be gone after the
+        # intervention.  A latency improvement alone does not clear a
+        # resource exhaustion: the process still dies.
+        mechanisms = set(baseline_failures) | set(intervention_failures)
+        eliminated = {
+            mechanism: baseline_failures.get(mechanism, 0) > 0
+            and intervention_failures.get(mechanism, 0) == 0
+            for mechanism in sorted(mechanisms)
+        }
+        persisted = [
+            mechanism
+            for mechanism, was_eliminated in eliminated.items()
+            if not was_eliminated and baseline_failures.get(mechanism, 0) > 0
+        ]
+        failures_cleared = not persisted
+
+        latency_supported = age_reduction > 0.0 and mean_age < baseline_age
+        # The intervention is supported when it fixed the mechanism, or - for
+        # a pure latency incident - when it brought the age down.
+        supported = failures_cleared and (
+            latency_supported or bool(baseline_failures)
+        )
         budget_satisfied = mean_age <= budget and reproduction_rate <= 0.05
 
         failure_oracle = {
-            "type": "control_deadline_missed",
-            "description": "Control loop deadline missed due to stale perception latency",
+            "type": _dominant_mechanism(baseline_failures),
+            "description": _mechanism_description(
+                _dominant_mechanism(baseline_failures), baseline_failures
+            ),
             "freshness_budget_ms": budget,
             "control_deadline_ms": model.budget.control_deadline_ms if model else 100.0,
             "avg_total_latency": round(mean_age, 2),
@@ -727,16 +972,22 @@ class SimulationRunner:
             "hypothesis_supported": bool(supported),
             "budget_satisfied": bool(budget_satisfied),
             "baseline_comparison": round(baseline_stale, 4),
+            "failure_reasons": dict(baseline_failures),
+            "mechanisms_eliminated": eliminated,
+            "mechanisms_persisting": persisted,
+            "failures_cleared": failures_cleared,
             "baseline": {
                 "mean_age_ms": round(baseline_age, 2),
                 "p95_age_ms": round(baseline_p95, 2),
                 "stale_rate": round(baseline_stale, 4),
+                "failure_reasons": dict(baseline_failures),
             },
             "intervention": {
                 "mean_age_ms": round(mean_age, 2),
                 "p95_age_ms": round(p95_age, 2),
                 "stale_rate": round(mean_stale_rate, 4),
                 "parameter_overrides": overrides,
+                "failure_reasons": dict(intervention_failures),
             },
             "robot_outcome": {
                 "emergency_stops": emergency_stops,
@@ -751,11 +1002,25 @@ class SimulationRunner:
                 f"Baseline configuration reproduces incident: mean latency {mean_age:.1f}ms, "
                 f"{emergency_stops}/{trial_count} emergency stops."
             )
+        elif persisted:
+            # The mechanism the incident exhibited is still firing.  A latency
+            # improvement does not rescue an out-of-memory kill.
+            conclusion = (
+                f"Hypothesis refuted: the {', '.join(persisted)} failure(s) still occur after "
+                f"the intervention ({intervention_failures}), so the intervention did not "
+                f"remove the mechanism that caused the incident."
+            )
         elif supported and budget_satisfied:
+            cleared = ", ".join(
+                f"{mechanism} ({baseline_failures.get(mechanism, 0)} failures cleared)"
+                for mechanism in sorted(eliminated)
+                if eliminated[mechanism]
+            )
             conclusion = (
                 f"Supported and verified: Intervention brought mean perception latency from {baseline_age:.1f}ms "
                 f"down to {mean_age:.1f}ms (inside {budget:.0f}ms budget); eliminated emergency stops "
                 f"({emergency_stops}/{trial_count} e-stops)."
+                + (f" Cleared: {cleared}." if cleared else "")
             )
         elif supported:
             conclusion = (
@@ -788,12 +1053,20 @@ class SimulationRunner:
                     "gpu_compute_ms",
                     "inference_latency_ms",
                     "network_delay_ms",
+                    "lock_wait_ms",
                     "total_latency_ms",
                     "stale_rate",
                     "deadline_miss_rate",
                     "is_stale",
                     "emergency_stop",
+                    "resource_pressure",
+                    "failure_reason",
+                    "request_failed",
                 ],
+                # The trial record carries more than the columns above - the
+                # failure mechanism among them - and the extra fields are
+                # worth writing down rather than dropping.
+                extrasaction="ignore",
             )
             writer.writeheader()
             for idx, r in enumerate(trial_records, 1):

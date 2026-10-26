@@ -15,6 +15,15 @@ import re
 import yaml
 from pathlib import Path
 from typing import List, Optional
+from cauveris.analysis.parameters import (
+    SECTIONED_CONFIG_SUFFIXES,
+    replace_sectioned_scalar,
+)
+from cauveris.bundles import (
+    bundle_incident_id,
+    bundle_manifest_incident_id,
+    resolve_bundle,
+)
 from cauveris.schemas.experiment import Experiment
 from cauveris.schemas.hypothesis import Hypothesis
 from cauveris.simulation.mapping import map_hypothesis_to_intervention
@@ -25,6 +34,20 @@ logger = logging.getLogger(__name__)
 #: Configuration files the sandbox knows how to edit, by the role the key
 #: plays in them.  The role is what decides the file, not the file's name.
 _CONFIG_SUFFIXES = (".yaml", ".yml", ".json")
+
+
+class _IncidentShim:
+    """
+    The incident identity the bundle resolver needs, without an incident.
+
+    The sandbox knows *which* incident it is working on but not the incident
+    record itself, and the resolver only asks for the id.
+    """
+
+    def __init__(self, id: str):
+        self.id = id
+        self.bundle_path = None
+        self.manifest: dict = {}
 
 
 class SandboxController:
@@ -50,6 +73,23 @@ class SandboxController:
         """
         logger.info(f"Planning experiments for {len(hypotheses)} hypotheses")
         if not incident_id:
+            # The bundle the hypotheses were derived from names the incident
+            # more reliably than a search of the working directory does: it
+            # is the bundle itself that says which incident it is, in its
+            # manifest or in the name it was filed under.
+            for hyp in hypotheses:
+                declared = getattr(hyp, "bundle_path", None)
+                if not declared:
+                    continue
+                owner = bundle_manifest_incident_id(Path(declared))
+                if owner:
+                    incident_id = owner
+                    break
+                stem = Path(declared).name
+                if stem.startswith("incident-"):
+                    incident_id = stem[len("incident-") :]
+                    break
+        if not incident_id:
             # Discover incident_id from hypotheses or working directory
             for hyp in hypotheses:
                 for art in (hyp.supporting_artifact_ids or []):
@@ -60,15 +100,18 @@ class SandboxController:
                 if incident_id:
                     break
             if not incident_id:
-                for p in sorted(Path(".").glob("incident-*")):
-                    if p.is_dir():
-                        incident_id = p.name.replace("incident-", "")
+                # A bundle in the working directory says which incident it
+                # belongs to.  The demo bundle is one of those bundles, not a
+                # special one - what matters is what the bundle declares.
+                for p in sorted(Path(".").glob("incident-*")) + sorted(
+                    Path(".").glob("golden_incident/incident-*")
+                ):
+                    if not p.is_dir():
+                        continue
+                    owner = bundle_incident_id(p)
+                    if owner:
+                        incident_id = owner
                         break
-                if not incident_id:
-                    for p in sorted(Path("golden_incident").glob("incident-*")):
-                        if p.is_dir():
-                            incident_id = p.name.replace("incident-", "")
-                            break
 
         experiments = []
         for hyp in hypotheses:
@@ -78,6 +121,7 @@ class SandboxController:
                 incident_id=incident_id,
                 branch_name=f"experiment/{hyp.hypothesis_id}",
                 intervention=hyp.intervention,
+                bundle_path=getattr(hyp, "bundle_path", None),
                 proposed_changes=[
                     change.as_dict() if hasattr(change, "as_dict") else dict(change)
                     for change in (getattr(hyp, "proposed_changes", None) or [])
@@ -111,34 +155,36 @@ class SandboxController:
     # ------------------------------------------------------------------ setup
 
     def _bundle_source(self, exp: Experiment) -> Optional[Path]:
-        """Locate the incident bundle this experiment is based on."""
+        """
+        Locate the incident bundle this experiment is based on.
+
+        The bundle the hypothesis was derived from wins: branching from any
+        other incident's files would make the experiment - and everything
+        downstream of it - about the wrong incident.  When that path is not
+        available the bundle is resolved by incident id, and a bundle that
+        belongs to a *different* incident is refused rather than used.
+        """
+        declared = getattr(exp, "bundle_path", None)
         incident_id = str(exp.incident_id or "").strip()
-        candidates: List[Path] = []
-        if incident_id:
-            try:
-                candidates.append(Path(self.settings.evidence_store_path) / incident_id)
-            except Exception:
-                pass
-            candidates.append(Path(f"./incident-{incident_id}"))
-            try:
-                candidates.extend(sorted(Path(".").glob(f"*/incident-{incident_id}")))
-            except OSError:
-                pass
 
-        try:
-            candidates.extend(sorted(Path(".").glob("incident-*")))
-            candidates.extend(sorted(Path("golden_incident").glob("incident-*")))
-            candidates.extend(sorted(Path(self.settings.evidence_store_path).glob("*")))
-        except Exception:
-            pass
-
-        for candidate in candidates:
-            if candidate.is_dir() and (candidate / "manifest.yaml").exists():
-                return candidate
-        for candidate in candidates:
+        if declared:
+            candidate = Path(declared)
             if candidate.is_dir():
                 return candidate
-        return None
+            logger.warning(
+                f"[{exp.experiment_id}] The declared bundle {candidate} does not exist; "
+                "the branch falls back to a search by incident id."
+            )
+
+        shim = _IncidentShim(id=incident_id)
+        bundle = resolve_bundle(
+            shim,
+            evidence_store_path=self.settings.evidence_store_path,
+        )
+        if bundle is None:
+            return None
+        logger.info(f"[{exp.experiment_id}] Branching from the incident bundle {bundle}")
+        return bundle
 
     async def _setup_experiment_sandbox(self, exp: Experiment):
         """Prepare the workspace, copy the real bundle, and apply the change."""
@@ -146,6 +192,10 @@ class SandboxController:
         if exp_dir.exists():
             shutil.rmtree(exp_dir)
         exp_dir.mkdir(parents=True, exist_ok=True)
+        # The branch directory travels with the experiment, so that the
+        # simulation reads *this* branch rather than whichever branch the
+        # same-named experiment left in a shared workspace.
+        exp.branch_path = str(exp_dir)
 
         source = self._bundle_source(exp)
         bundle_dir = exp_dir / "bundle"
@@ -201,11 +251,14 @@ class SandboxController:
         does not declare it would hide the fact that the knob is somewhere
         else.
         """
-        if not path.exists() or path.suffix.lower() not in _CONFIG_SUFFIXES:
+        suffix = path.suffix.lower()
+        if not path.exists() or suffix not in _CONFIG_SUFFIXES + SECTIONED_CONFIG_SUFFIXES:
             return False
+        if suffix in SECTIONED_CONFIG_SUFFIXES:
+            return self._apply_to_sectioned_config(path, dotted_key, value)
         try:
             text = path.read_text(encoding="utf-8")
-            if path.suffix.lower() in (".yaml", ".yml"):
+            if suffix in (".yaml", ".yml"):
                 data = yaml.safe_load(text) or {}
             else:
                 data = json.loads(text or "{}")
@@ -233,7 +286,7 @@ class SandboxController:
         old = node[parts[-1]]
         node[parts[-1]] = int(value) if float(value).is_integer() else float(value)
         try:
-            if path.suffix.lower() in (".yaml", ".yml"):
+            if suffix in (".yaml", ".yml"):
                 path.write_text(
                     yaml.safe_dump(data, sort_keys=False, default_flow_style=False),
                     encoding="utf-8",
@@ -244,4 +297,34 @@ class SandboxController:
             logger.warning(f"Could not write {path}: {exc}")
             return False
         logger.info(f"[{path.name}] {dotted_key}: {old} -> {node[parts[-1]]}")
+        return True
+
+    def _apply_to_sectioned_config(
+        self, path: Path, dotted_key: str, value: float
+    ) -> bool:
+        """
+        Set one key in a TOML or INI configuration file.
+
+        The file is edited in place, in its own format: a robot that ships
+        ``robot.toml`` must still have a ``robot.toml`` after the experiment,
+        with the one number changed.
+        """
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception as exc:
+            logger.warning(f"Could not read {path}: {exc}")
+            return False
+        result = replace_sectioned_scalar(text, dotted_key, value)
+        if result is None:
+            logger.info(
+                f"{path} does not declare {dotted_key}; the change needs another home"
+            )
+            return False
+        patched, previous = result
+        try:
+            path.write_text(patched, encoding="utf-8")
+        except Exception as exc:
+            logger.warning(f"Could not write {path}: {exc}")
+            return False
+        logger.info(f"[{path.name}] {dotted_key}: {previous} -> {value}")
         return True

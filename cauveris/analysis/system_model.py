@@ -37,6 +37,8 @@ from .evidence import (
     EvidenceBundle,
     parse_timestamp,
 )
+from .failure_evidence import FailureEvidence, extract_failure_evidence
+from .parameter_registry import FailureMechanism
 from .model import (
     LatencyCalibration,
     SimulationOutcome,
@@ -327,6 +329,10 @@ class SystemModel:
     base_parameters: TwinParameters = field(default_factory=TwinParameters)
     calibration: Optional[LatencyCalibration] = None
     kinematics: Kinematics = field(default_factory=Kinematics)
+    #: The failure mechanism the evidence names, if any.  ``None`` means the
+    #: incident was not a lost request - it was a slow one, which is the
+    #: symptom the pipeline has always reported.
+    failure_evidence: Optional["FailureEvidence"] = None
 
     # Derived observations
     anomaly_onset_correlated_deployment: Optional[DeploymentEvent] = None
@@ -646,6 +652,7 @@ def build_system_model(
     _build_kinematics(model)
     _build_base_parameters(model)
     _calibrate(model)
+    _reproduce_mechanism(model)
     _check_consistency(model)
 
     return model
@@ -1358,7 +1365,52 @@ def _build_base_parameters(model: SystemModel) -> None:
 
     params.clock_skew_ms = model.clock_skew_ms
 
+    _seed_failure_mechanism(model, params)
+
     model.base_parameters = params
+
+
+def _seed_failure_mechanism(model: SystemModel, params: TwinParameters) -> None:
+    """
+    Seed the twin with the mechanism the evidence names.
+
+    The pipeline used to model latency and only latency, so an incident whose
+    request was *lost* - killed for using too much memory, cancelled for
+    exceeding a deadline, abandoned on a contended lock - was diagnosed
+    correctly and then could not be reproduced, patched or verified.  The
+    mechanism's parameters come from the evidence: the envelope and the
+    deadline from the configuration, the working set and the lock hold time
+    from the logs and the metrics.
+
+    A parameter the evidence does not support keeps its default of zero,
+    which means the twin does not model that mechanism at all - the right
+    answer, because a mechanism the evidence does not support should not be
+    simulated and then reported as reproduced.
+    """
+    evidence = extract_failure_evidence(model.bundle)
+    model.failure_evidence = evidence
+    if evidence is None:
+        return
+
+    for name, value in evidence.parameters.items():
+        if not hasattr(params, name):
+            # A parameter the twin does not model cannot be seeded onto it;
+            # logging it keeps the mismatch visible instead of silent.
+            logger.warning(
+                "Failure evidence named parameter %r, which the twin does not model",
+                name,
+            )
+            continue
+        setattr(params, name, value)
+        model.parameter_sources[name] = evidence.sources.get(name, "evidence")
+
+    model.notes.append(evidence.summary)
+    if evidence.observations:
+        for name, value in evidence.observations.items():
+            model.notes.append(
+                f"Observed {name.replace('_', ' ')}: {value:.0f} (the request was lost "
+                "at that point, so the model's latency has to reach it)"
+            )
 
 
 def _arrival_rate_evidence(model: SystemModel) -> Dict[str, Any]:
@@ -1748,6 +1800,140 @@ def _check_consistency(model: SystemModel) -> None:
             f"Recorded {len(model.consistency_findings)} consistency finding(s) in the "
             "evidence; see 'consistency_findings' for details."
         )
+
+
+def _reproduce_mechanism(model: SystemModel) -> None:
+    """
+    Make the fitted model reproduce the mechanism the evidence names.
+
+    A model that cannot reproduce the incident cannot be used to test a fix
+    for it: the counterfactual would be answering a question nobody asked.
+    So when the evidence says a request was *lost* - killed for exceeding its
+    memory ceiling, cancelled at a deadline, abandoned on a contended lock -
+    the model is required to exhibit that failure.
+
+    Where the evidence and the fit disagree, the smallest adjustment
+    consistent with the evidence is made, and the adjustment is reported.
+    Applying it silently would let the model claim a reproduction it did not
+    earn.
+
+    Nothing is adjusted when the model already reproduces the failure: a
+    model that fires for the right reason needs no help.
+    """
+    evidence = model.failure_evidence
+    if evidence is None:
+        return
+
+    mechanism = evidence.mechanism
+    params = model.parameters
+
+    def simulated() -> SimulationOutcome:
+        horizon = max(model.simulation_horizon_s, model.observation_window_s, 12.0)
+        return simulate_pipeline(
+            params,
+            duration_s=horizon,
+            warmup_s=horizon,
+            seed=20260101,
+            freshness_budget_ms=model.budget.freshness_budget_ms,
+            control_deadline_ms=model.budget.control_deadline_ms,
+        )
+
+    outcome = simulated()
+    if outcome.failure_reasons.get(mechanism, 0) > 0:
+        model.notes.append(
+            f"The calibrated model reproduces the {mechanism} failure the evidence "
+            f"reports ({outcome.failed_requests} request(s) failed, "
+            f"{outcome.failure_rate * 100:.0f}% of requests), so a counterfactual "
+            "on this model answers the incident's actual question."
+        )
+        return
+
+    if mechanism == FailureMechanism.RESOURCE_EXHAUSTION:
+        limit = params.resource_limit_mb
+        if limit <= 0:
+            model.notes.append(
+                "The bundle reports a memory exhaustion but declares no memory "
+                "ceiling, so the twin cannot place the workload against an "
+                "envelope and cannot reproduce the kill."
+            )
+            return
+        params.resource_demand_mb = limit * 1.05
+        model.parameter_sources["resource_demand_mb"] = (
+            f"inferred:the process was killed for exceeding {limit:.0f} MiB; the "
+            "working set is set to the smallest value consistent with that fact"
+        )
+        model.notes.append(
+            f"The measured working set did not exceed the {limit:.0f} MiB ceiling, "
+            "but the logs report the process being killed for exceeding it. The "
+            "model therefore places the working set just above the ceiling - the "
+            "smallest value consistent with the evidence - and says so."
+        )
+        return
+
+    if mechanism == FailureMechanism.LOCK_CONTENTION:
+        timeout = params.lock_timeout_ms
+        if timeout <= 0:
+            model.notes.append(
+                "The bundle reports lock contention but declares no acquire "
+                "deadline, so the twin models the wait as latency rather than as "
+                "a lost request."
+            )
+            return
+        params.lock_hold_ms = timeout * 1.05
+        model.parameter_sources["lock_hold_ms"] = (
+            f"inferred:the acquire timed out after {timeout:.0f} ms, so the lock "
+            "was held for longer than that"
+        )
+        model.notes.append(
+            f"The measured lock hold time did not exceed the {timeout:.0f} ms acquire "
+            "deadline, but the logs report the acquire timing out. The model "
+            "therefore holds the lock just past the deadline - the smallest value "
+            "consistent with the evidence - and says so."
+        )
+        return
+
+    if mechanism == FailureMechanism.DEPENDENCY_TIMEOUT:
+        deadline = params.request_timeout_ms
+        if deadline <= 0:
+            model.notes.append(
+                "The bundle reports a dependency timeout but declares no request "
+                "deadline, so the twin has no deadline to miss."
+            )
+            return
+        latency = max(
+            outcome.p95_request_latency_ms,
+            outcome.mean_request_latency_ms,
+        )
+        if latency > deadline:
+            model.notes.append(
+                f"The model's request latency ({latency:.0f} ms) already exceeds the "
+                f"{deadline:.0f} ms deadline, but not in enough requests for the "
+                "failure to be counted; the deadline check in the twin is "
+                "per-request, so the mechanism is treated as reproduced only when "
+                "at least one request is actually cancelled."
+            )
+            return
+        deficit = deadline * 1.05 - latency
+        headroom = 200.0 - params.service_base_ms
+        addition = max(0.0, min(deficit, headroom))
+        if addition <= 0.0:
+            model.notes.append(
+                f"The fitted service time is already at the model's ceiling, and it "
+                f"does not reach the {deadline:.0f} ms deadline the evidence reports. "
+                "The model therefore does not reproduce this cancellation, and any "
+                "counterfactual on it is a statement about latency only."
+            )
+            return
+        params.service_base_ms += addition
+        model.notes.append(
+            f"The fitted model put the request latency at {latency:.0f} ms, below the "
+            f"{deadline:.0f} ms deadline the evidence reports. The service time was "
+            f"raised by {addition:.0f} ms so that the model reproduces the "
+            "cancellation the incident actually contained; the change is reported "
+            "rather than applied silently, because a model that cannot reproduce "
+            "the incident cannot be used to test a fix for it."
+        )
+        return
 
 
 def _calibrate(model: SystemModel) -> None:

@@ -53,6 +53,78 @@ export interface Report {
   type: "investigation" | "executive" | "technical" | "compliance";
 }
 
+/**
+ * The nine invariant gates, in the order the verifier applies them.
+ */
+const INVARIANT_CHECKS: Array<{ key: string; label: string }> = [
+  { key: "applies_cleanly", label: "Patch applies cleanly" },
+  { key: "regression_test_fails_before", label: "Regression test fails before the fix" },
+  { key: "regression_test_passes_after", label: "Regression test passes after the fix" },
+  { key: "original_failure_not_reproduced", label: "Original failure is not reproduced" },
+  { key: "existing_tests_pass", label: "Existing tests still pass" },
+  { key: "safety_invariants_pass", label: "Safety invariants hold" },
+  { key: "performance_within_budget", label: "Performance stays within budget" },
+  { key: "forbidden_change_scan_passes", label: "Forbidden-change scan passes" },
+  { key: "rollback_test_passes", label: "Rollback restores the original state" },
+];
+
+/**
+ * Build the exported report's verification section from the server's own
+ * verification records.
+ *
+ * This used to print two unconditional sentences - "All counterfactual
+ * trials passed causal invariance checks" and "Verified and clean
+ * application candidate generated" - whatever the pipeline actually
+ * produced.  A report is evidence; a report that asserts something the
+ * evidence does not contain is worse than no report at all.  So every claim
+ * below is read off a real verification report, and an incident with no
+ * verified patch says so.
+ */
+function buildVerificationSection(data: any): string {
+  const verifications: any[] = Array.isArray(data?.verification_reports)
+    ? data.verification_reports
+    : [];
+  const patches: any[] = Array.isArray(data?.patch_candidates) ? data.patch_candidates : [];
+  const verified = verifications.filter((v) => v?.verified);
+
+  const gateRows = (report: any) =>
+    INVARIANT_CHECKS.map(
+      (check) =>
+        `<tr><td>${check.label}</td><td style="text-align:right; color:${
+          report?.[check.key] ? "#10b981" : "#f87171"
+        };">${report?.[check.key] ? "PASS" : "FAIL"}</td></tr>`
+    ).join("");
+
+  if (verified.length === 0) {
+    const reason = patches.length
+      ? `${patches.length} patch candidate${patches.length === 1 ? "" : "s"} were produced, but none cleared all nine invariant gates.`
+      : "No patch candidate could be derived for this incident.";
+    return `<div class="section">
+      <div class="section-title">Verification & Remediation</div>
+      <div class="card">
+        <p><strong>Patch Status:</strong> ${reason}</p>
+        <p><strong>Remediation:</strong> No verified remediation is available for this incident.</p>
+      </div>
+    </div>`;
+  }
+
+  const report = verified[0];
+  const passed = INVARIANT_CHECKS.filter((c) => report?.[c.key]).length;
+  return `<div class="section">
+    <div class="section-title">Verification & Remediation</div>
+    <div class="card">
+      <p><strong>Patch Status:</strong> Verified patch <code>${
+        report?.patch_candidate_id || patches[0]?.candidate_id || "unknown"
+      }</code> passed ${passed} of ${INVARIANT_CHECKS.length} invariant gates.</p>
+      <p><strong>Remediation:</strong> A verified patch candidate is available for this incident.</p>
+      <table class="table">
+        <thead><tr><th>Invariant gate</th><th style="text-align:right;">Result</th></tr></thead>
+        <tbody>${gateRows(report)}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
 export function ReportsPage() {
   return (
     <AuthGate redirect="/reports" loadingLabel="Loading reports...">
@@ -202,6 +274,7 @@ function ReportsPageContent() {
    */
   const generateHtmlDocument = (report: Report, data: any) => {
     const isDark = true;
+    const verificationSection = buildVerificationSection(data);
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -312,16 +385,10 @@ function ReportsPageContent() {
           </div>
           <p style="margin-top:8px;">${h.causal_claim}</p>
         </div>
-      `).join("")}
+      `).join("") || '<div class="card"><p>No hypotheses were produced for this incident.</p></div>'}
     </div>
 
-    <div class="section">
-      <div class="section-title">Verification & Remediation</div>
-      <div class="card">
-        <p><strong>Simulation Validation:</strong> All counterfactual trials passed causal invariance checks.</p>
-        <p><strong>Patch Status:</strong> Verified and clean application candidate generated.</p>
-      </div>
-    </div>
+    ${verificationSection}
 
     <div class="section no-print" style="margin-top: 40px; text-align: right;">
       <button onclick="window.print()" style="padding: 10px 20px; background: ${isDark ? "#f0f6fc" : "#1f2328"}; color: ${isDark ? "#0d1117" : "#ffffff"}; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">

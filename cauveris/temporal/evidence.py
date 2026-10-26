@@ -399,6 +399,27 @@ class RawSignalExtractor:
     # ------------------------------------------------------------------ #
     # MCAP triple-clock: log_time, publish_time, embedded header.stamp_ns
     # ------------------------------------------------------------------ #
+    def _resolve_recording(self) -> Optional[Path]:
+        """
+        Locate the incident recording, if the bundle ships one.
+
+        The recording is an *optional* artifact.  A bundle is free to omit
+        it, and a bundle that omits it must still be fully analysable — so
+        this returns ``None`` rather than raising when there is nothing to
+        read.  The canonical file name is preferred, but any recording in the
+        directory is accepted so an incident is never excluded over a name.
+        """
+        recordings_dir = self.bundle_path / "recordings"
+        if not recordings_dir.exists():
+            return None
+
+        preferred = recordings_dir / "robot_run.mcap"
+        if preferred.exists():
+            return preferred
+
+        candidates = sorted(recordings_dir.glob("*.mcap"))
+        return candidates[0] if candidates else None
+
     def extract_mcap_signals(self) -> Dict[str, Any]:
         """
         Return per-message dict with keys:
@@ -414,36 +435,46 @@ class RawSignalExtractor:
             return {}
 
         messages = []
-        with open(self.bundle_path / "recordings" / "robot_run.mcap", "rb") as f:
-            reader = make_reader(f)
-            for schema, channel, message in reader.iter_messages():
-                try:
-                    payload = json.loads(message.data.decode("utf-8"))
-                except Exception:
-                    payload = {}
+        source = self._resolve_recording()
+        if source is None:
+            return {}
 
-                header_stamp = None
-                if isinstance(payload, dict):
-                    header = payload.get("header", {})
-                    if isinstance(header, dict):
-                        stamp = header.get("stamp_ns")
-                        if isinstance(stamp, (int, float)):
-                            header_stamp = int(stamp)
+        try:
+            with open(source, "rb") as f:
+                reader = make_reader(f)
+                for schema, channel, message in reader.iter_messages():
+                    try:
+                        payload = json.loads(message.data.decode("utf-8"))
+                    except Exception:
+                        payload = {}
 
-                age_ms = None
-                if header_stamp is not None:
-                    age_ms = (message.log_time - header_stamp) / 1_000_000.0
+                    header_stamp = None
+                    if isinstance(payload, dict):
+                        header = payload.get("header", {})
+                        if isinstance(header, dict):
+                            stamp = header.get("stamp_ns")
+                            if isinstance(stamp, (int, float)):
+                                header_stamp = int(stamp)
 
-                messages.append(
-                    {
-                        "topic": channel.topic,
-                        "log_time_ns": message.log_time,
-                        "publish_time_ns": message.publish_time,
-                        "header_stamp_ns": header_stamp,
-                        "detection_age_ms": age_ms,
-                        "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
-                    }
-                )
+                    age_ms = None
+                    if header_stamp is not None:
+                        age_ms = (message.log_time - header_stamp) / 1_000_000.0
+
+                    messages.append(
+                        {
+                            "topic": channel.topic,
+                            "log_time_ns": message.log_time,
+                            "publish_time_ns": message.publish_time,
+                            "header_stamp_ns": header_stamp,
+                            "detection_age_ms": age_ms,
+                            "payload_keys": list(payload.keys()) if isinstance(payload, dict) else [],
+                        }
+                    )
+        except Exception:
+            # A truncated or non-MCAP recording contributes no signals, but it
+            # must not abort the stage: the rest of the bundle is analysable.
+            logger.warning("Could not read MCAP recording %s", source, exc_info=True)
+            return {}
 
         # Co-temporal ambiguities: messages on different topics sharing log_time
         by_log_time: Dict[int, List[Dict]] = defaultdict(list)

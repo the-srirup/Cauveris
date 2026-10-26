@@ -83,3 +83,10 @@ class Hypothesis(BaseEntity):
         default_factory=list,
         description="Machine-readable configuration changes this hypothesis proposes",
     )
+    #: The bundle the hypothesis was derived from.  It travels with the
+    #: hypothesis so that every later stage - the sandbox, the simulation, the
+    #: patch forge, the verifier - works on *this* incident's files instead of
+    #: on whichever bundle it happens to find first.
+    bundle_path: Optional[str] = Field(
+        None, description="Path to the incident bundle this hypothesis came from"
+    )

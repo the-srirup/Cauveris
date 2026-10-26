@@ -604,6 +604,9 @@ class PipelineOrchestrator:
                     context.experiments,
                     context.patch_candidates,
                     context.verification_reports,
+                    # The report must not claim more than the pipeline achieved,
+                    # so the stage outcomes travel with it.
+                    stage_statuses=[s.to_dict() for s in self.stages],
                 )
 
             await self._execute_stage(

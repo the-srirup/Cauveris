@@ -1,0 +1,6 @@
+[database]
+max_connections = 20
+connection_timeout_ms = 250
+
+[service]
+worker_count = 4

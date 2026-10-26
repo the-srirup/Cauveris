@@ -50,6 +50,7 @@ class ReportGenerator:
         experiments: List[Experiment],
         patch_candidates: List[PatchCandidate],
         verification_reports: List[VerificationReport],
+        stage_statuses: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         generate a comprehensive incident report.
@@ -60,6 +61,10 @@ class ReportGenerator:
             experiments: Experiment results
             patch_candidates: Generated patch candidates
             verification_reports: Verification results for patches
+            stage_statuses: The pipeline's per-stage outcomes, when known.  A
+                report that says ``COMPLETED`` while a stage was blocked must
+                not hide that, so the caller hands them over rather than the
+                report guessing.
 
         Returns:
             Dictionary containing the report and paths to generated artifacts
@@ -100,7 +105,13 @@ class ReportGenerator:
             "experiments": [self._experiment_to_dict(e) for e in experiments],
             "patch_candidates": [self._patch_to_dict(p) for p in patch_candidates],
             "verification_reports": [self._verification_to_dict(v) for v in verification_reports],
-            "status": "COMPLETED",
+            "status": self._report_status(
+                hypotheses, experiments, patch_candidates, verification_reports, stage_statuses
+            ),
+            "summary": self._report_summary(
+                hypotheses, experiments, patch_candidates, verification_reports
+            ),
+            "stage_outcomes": list(stage_statuses or []),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -126,6 +137,80 @@ class ReportGenerator:
 
         logger.info(f"Report generated at {report_dir}")
         return incident_report
+
+    def _report_status(
+        self,
+        hypotheses: List[Hypothesis],
+        experiments: List[Experiment],
+        patch_candidates: List[PatchCandidate],
+        verification_reports: List[VerificationReport],
+        stage_statuses: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """The status the report actually earned.
+
+        A report that says ``COMPLETED`` must mean the investigation reached a
+        remediation, not merely that the process ran out of stages.  The
+        states are:
+
+        ``COMPLETED``
+            A patch was produced and passed verification.
+        ``DIAGNOSED``
+            Root causes were identified and tested, but no patch survived
+            verification.  The diagnosis is real; the fix is not.
+        ``INCOMPLETE``
+            Evidence was insufficient to say anything conclusive.
+        ``PARTIAL``
+            Some stage of the pipeline failed or was blocked, so the report
+            covers only part of the investigation.
+        """
+        blocked = [
+            s
+            for s in (stage_statuses or [])
+            if str(s.get("status", "")).upper() in ("FAILED", "SKIPPED", "CANCELLED")
+        ]
+        if blocked:
+            return "PARTIAL"
+
+        verified = [v for v in verification_reports if getattr(v, "verified", False)]
+        if verified:
+            return "COMPLETED"
+        if patch_candidates:
+            # A patch exists but did not clear the nine gates.  That is a
+            # diagnosis with an unverified fix attached, and it must not be
+            # presented as a completed repair.
+            return "DIAGNOSED"
+        if hypotheses:
+            return "DIAGNOSED"
+        return "INCOMPLETE"
+
+    def _report_summary(
+        self,
+        hypotheses: List[Hypothesis],
+        experiments: List[Experiment],
+        patch_candidates: List[PatchCandidate],
+        verification_reports: List[VerificationReport],
+    ) -> Dict[str, Any]:
+        """A one-glance account of what the investigation delivered."""
+        verified = [v for v in verification_reports if getattr(v, "verified", False)]
+        checks_passed = 0
+        for report in verified:
+            checks_passed = max(
+                checks_passed,
+                int(report.details.get("checks_passed", 9) or 0)
+                if isinstance(report.details, dict)
+                else 9,
+            )
+        top = max((getattr(p, "score", 0.0) for p in patch_candidates), default=0.0)
+        return {
+            "hypotheses": len(hypotheses),
+            "experiments": len(experiments),
+            "patches": len(patch_candidates),
+            "verified_patches": len(verified),
+            "best_patch_score": round(top, 4),
+            "verification_checks_passed": checks_passed,
+            "verification_checks_total": 9,
+            "remediation_available": bool(verified),
+        }
 
     def _hypothesis_to_dict(self, hypothesis: Hypothesis) -> Dict[str, Any]:
         """Convert Hypothesis object to dictionary."""
@@ -479,7 +564,12 @@ echo "Rollback complete. Please verify the system is back to its previous state.
                     return float(edit.target_value)
                 except (TypeError, ValueError):
                     break
-        m = re.search(r"\+\s*batching_window_ms:\s*(\d+(?:\.\d+)?)", patch.unified_diff)
+        # The diff is the fallback, and it comes in the shape the file's own
+        # format uses: ``batching_window_ms: 7.5`` in YAML, and
+        # ``batching_window_ms = 7.5`` in TOML or INI.
+        m = re.search(
+            r"\+\s*batching_window_ms\s*[:=]\s*(\d+(?:\.\d+)?)", patch.unified_diff
+        )
         if m:
             try:
                 return float(m.group(1))

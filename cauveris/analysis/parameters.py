@@ -30,6 +30,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import yaml
 
+from .parameter_registry import PARAMETER_REGISTRY, needles_for
+
 __all__ = [
     "PARAMETER_NEEDLES",
     "match_parameter",
@@ -40,49 +42,29 @@ __all__ = [
     "reconcile_trailing_comment",
     "replace_yaml_scalar",
     "replace_json_scalar",
+    "sectioned_config_entries",
+    "replace_sectioned_scalar",
+    "parse_config_file",
+    "parse_config_text",
+    "is_packaging_file",
     "source_parameter_entries",
     "replace_source_scalar",
     "find_parameter_in_tree",
     "find_parameter_in_file",
+    "CONFIG_SUFFIXES",
+    "SECTIONED_CONFIG_SUFFIXES",
 ]
 
 #: A configuration key maps onto a pipeline parameter when its name contains
 #: one of these needles.  The order matters: the first match wins, so the
 #: specific names are checked before the general ones.
-PARAMETER_NEEDLES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
-    (
-        "batching_window_ms",
-        ("batching_window", "batch_window", "batching_delay", "batch_timeout"),
-    ),
-    ("max_batch_size", ("max_batch_size", "batch_size", "max_batch")),
-    ("qos_queue_depth", ("qos_depth", "queue_depth")),
-    (
-        "server_workers",
-        (
-            "server_workers",
-            "worker_count",
-            "num_workers",
-            "n_workers",
-            "pool_size",
-            "thread_count",
-        ),
-    ),
-    (
-        "consumer_rate_hz",
-        (
-            "consumer_rate",
-            "control_rate",
-            "control_frequency",
-            "control_hz",
-            "publish_rate",
-        ),
-    ),
-    ("arrival_rate_hz", ("arrival_rate", "sensor_rate", "frame_rate")),
-    ("transport_mean_ms", ("transport_mean", "link_latency", "network_latency")),
-    ("transport_sigma_ms", ("transport_sigma", "link_jitter", "network_jitter")),
-    ("service_base_ms", ("service_base", "inference_base")),
-    ("service_per_item_ms", ("service_per_item", "per_item")),
-    ("clock_skew_ms", ("clock_skew",)),
+#:
+#: The list is derived from :mod:`cauveris.analysis.parameter_registry`, which
+#: is the single source of truth for every parameter the pipeline can
+#: simulate.  Adding a parameter to the registry makes it locatable here, in
+#: the twin and in the verifier at the same time.
+PARAMETER_NEEDLES: Tuple[Tuple[str, Tuple[str, ...]], ...] = needles_for(
+    tuple(PARAMETER_REGISTRY.keys())
 )
 
 
@@ -93,6 +75,13 @@ def match_parameter(key: str) -> Optional[str]:
     The key is matched on its last dotted component and on the full dotted
     path, so ``dynamic_batching.batching_window_ms`` and ``batching_window_ms``
     both resolve to ``batching_window_ms``.
+
+    A parameter may exclude keys explicitly.  Several deadlines live in the
+    same configuration and they are not interchangeable: a control loop's
+    deadline is the watchdog budget and a transform lookup's deadline belongs
+    to another subsystem, and neither is the deadline a caller puts on the
+    request.  Reading one as the other would let a patch shorten a safety
+    budget, so the excluded forms are skipped rather than matched.
     """
     if not key:
         return None
@@ -101,6 +90,14 @@ def match_parameter(key: str) -> Optional[str]:
     candidates = [components[-1]] if components else []
     candidates.append(lowered)
     for parameter, needles in PARAMETER_NEEDLES:
+        spec = PARAMETER_REGISTRY.get(parameter)
+        if spec is not None and spec.excluded_needles:
+            if any(
+                excluded in candidate
+                for candidate in candidates
+                for excluded in spec.excluded_needles
+            ):
+                continue
         for candidate in candidates:
             for needle in needles:
                 if needle in candidate:
@@ -402,6 +399,260 @@ def replace_json_scalar(
 
 
 # ---------------------------------------------------------------------------
+# Sectioned configuration text - TOML and INI
+#
+# A robot whose parameters ship as ``robot.toml`` or ``robot.ini`` declares
+# them the same way: a ``[section]`` header followed by ``key = value`` lines.
+# The keys are reported in the same dotted shape a nested YAML document
+# produces, so the rest of the pipeline does not need to know which format the
+# customer's robot happens to use.
+# ---------------------------------------------------------------------------
+
+#: A section header: ``[dynamic_batching]``.
+_SECTION_HEADER_RE = re.compile(r"^\s*\[(?P<name>[^\]]+)\]\s*$")
+
+#: A ``key = value`` assignment, with the indentation and the spacing kept so
+#: that the value can be replaced without disturbing the rest of the line.
+_SECTION_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<key>[A-Za-z0-9_.\-]+)(?P<gap>\s*=\s*)(?P<value>.*)$"
+)
+
+
+def _split_sectioned_value(rest: str) -> Tuple[str, str]:
+    """
+    Split the right-hand side of a sectioned assignment.
+
+    Returns:
+        ``(value text, tail)``.  The tail is everything that follows the
+        value - the gap and the trailing comment - so that a patched line is
+        byte-identical to the original except for the number.
+    """
+    text = rest
+    if text[:1] in ("'", '"'):
+        quote = text[0]
+        end = text.find(quote, 1)
+        if end != -1:
+            return text[: end + 1], text[end + 1 :]
+    for marker in ("#", ";"):
+        index = text.find(marker)
+        if index != -1:
+            head = text[:index]
+            value = head.rstrip()
+            return value, head[len(value) :] + text[index:]
+    value = text.rstrip()
+    return value, text[len(value) :]
+
+
+def _parse_sectioned_scalar(text: str) -> Any:
+    """The value a sectioned assignment's raw text denotes."""
+    value = text.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        value = value[1:-1]
+    lowered = value.lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value
+
+
+def sectioned_config_entries(text: str) -> List[Tuple[str, Any]]:
+    """
+    Every key a sectioned configuration file declares.
+
+    Returns:
+        A list of ``(dotted key, value)`` pairs.  A key declared inside a
+        section is reported as ``section.key``; a key declared at the top
+        level is reported as it stands.
+    """
+    entries: List[Tuple[str, Any]] = []
+    section = ""
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        header = _SECTION_HEADER_RE.match(raw_line)
+        if header:
+            section = header.group("name").strip()
+            continue
+        match = _SECTION_LINE_RE.match(raw_line)
+        if not match:
+            continue
+        key = match.group("key")
+        dotted = f"{section}.{key}" if section else key
+        value_text, _tail = _split_sectioned_value(match.group("value"))
+        entries.append((dotted, _parse_sectioned_scalar(value_text)))
+    return entries
+
+
+def _same_dotted_key(found: str, wanted: str) -> bool:
+    """
+    Whether two dotted keys name the same assignment.
+
+    A key given without its section matches the first declaration of that
+    name; a key given *with* a section matches only that declaration, because
+    a file may declare the same name under two sections and only one of them
+    is the knob the patch means.
+    """
+    if found == wanted:
+        return True
+    return "." not in wanted and found.rsplit(".", 1)[-1] == wanted
+
+
+def _coerce_config_value(value: Any) -> Any:
+    """A configuration value with the type it denotes."""
+    if not isinstance(value, str):
+        return value
+    lowered = value.strip().lower()
+    if lowered in ("true", "yes", "on"):
+        return True
+    if lowered in ("false", "no", "off"):
+        return False
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value
+
+
+def _parse_ini(text: str) -> Optional[Dict[str, Any]]:
+    """An INI file as a nested mapping."""
+    import configparser
+
+    parser = configparser.ConfigParser()
+    try:
+        parser.read_string(text)
+    except Exception:
+        # Keys declared before any section header are still configuration.
+        entries = sectioned_config_entries(text)
+        return dict(entries) if entries else None
+    data: Dict[str, Any] = {}
+    for section in parser.sections():
+        node: Dict[str, Any] = data
+        parts = section.split(".")
+        for part in parts[:-1]:
+            child = node.setdefault(part, {})
+            if not isinstance(child, dict):
+                return None
+            node = child
+        node[parts[-1]] = {
+            key: _coerce_config_value(value) for key, value in parser.items(section)
+        }
+    for name, value in parser.defaults().items():
+        data.setdefault(name, _coerce_config_value(value))
+    return data
+
+
+def parse_config_text(text: str, suffix: str) -> Optional[Dict[str, Any]]:
+    """
+    Read configuration text into a nested mapping.
+
+    The format is decided by the suffix, not by the file's name.
+
+    Returns:
+        The parsed mapping, or ``None`` when the text cannot be read as
+        configuration of that format.
+    """
+    suffix = suffix.lower()
+    try:
+        if suffix == ".json":
+            data: Any = json.loads(text)
+        elif suffix in (".yaml", ".yml"):
+            data = yaml.safe_load(text)
+        elif suffix == ".toml":
+            import tomllib
+
+            data = tomllib.loads(text)
+        elif suffix in (".ini", ".cfg", ".conf"):
+            data = _parse_ini(text)
+        else:
+            return None
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def parse_config_file(path: Path) -> Optional[Dict[str, Any]]:
+    """
+    Read a configuration file into a nested mapping.
+
+    The format is decided by the file's suffix, not by its name: a robot's
+    parameters may ship as YAML, JSON, TOML or INI, and all four are read
+    into the same shape, so the rest of the pipeline does not have to care
+    which one a customer's robot happens to use.
+
+    Returns:
+        The parsed mapping, or ``None`` when the file cannot be read as
+        configuration.
+    """
+    path = Path(path)
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return parse_config_text(text, path.suffix.lower())
+
+
+def replace_sectioned_scalar(
+    text: str, dotted_key: str, new_value: Any
+) -> Optional[Tuple[str, Any]]:
+    """
+    Change one numeric assignment in a sectioned configuration file.
+
+    The section matters: a file may declare ``timeout_ms`` under two
+    different sections, and only the one the patch names may change, so the
+    assignment is located by section *and* key rather than by key alone.
+
+    The quoting style, the indentation, the spacing around the ``=`` and the
+    trailing comment are all preserved, which is what makes the diff between
+    the original and the patched file a one-line diff.
+
+    Returns:
+        ``(new text, previous value)``, or ``None`` when the key is absent
+        from this file.
+    """
+    lines = text.splitlines()
+    section = ""
+    for index, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        header = _SECTION_HEADER_RE.match(raw_line)
+        if header:
+            section = header.group("name").strip()
+            continue
+        match = _SECTION_LINE_RE.match(raw_line)
+        if not match:
+            continue
+        key = match.group("key")
+        dotted = f"{section}.{key}" if section else key
+        if not _same_dotted_key(dotted, dotted_key):
+            continue
+        value_text, tail = _split_sectioned_value(match.group("value"))
+        previous = _parse_sectioned_scalar(value_text)
+        if not isinstance(previous, (int, float)) or isinstance(previous, bool):
+            continue
+        rendered = _format_scalar(new_value)
+        if len(value_text) >= 2 and value_text[0] == value_text[-1] in ("'", '"'):
+            rendered = f"{value_text[0]}{rendered}{value_text[0]}"
+        lines[index] = (
+            match.group("indent") + key + match.group("gap") + rendered + tail
+        )
+        return "\n".join(lines) + ("\n" if text.endswith("\n") else ""), previous
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Source text editing
 # ---------------------------------------------------------------------------
 
@@ -466,7 +717,36 @@ def replace_source_scalar(
 
 #: The file types a configuration or source knob can live in.
 CONFIG_SUFFIXES = (".yaml", ".yml", ".json")
+
+#: Configuration files that declare their keys in sections rather than in a
+#: nested mapping.  A robot that ships ``robot.toml`` is not without a
+#: configuration, so its knobs have to be found and patched exactly as a
+#: YAML document's are.
+SECTIONED_CONFIG_SUFFIXES = (".toml", ".ini", ".cfg", ".conf")
+
+#: Files that are configuration *of the toolchain*, not of the robot.  A
+#: bundle that ships its own ``pyproject.toml`` is a Python project, not a
+#: robot whose parameters are named ``batching_window_ms``.
+_PACKAGING_NAMES = frozenset(
+    {
+        "pyproject.toml",
+        "setup.cfg",
+        "tox.ini",
+        "pytest.ini",
+        ".coveragerc",
+        "mypy.ini",
+    }
+)
+
 SOURCE_SUFFIXES = (".py", ".cpp", ".cc", ".cxx", ".h", ".hpp")
+
+
+def is_packaging_file(path: Path) -> bool:
+    """Whether a file configures the build rather than the robot."""
+    name = Path(path).name.lower()
+    if name in _PACKAGING_NAMES:
+        return True
+    return name.startswith(".")
 
 
 def _iter_files(root: Path, suffixes: Iterable[str]) -> List[Path]:
@@ -516,10 +796,32 @@ def find_parameter_in_tree(
             found = find_parameter_in_file(path, parameter, relative_to=root)
             if found is not None:
                 return found
+        for path in _iter_files(search_root, SECTIONED_CONFIG_SUFFIXES):
+            if is_packaging_file(path):
+                continue
+            found = find_parameter_in_file(path, parameter, relative_to=root)
+            if found is not None:
+                return found
         for path in _iter_files(search_root, SOURCE_SUFFIXES):
             found = find_parameter_in_file(path, parameter, relative_to=root)
             if found is not None:
                 return found
+
+    # A bundle may keep its configuration beside the manifest rather than in
+    # a ``config/`` directory - a ``robot.toml`` at the top level is a common
+    # way to ship one - so the root's own configuration files are searched
+    # too.  Only the files directly in the root are considered: a source file
+    # that mentions the name is not where the robot keeps its settings.
+    top_level = sorted(p for p in root.iterdir() if p.is_file()) if root.is_dir() else []
+    for path in top_level:
+        suffix = path.suffix.lower()
+        if suffix not in CONFIG_SUFFIXES + SECTIONED_CONFIG_SUFFIXES:
+            continue
+        if is_packaging_file(path):
+            continue
+        found = find_parameter_in_file(path, parameter, relative_to=root)
+        if found is not None:
+            return found
 
     return None
 
@@ -567,6 +869,13 @@ def find_parameter_in_file(
             value = _parse_yaml_scalar(value_text)
             if value is not None:
                 return relative, key, value
+        return None
+
+    if suffix in SECTIONED_CONFIG_SUFFIXES:
+        for key, value in sectioned_config_entries(text):
+            if match_parameter(key) != parameter:
+                continue
+            return relative, key, value
         return None
 
     for name, value in source_parameter_entries(text).get(parameter, []):

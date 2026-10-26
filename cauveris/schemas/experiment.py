@@ -17,6 +17,21 @@ class Experiment(BaseEntity):
     )
     branch_name: str = Field(..., description="Name of the sandbox branch")
     intervention: str = Field(..., description="Applied intervention")
+    #: The bundle this experiment branches from.  It is copied from the
+    #: hypothesis, which got it from the incident, so that the sandbox, the
+    #: simulation and the patch forge all work on *this* incident's files
+    #: rather than on whichever bundle the search happens to find first.
+    bundle_path: Optional[str] = Field(
+        None, description="Path to the incident bundle this experiment branches from"
+    )
+    #: Where the sandbox put this experiment's branch.  The simulation reads
+    #: the branch's description from here rather than from a shared
+    #: workspace directory: an experiment id is the same for every incident
+    #: that has a hypothesis of that name, so a shared directory would hand
+    #: one incident the branch another incident cut.
+    branch_path: Optional[str] = Field(
+        None, description="Path to the sandbox branch directory for this experiment"
+    )
     proposed_changes: List[Dict[str, Any]] = Field(
         default_factory=list,
         description="Machine-readable configuration changes this experiment applies",

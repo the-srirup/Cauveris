@@ -1,0 +1,8 @@
+incident_id: CAU-7777
+title: Payment gateway database connection pool exhausted
+description: A payments API started rejecting requests after the connection pool was exhausted under a traffic spike.
+system_name: payments-api
+approximate_time: '2026-03-11T14:00:00Z'
+required_evidence:
+  - config/payments.toml
+  - logs/gateway.log

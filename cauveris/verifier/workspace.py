@@ -14,13 +14,14 @@ is understood exactly as well as one that calls it ``batching_window_ms``.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import yaml
+
+from cauveris.analysis.parameter_registry import PARAMETER_REGISTRY, needles_for
+from cauveris.analysis.parameters import is_packaging_file, parse_config_file
 
 logger = logging.getLogger(__name__)
 
@@ -29,30 +30,23 @@ logger = logging.getLogger(__name__)
 #: names, so a diff against ``config/inference.yaml`` applies to the copy.
 WORKSPACE_SOURCE_DIRS = ("config", "source", "deploy", "tests", "scripts")
 
+#: Configuration files that sit beside the manifest rather than in a
+#: directory of their own.  They are copied into the workspace too, because a
+#: patch that changes ``robot.toml`` has to be verifiable against that file -
+#: a customer whose settings live at the top of the bundle must not have
+#: their fix rejected for living in the wrong place.
+WORKSPACE_ROOT_SUFFIXES = (".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".conf")
+
 #: A configuration key maps onto a pipeline parameter when its name contains
 #: one of these needles.  The order matters: the first match wins, so the
 #: specific names are checked before the general ones.
-_TWIN_PARAMETER_NEEDLES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
-    (
-        "batching_window_ms",
-        ("batching_window", "batch_window", "batching_delay", "batch_timeout"),
-    ),
-    ("max_batch_size", ("max_batch_size", "batch_size", "max_batch")),
-    ("qos_queue_depth", ("qos_depth", "queue_depth")),
-    (
-        "server_workers",
-        ("server_workers", "worker_count", "num_workers", "n_workers", "pool_size", "thread_count"),
-    ),
-    (
-        "consumer_rate_hz",
-        ("consumer_rate", "control_rate", "control_frequency", "control_hz", "publish_rate"),
-    ),
-    ("arrival_rate_hz", ("arrival_rate", "sensor_rate", "frame_rate")),
-    ("transport_mean_ms", ("transport_mean", "link_latency", "network_latency")),
-    ("transport_sigma_ms", ("transport_sigma", "link_jitter", "network_jitter")),
-    ("service_base_ms", ("service_base", "inference_base")),
-    ("service_per_item_ms", ("service_per_item", "per_item")),
-    ("clock_skew_ms", ("clock_skew",)),
+#:
+#: Derived from the parameter registry, which is the single source of truth.
+#: The verifier therefore recognises exactly the parameters the twin can
+#: simulate - a parameter it does not recognise is a parameter nothing can
+#: predict, so treating it as a knob would be meaningless.
+_TWIN_PARAMETER_NEEDLES: Tuple[Tuple[str, Tuple[str, ...]], ...] = needles_for(
+    tuple(PARAMETER_REGISTRY.keys())
 )
 
 #: Boolean configuration keys that arm a safety behaviour.  A key that was
@@ -120,6 +114,12 @@ def match_twin_parameter(key: str) -> Optional[str]:
     The key is matched on its last dotted component and on the full dotted
     path, so ``dynamic_batching.batching_window_ms`` and ``batching_window_ms``
     both resolve to ``batching_window_ms``.
+
+    A parameter may exclude keys explicitly, so that a key naming a *different*
+    deadline - the control loop's watchdog budget, a transform lookup's
+    deadline - is not read as this parameter.  The rule is the same one the
+    analysis layer applies, so both layers resolve a key to the same
+    parameter.
     """
     if not key:
         return None
@@ -128,6 +128,14 @@ def match_twin_parameter(key: str) -> Optional[str]:
     candidates = [components[-1]] if components else []
     candidates.append(lowered)
     for parameter, needles in _TWIN_PARAMETER_NEEDLES:
+        spec = PARAMETER_REGISTRY.get(parameter)
+        if spec is not None and spec.excluded_needles:
+            if any(
+                excluded in candidate
+                for candidate in candidates
+                for excluded in spec.excluded_needles
+            ):
+                continue
         for candidate in candidates:
             for needle in needles:
                 if needle in candidate:
@@ -138,9 +146,9 @@ def match_twin_parameter(key: str) -> Optional[str]:
 def _iter_config_files(workspace: Path) -> List[Path]:
     """Every configuration file in the workspace, in a stable order."""
     found: List[Path] = []
-    for pattern in ("*.yaml", "*.yml", "*.json"):
+    for pattern in ("*.yaml", "*.yml", "*.json", "*.toml", "*.ini", "*.cfg", "*.conf"):
         found.extend(workspace.rglob(pattern))
-    return sorted(p for p in found if p.is_file())
+    return sorted(p for p in found if p.is_file() and not is_packaging_file(p))
 
 
 def read_workspace_config(workspace: Path) -> Dict[str, Dict[str, Any]]:
@@ -153,16 +161,9 @@ def read_workspace_config(workspace: Path) -> Dict[str, Dict[str, Any]]:
     workspace = Path(workspace)
     result: Dict[str, Dict[str, Any]] = {}
     for path in _iter_config_files(workspace):
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-            if path.suffix.lower() == ".json":
-                data = json.loads(text)
-            else:
-                data = yaml.safe_load(text)
-        except Exception as exc:
-            logger.debug(f"Could not parse config {path}: {exc}")
-            continue
-        if not isinstance(data, dict):
+        data = parse_config_file(path)
+        if data is None:
+            logger.debug(f"Could not parse config {path}")
             continue
         flat = _flatten(data)
         if flat:

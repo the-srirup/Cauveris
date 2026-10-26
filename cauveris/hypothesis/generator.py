@@ -27,7 +27,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import yaml
 
 from cauveris.analysis import (
     ParameterRole,
@@ -37,6 +36,16 @@ from cauveris.analysis import (
     flatten_config,
     get_system_model,
 )
+from cauveris.analysis.failure_evidence import (
+    LOCK_NEEDLES,
+    MEMORY_NEEDLES,
+    TIMEOUT_NEEDLES,
+    FailureEvidence,
+    classify_log_records,
+    extract_all_mechanisms,
+)
+from cauveris.analysis.parameter_registry import FailureMechanism
+from cauveris.analysis.parameters import find_parameter_in_tree, parse_config_file
 from cauveris.analysis.system_model import classify_parameter
 from cauveris.config import get_settings
 from cauveris.model_gateway import create_model_gateway
@@ -110,15 +119,8 @@ class _Evidence:
             return entries
         for rel in self.categories.get("config", ()):
             path = self.bundle_path / rel
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-                if path.suffix.lower() in (".yaml", ".yml"):
-                    data = yaml.safe_load(text)
-                else:
-                    data = json.loads(text)
-            except Exception:
-                continue
-            if not isinstance(data, dict):
+            data = parse_config_file(path)
+            if data is None:
                 continue
             for key, value in flatten_config(data).items():
                 entries.append((rel, key, value))
@@ -164,22 +166,40 @@ class HypothesisGenerator:
 
         # Evidence-derived hypotheses.  Each rule decides for itself whether
         # the bundle supports it; a rule that finds no support returns None.
-        for rule in (
-            self._rule_batching_window,
-            self._rule_arrival_rate,
-            self._rule_consumer_sampling,
-            self._rule_subscriber_buffer,
-            self._rule_transport,
-            self._rule_resource_contention,
-            self._rule_clock_skew,
-        ):
-            try:
-                hypothesis = rule(evidence)
-            except Exception as exc:  # a broken rule must not kill the rest
-                logger.warning(f"Hypothesis rule {rule.__name__} failed: {exc}")
-                continue
-            if hypothesis is not None:
-                hypotheses.append(hypothesis)
+        #
+        # The rules below all explain a *latency* incident: the request
+        # arrived, and it was too old to act on.  When the logs name a
+        # concrete mechanism - a killed process, a cancelled request, an
+        # abandoned acquire - the requests were **lost** instead, and a
+        # latency knob cannot recover them.  Offering one anyway would put a
+        # patch in front of the operator that cannot fix the incident they
+        # reported, so the latency rules stand down and the mechanism's own
+        # hypothesis is the one that is investigated.  The freshness budget
+        # is still asserted by the verifier, so a patch that trades a lost
+        # request for a stale one still fails.
+        mechanism = self._incident_mechanism(evidence)
+        if mechanism is None:
+            for rule in (
+                self._rule_batching_window,
+                self._rule_arrival_rate,
+                self._rule_consumer_sampling,
+                self._rule_subscriber_buffer,
+                self._rule_transport,
+                self._rule_resource_contention,
+                self._rule_clock_skew,
+            ):
+                try:
+                    hypothesis = rule(evidence)
+                except Exception as exc:  # a broken rule must not kill the rest
+                    logger.warning(f"Hypothesis rule {rule.__name__} failed: {exc}")
+                    continue
+                if hypothesis is not None:
+                    hypotheses.append(hypothesis)
+        else:
+            logger.info(
+                f"The logs name the {mechanism} mechanism, so the request was lost "
+                "rather than late; the latency rules are not offered for this incident."
+            )
 
         # Domain-agnostic failure patterns recovered from the logs.
         hypotheses.extend(self._rule_log_patterns(evidence))
@@ -193,6 +213,19 @@ class HypothesisGenerator:
             logger.warning("Could not generate specific hypotheses, using fallback")
             hypotheses.append(self._fallback_hypothesis(incident))
 
+        # Every hypothesis carries the bundle it was derived from.  Without it
+        # the later stages have to guess which incident they are working on,
+        # and the guess is usually the one whose files happen to be lying
+        # around - which is how a synthetic incident ends up being simulated
+        # against the demo bundle.
+        bundle_path = evidence.bundle_path
+        if bundle_path is not None:
+            for hypothesis in hypotheses:
+                try:
+                    hypothesis.bundle_path = str(bundle_path)
+                except Exception:  # a frozen hypothesis is not fatal
+                    logger.debug("Could not record the bundle path on a hypothesis")
+
         hypotheses.sort(key=lambda h: h.confidence_prior, reverse=True)
         logger.info(
             f"Generated {len(hypotheses)} hypotheses for incident {incident.id}: "
@@ -201,6 +234,25 @@ class HypothesisGenerator:
         return hypotheses
 
     # ------------------------------------------------------------- evidence
+
+    def _incident_mechanism(self, ev: _Evidence) -> Optional[str]:
+        """
+        The failure mechanism the incident's own logs name, if any.
+
+        The reading comes from the analysis layer, so the hypothesis layer and
+        the model that reproduces the incident cannot disagree about what
+        happened.  ``None`` means the incident named no mechanism at all, which
+        is the case for a latency incident: the data arrived, and it was too
+        old to act on.
+        """
+        model = ev.model
+        if model is None:
+            return None
+        evidence = getattr(model, "failure_evidence", None)
+        if evidence is None:
+            return None
+        mechanism = getattr(evidence, "mechanism", None)
+        return str(mechanism) if mechanism else None
 
     def _collect_evidence(self, ev_incident: Incident) -> _Evidence:
         """Locate the bundle, build the system model, index the artefacts."""
@@ -1106,7 +1158,16 @@ class HypothesisGenerator:
         Domain-agnostic failure patterns recovered from the bundle's logs.
 
         These fire on the log text itself, so they work for incidents whose
-        configuration and metrics say nothing about the failure.
+        configuration and metrics say nothing about the failure.  The
+        patterns are shared with the analysis layer's mechanism reader, so
+        the hypothesis that names a mechanism and the model that reproduces
+        it cannot drift apart.
+
+        Every hypothesis produced here carries a **structured proposal** - the
+        knob to turn and the value to turn it to.  Without one the
+        experiment mapper has nothing to apply, the twin simulates an
+        unchanged system, and the patch forge returns no patch: the
+        incident is diagnosed and then left unfixed.
         """
         model = ev.model
         if model is None:
@@ -1115,37 +1176,34 @@ class HypothesisGenerator:
         patterns = (
             (
                 "h_memory_exhaustion",
-                (r"\boom\b", r"out of memory", r"memory limit", r"cgroup", r"heap"),
+                FailureMechanism.RESOURCE_EXHAUSTION,
+                MEMORY_NEEDLES,
                 "Process memory consumption exceeded its quota, so the process was killed and the "
                 "requests it was serving were dropped",
                 "Memory usage approaches 100% of the limit immediately before the process dies",
                 "Peak memory usage stays below 60% of the limit across the incident window",
-                "Increase the container memory quota and fix the allocation that grows without "
-                "bound",
                 ["memory_limit_mb", "max_heap_size"],
             ),
             (
                 "h_dependency_timeout",
-                (r"timed? ?out", r"timeout", r"connection refused", r"connection reset"),
+                FailureMechanism.DEPENDENCY_TIMEOUT,
+                TIMEOUT_NEEDLES,
                 "An upstream dependency did not answer inside the client's deadline, so the "
                 "request was cancelled and the work was discarded",
                 "The downstream call duration rises past the configured timeout and the "
                 "cancellation propagates to the caller",
                 "Round-trip latency to the dependency stays well inside the configured timeout",
-                "Give the dependency a circuit breaker with bounded retries and a deadline "
-                "derived from the safety budget",
                 ["timeout_ms", "connect_timeout", "max_attempts"],
             ),
             (
                 "h_lock_contention",
-                (r"deadlock", r"lock timeout", r"pool exhausted", r"thread starvation"),
+                FailureMechanism.LOCK_CONTENTION,
+                LOCK_NEEDLES,
                 "Concurrent workers deadlocked on a shared resource, so the requests behind them "
                 "stopped being served",
                 "The worker pool reaches its maximum size without completing tasks, and the "
                 "completion rate collapses",
                 "Active worker threads turn over normally and the lock turnaround time stays flat",
-                "Impose a global lock order and a bounded acquire timeout so a contended lock "
-                "cannot stall the pool",
                 ["lock_timeout_ms", "max_workers"],
             ),
         )
@@ -1155,17 +1213,25 @@ class HypothesisGenerator:
         if not logs:
             return hypotheses
 
+        mechanisms = extract_all_mechanisms(model.bundle)
+        # The records are grouped by the *analysis layer's* classification, not
+        # by a second, private needle match.  A record that mentions a lock is
+        # a lock record even when it also says "timeout": re-matching the raw
+        # text here would invent a dependency timeout the incident never had,
+        # and the pipeline would then spend a patch and a verification run on a
+        # failure that did not occur.
+        buckets = classify_log_records(model.bundle)
+
         for (
             hypothesis_id,
+            mechanism,
             needles,
             claim,
             expected,
             falsifying,
-            intervention,
             parameters,
         ) in patterns:
-            regex = re.compile("|".join(needles), re.IGNORECASE)
-            matches = [record for record in logs if regex.search(record.text)]
+            matches = buckets.get(mechanism, [])
             if not matches:
                 continue
 
@@ -1178,6 +1244,11 @@ class HypothesisGenerator:
             count = len(matches)
             confidence = _clamp(
                 0.35 + 0.10 * min(count, 5) + (0.15 if level in ("CRITICAL", "ERROR") else 0.0)
+            )
+
+            family_evidence = mechanisms.get(mechanism)
+            changes = self._propose_for_mechanism(
+                ev, mechanism, family_evidence
             )
 
             hypotheses.append(
@@ -1196,18 +1267,417 @@ class HypothesisGenerator:
                     confidence_prior=round(confidence, 3),
                     expected_observation=expected,
                     falsifying_observation=falsifying,
-                    intervention=intervention,
+                    intervention=self._intervention_text(mechanism, changes),
                     estimated_trials=3,
                     estimated_cost=1.2,
                     likely_files=sources,
                     likely_parameters=parameters,
-                    safety_constraints=[
-                        "Keep the safety watchdog active while the fix is trialled",
-                        "Do not disable the limit that raised the failure",
-                    ],
+                    safety_constraints=self._safety_constraints(mechanism, changes),
+                    proposed_changes=changes,
                 )
             )
         return hypotheses
+
+    # ------------------------------------------------- mechanism remediation
+
+    def _propose_for_mechanism(
+        self,
+        ev: _Evidence,
+        mechanism: str,
+        evidence: Optional[FailureEvidence],
+    ) -> List[ProposedChange]:
+        """
+        The configuration change that would clear a mechanism.
+
+        Each family's remediation is derived from the numbers the evidence
+        supports, so the proposal is a value rather than an adjective:
+
+        * a **resource exhaustion** is cleared by giving the workload an
+          envelope its measured working set fits inside;
+        * a **dependency timeout** is cleared by bringing the request
+          latency inside the deadline the client set - by shortening the
+          wait for the batch, and by serving requests in parallel rather
+          than one behind another;
+        * a **lock contention** is cleared by giving the caller enough
+          patience for the hold time the logs record, bounded by the safety
+          budget so the wait can never become a staleness incident.
+
+        The deadline itself is deliberately *not* raised for a timeout: a
+        longer deadline does not make a dependency faster, it only makes
+        the failure take longer to notice.
+        """
+        model = ev.model
+        if model is None or evidence is None:
+            return []
+
+        if mechanism == FailureMechanism.RESOURCE_EXHAUSTION:
+            return self._propose_memory(ev, evidence)
+        if mechanism == FailureMechanism.DEPENDENCY_TIMEOUT:
+            return self._propose_timeout(ev, evidence)
+        if mechanism == FailureMechanism.LOCK_CONTENTION:
+            return self._propose_lock(ev, evidence)
+        return []
+
+    def _declared_in_bundle(
+        self, ev: _Evidence, parameter: str
+    ) -> Optional[Tuple[str, str, Any]]:
+        """Where the bundle declares a parameter: ``(file, key, value)``."""
+        root = ev.bundle_path
+        if root is None:
+            return None
+        try:
+            found = find_parameter_in_tree(Path(root), parameter)
+        except Exception as exc:  # a bundle that cannot be searched is not fatal
+            logger.debug("Could not search the bundle for %s: %s", parameter, exc)
+            return None
+        if found is None:
+            return None
+        return found
+
+    def _propose_memory(
+        self, ev: _Evidence, evidence: FailureEvidence
+    ) -> List[ProposedChange]:
+        """Give the workload an envelope its measured working set fits inside."""
+        limit = evidence.parameters.get("resource_limit_mb", 0.0)
+        demand = evidence.parameters.get("resource_demand_mb", 0.0)
+        if limit <= 0:
+            return []
+
+        # Half again over the larger of the two numbers: enough headroom for
+        # the workload to breathe, and not so much that the change is a
+        # blank cheque.
+        required = max(demand, limit) * 1.5
+        target = float(int(math.ceil(required)))
+        if target <= limit:
+            return []
+
+        declared = self._declared_in_bundle(ev, "resource_limit_mb")
+        changes = [
+            ProposedChange(
+                parameter="resource_limit_mb",
+                current_value=round(limit, 3),
+                target_value=target,
+                file=declared[0] if declared else None,
+                config_key=declared[1] if declared else None,
+                rationale=(
+                    f"The workload needed {demand:.0f} MiB against a {limit:.0f} MiB "
+                    f"ceiling, so it was killed. An envelope of {target:.0f} MiB leaves "
+                    "the measured working set inside the limit with headroom."
+                ),
+                sufficient_on_its_own=True,
+            )
+        ]
+
+        # The envelope is not the only way to stop the kill: a smaller batch
+        # holds less of the workload in memory at once.  It is proposed as a
+        # second, non-sufficient change because the twin models the envelope,
+        # not the allocator.
+        batch = ev.model.base_parameters.max_batch_size if ev.model else 0
+        if batch and batch > 1:
+            declared_batch = self._declared_in_bundle(ev, "max_batch_size")
+            changes.append(
+                ProposedChange(
+                    parameter="max_batch_size",
+                    current_value=float(batch),
+                    target_value=float(max(1, batch // 2)),
+                    file=declared_batch[0] if declared_batch else None,
+                    config_key=declared_batch[1] if declared_batch else None,
+                    rationale=(
+                        "Halving the batch halves the frames held in memory at once, "
+                        "which reduces the working set the envelope has to accommodate."
+                    ),
+                    sufficient_on_its_own=False,
+                )
+            )
+        return changes
+
+    def _propose_timeout(
+        self, ev: _Evidence, evidence: FailureEvidence
+    ) -> List[ProposedChange]:
+        """
+        Bring the request latency inside the deadline the client set.
+
+        Three knobs shorten a request, and each is used only when it is the
+        one that is actually too long:
+
+        * ``max_batch_size`` - the service cost of a batch grows with the
+          number of items in it, so a batch the server is allowed to fill
+          completely is a batch that is served slowly;
+        * ``batching_window_ms`` - the request waits for its batch to close
+          before the service even starts;
+        * ``server_workers`` - requests that queue behind a busy worker wait
+          for the one in front.
+
+        The arithmetic uses the *worst case* the twin simulates, not the
+        average: a deadline that is met on average is still a deadline that
+        is missed.
+
+        The deadline itself is never raised.  A longer deadline does not make
+        a dependency faster; it only makes the failure take longer to notice.
+        """
+        model = ev.model
+        if model is None:
+            return []
+        deadline = evidence.parameters.get("request_timeout_ms", 0.0)
+        if deadline <= 0:
+            deadline = model.parameters.request_timeout_ms
+        if deadline <= 0:
+            return []
+
+        params = model.parameters
+        budget = model.budget.freshness_budget_ms
+
+        # A margin, so the request comes back inside the deadline rather than
+        # exactly on it.
+        margin = max(2.0, deadline * 0.05)
+        # The shortest window the server may be given: below this the server
+        # stops batching at all.
+        min_window = 5.0
+
+        changes: List[ProposedChange] = []
+
+        # --- 1. the service cost of a full batch --------------------------
+        service_max = params.service_base_ms + params.service_per_item_ms * max(
+            1, int(params.max_batch_size)
+        )
+        if (
+            params.service_per_item_ms > 0
+            and params.max_batch_size > 1
+            and service_max + margin + min_window > deadline
+        ):
+            # The service alone does not fit inside the deadline, so the wait
+            # cannot be shortened enough to save it: the batch has to be
+            # smaller.  This is the *only* way a configuration change makes
+            # the service itself faster.
+            allowed = int(
+                math.floor(
+                    (deadline - margin - min_window - params.service_base_ms)
+                    / params.service_per_item_ms
+                )
+            )
+            new_max = max(1, min(int(params.max_batch_size) - 1, allowed))
+            if new_max < int(params.max_batch_size):
+                declared = self._declared_in_bundle(ev, "max_batch_size")
+                changes.append(
+                    ProposedChange(
+                        parameter="max_batch_size",
+                        current_value=float(params.max_batch_size),
+                        target_value=float(new_max),
+                        file=declared[0] if declared else None,
+                        config_key=declared[1] if declared else None,
+                        rationale=(
+                            f"A full batch costs {service_max:.0f} ms to serve, which "
+                            f"does not fit inside a {deadline:.0f} ms deadline on its "
+                            f"own. Capping the batch at {new_max} item(s) brings the "
+                            f"service cost down to "
+                            f"{params.service_base_ms + params.service_per_item_ms * new_max:.0f} ms."
+                        ),
+                        sufficient_on_its_own=False,
+                    )
+                )
+                service_max = params.service_base_ms + (
+                    params.service_per_item_ms * new_max
+                )
+
+        # --- 2. the wait for the batch to close -----------------------------
+        # The wait has to leave room for the service inside the deadline, and
+        # the frame must not arrive so late that it is stale either: a lost
+        # request traded for a stale one is not a fix.
+        ceiling = deadline - margin - service_max
+        if budget > 0:
+            ceiling = min(
+                ceiling, budget - margin - service_max - params.transport_mean_ms
+            )
+        if ceiling >= min_window:
+            target = min(params.batching_window_ms, ceiling)
+            if target < params.batching_window_ms * 0.99:
+                declared = self._declared_in_bundle(ev, "batching_window_ms")
+                changes.append(
+                    ProposedChange(
+                        parameter="batching_window_ms",
+                        current_value=round(params.batching_window_ms, 3),
+                        target_value=round(target, 3),
+                        file=declared[0] if declared else None,
+                        config_key=declared[1] if declared else None,
+                        rationale=(
+                            f"The request waits for its batch to close before the service "
+                            f"even starts. With {service_max:.0f} ms of service inside a "
+                            f"{deadline:.0f} ms deadline, the wait has to fit in "
+                            f"{max(0.0, ceiling):.0f} ms."
+                        ),
+                        sufficient_on_its_own=True,
+                    )
+                )
+
+        # --- 3. the queue behind a busy worker ------------------------------
+        # Requests that queue behind a busy worker wait for the one in front.
+        # Another worker removes that wait; it is proposed only when the
+        # bundle shows a backlog, because adding workers to a system that is
+        # idle changes nothing.
+        if params.server_workers < 8 and (
+            model.queue_depth_samples and max(model.queue_depth_samples) > 1
+        ):
+            declared = self._declared_in_bundle(ev, "server_workers")
+            changes.append(
+                ProposedChange(
+                    parameter="server_workers",
+                    current_value=float(params.server_workers),
+                    target_value=float(params.server_workers * 2),
+                    file=declared[0] if declared else None,
+                    config_key=declared[1] if declared else None,
+                    rationale=(
+                        "The queue depth grew during the incident, so requests were "
+                        "waiting for a busy worker. A second worker serves the next "
+                        "request instead of queueing behind it."
+                    ),
+                    sufficient_on_its_own=False,
+                )
+            )
+
+        return changes
+
+    def _propose_lock(
+        self, ev: _Evidence, evidence: FailureEvidence
+    ) -> List[ProposedChange]:
+        """
+        Let the caller wait for the lock as long as the lock is actually held.
+
+        The acquire deadline is bounded twice, and both bounds matter:
+
+        * by the caller's own deadline on the request - waiting for the lock
+          longer than the request allows does not help, it just turns a lock
+          failure into a deadline failure;
+        * by the freshness budget - a caller that waits that long produces a
+          frame that is already stale when it arrives, which is a different
+          incident with a worse outcome.
+
+        When the lock is held for longer than both bounds allow, no
+        configuration change can fix it: the critical section itself has to be
+        shorter, and that is a change to the code rather than to a knob.  In
+        that case nothing is proposed, because a proposal the twin cannot
+        clear is worse than no proposal.
+        """
+        model = ev.model
+        if model is None:
+            return []
+        timeout = evidence.parameters.get("lock_timeout_ms", 0.0)
+        hold = evidence.parameters.get("lock_hold_ms", 0.0)
+        if timeout <= 0 or hold <= 0:
+            return []
+
+        params = model.parameters
+        budget = model.budget.freshness_budget_ms
+        request_deadline = params.request_timeout_ms
+        margin = max(2.0, hold * 0.05)
+
+        # The service cost of the batch the caller is waiting for.
+        service_max = params.service_base_ms + params.service_per_item_ms * max(
+            1, int(params.max_batch_size)
+        )
+
+        ceilings: List[float] = []
+        if request_deadline > 0:
+            ceilings.append(request_deadline - service_max - margin)
+        if budget > 0:
+            ceilings.append(budget - service_max - margin - params.transport_mean_ms)
+        if not ceilings:
+            return []
+        ceiling = min(ceilings)
+
+        # The hold time is a measurement of one occasion; the deadline has to
+        # cover more than it, without waiting for a hold that never happens.
+        target = min(hold * 1.25, ceiling)
+        if ceiling <= hold:
+            # The lock is held for longer than the caller may safely wait, so
+            # the fix cannot be a longer wait: the critical section has to be
+            # held for less time, which is a change to the code rather than to
+            # a knob.  Proposing a deadline that still expires before the
+            # hold ends would be a proposal the twin cannot clear.
+            logger.info(
+                f"The lock is held for {hold:.0f} ms and the caller may safely wait "
+                f"for at most {ceiling:.0f} ms, so no acquire deadline can cover the "
+                "hold; the critical section itself has to be shortened."
+            )
+            return []
+        if target <= timeout:
+            # The ceiling does not even beat the deadline the caller already
+            # has, so raising it would not help.
+            return []
+
+        declared = self._declared_in_bundle(ev, "lock_timeout_ms")
+        return [
+            ProposedChange(
+                parameter="lock_timeout_ms",
+                current_value=round(timeout, 3),
+                target_value=round(target, 3),
+                file=declared[0] if declared else None,
+                config_key=declared[1] if declared else None,
+                rationale=(
+                    f"The lock is held for {hold:.0f} ms but the caller gives up after "
+                    f"{timeout:.0f} ms, so every contended request is abandoned. The "
+                    f"acquire deadline is raised to {target:.0f} ms, which covers the "
+                    "hold time and stays inside both the request deadline and the "
+                    "freshness budget."
+                ),
+                sufficient_on_its_own=True,
+            )
+        ]
+
+    def _intervention_text(
+        self, mechanism: str, changes: Sequence[ProposedChange]
+    ) -> str:
+        """The intervention, described in words as well as in structured form."""
+        if not changes:
+            if mechanism == FailureMechanism.RESOURCE_EXHAUSTION:
+                return (
+                    "Give the workload a memory envelope its measured working set fits "
+                    "inside, and halve the batch so less of it is held in memory at once."
+                )
+            if mechanism == FailureMechanism.DEPENDENCY_TIMEOUT:
+                return (
+                    "Bring the request inside the deadline the client set: shorten the "
+                    "wait for the batch to close, and serve requests concurrently instead "
+                    "of one behind another."
+                )
+            return (
+                "Give the caller enough patience for the lock it is waiting on, bounded "
+                "by the safety budget, and impose a global lock order so the wait cannot "
+                "grow without bound."
+            )
+
+        parts = []
+        for change in changes:
+            where = change.config_key or change.parameter
+            if change.file:
+                where = f"{where} in {change.file}"
+            parts.append(f"{where}: {change.current_value} -> {change.target_value}")
+        return "; ".join(parts) + "."
+
+    def _safety_constraints(
+        self, mechanism: str, changes: Sequence[ProposedChange]
+    ) -> List[str]:
+        """The constraints a trial of this hypothesis must respect."""
+        constraints = [
+            "Keep the safety watchdog active while the fix is trialled",
+            "Do not disable the limit that raised the failure",
+        ]
+        if mechanism == FailureMechanism.DEPENDENCY_TIMEOUT:
+            constraints.append(
+                "Do not raise the request deadline to hide a slow dependency: the "
+                "request has to come back inside the deadline it already has"
+            )
+        if mechanism == FailureMechanism.LOCK_CONTENTION:
+            constraints.append(
+                "The acquire deadline must stay inside the safety budget, so a longer "
+                "wait can never turn a lost request into a stale one"
+            )
+        if mechanism == FailureMechanism.RESOURCE_EXHAUSTION:
+            constraints.append(
+                "The new envelope must fit the host's available memory; a limit the "
+                "machine cannot honour is not a fix"
+            )
+        return constraints
+
 
     # --------------------------------------------------------------- helpers
 

@@ -9,12 +9,15 @@ unremarkable for a batch job and a hard failure for the 120 ms perception
 freshness budget the robot itself declares.
 
 The reference scales come from the incident's own declarations wherever the
-bundle states them:
+bundle states them.  The bundle's configuration files are read whatever they
+are called - ``config/robot_params.yaml`` and ``config/inference.yaml`` in the
+demo bundle, a ``robot.toml`` or ``robot.ini`` in a customer's - and every
+quantity is found by the *name of the quantity*, not by a table of known file
+names:
 
-* ``config/robot_params.yaml`` - detection freshness budget, control loop
-  deadline, transform timeout, required detection frequency.
-* ``config/inference.yaml`` - dynamic batching window, batch size, request
-  timeout.
+* the detection freshness budget, the control loop deadline, the transform
+  timeout and the required detection frequency;
+* the dynamic batching window, the batch size and the batching timeout;
 * the metric export itself - ``memory_total_mb`` is the capacity that
   ``memory_used_mb`` is a fraction of.
 
@@ -31,7 +34,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-import yaml
+from cauveris.analysis.parameters import (
+    CONFIG_SUFFIXES,
+    SECTIONED_CONFIG_SUFFIXES,
+    coerce_number,
+    flatten_config,
+    is_packaging_file,
+    parse_config_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -292,18 +302,88 @@ def classify_metric(metric_name: str) -> Optional[MetricSpec]:
 # Calibration profile
 # ---------------------------------------------------------------------------
 
-# Declared budgets and where they come from.  The value is the fallback used
-# only when the bundle does not declare the quantity itself.
-_DECLARED_BUDGETS: Dict[str, Tuple[str, float]] = {
-    "detection_freshness_budget_ms": ("robot_params.safety", 120.0),
-    "control_loop_deadline_ms": ("robot_params.safety", 100.0),
-    "transform_timeout_ms": ("robot_params.safety", 100.0),
-    "batching_window_ms": ("inference.dynamic_batching", 200.0),
-    "batching_timeout_ms": ("inference.dynamic_batching", 500.0),
-    "max_batch_size": ("inference.dynamic_batching", 8.0),
-    "detection_frequency_hz": ("robot_params.perception", 10.0),
-    "cpu_cores": ("robot_params.resources", 4.0),
+# Declared budgets: the quantity, the shapes a configuration key may take to
+# declare it, and the value used only when the bundle does not declare the
+# quantity at all.
+#
+# The key *shapes* are what matter, not a file name.  A customer who ships
+# ``robot.toml`` with ``[safety] detection_freshness_budget_ms = 250`` should
+# get a reconstruction calibrated against 250 ms, exactly as the demo bundle
+# is calibrated against its 120 ms - so the lookup is by the name of the
+# quantity, wherever the bundle happens to keep it.
+_DECLARED_BUDGETS: Dict[str, Tuple[Tuple[str, ...], float]] = {
+    "detection_freshness_budget_ms": (
+        (
+            "detection_freshness_budget",
+            "freshness_budget",
+            "staleness_budget",
+            "max_detection_age",
+            "detection_max_age",
+        ),
+        120.0,
+    ),
+    "control_loop_deadline_ms": (
+        ("control_loop_deadline", "control_deadline", "loop_deadline"),
+        100.0,
+    ),
+    "transform_timeout_ms": (("transform_timeout",), 100.0),
+    "batching_window_ms": (
+        ("batching_window", "batch_window", "batching_delay"),
+        200.0,
+    ),
+    "batching_timeout_ms": (
+        (
+            "batching_timeout",
+            "batch_timeout",
+            "batching.timeout_ms",
+            "dynamic_batching.timeout",
+        ),
+        500.0,
+    ),
+    "max_batch_size": (("max_batch_size", "batch_size", "max_batch"), 8.0),
+    "detection_frequency_hz": (
+        (
+            "required_detection_frequency",
+            "detection_frequency",
+            "detection_rate",
+            "detection_hz",
+        ),
+        10.0,
+    ),
+    "cpu_cores": (("cpu_cores", "num_cpus", "cpu_count", "n_cpus"), 4.0),
 }
+
+#: Directories whose files hold configuration rather than evidence.
+_CONFIG_DIRECTORIES = frozenset(
+    {
+        "config",
+        "configs",
+        "conf",
+        "cfg",
+        "params",
+        "parameters",
+        "settings",
+        "deployment",
+        "deployments",
+    }
+)
+
+#: Directories that hold evidence, traces and source code - not the robot's
+#: own settings.
+_EVIDENCE_DIRECTORIES = frozenset(
+    {
+        "logs",
+        "metrics",
+        "traces",
+        "recordings",
+        "media",
+        "observations",
+        "source",
+        "src",
+        "third_party",
+        "vendor",
+    }
+)
 
 
 @dataclass
@@ -318,49 +398,31 @@ class CalibrationProfile:
 
     @classmethod
     def from_bundle(cls, bundle_path: Optional[Path]) -> "CalibrationProfile":
-        """Build a profile from the bundle's declared configuration."""
+        """
+        Build a profile from the bundle's declared configuration.
+
+        The bundle's own files are read - whatever they are called and
+        whatever format they are in - and every quantity they declare is
+        taken at the value the customer wrote down.  Only a quantity the
+        bundle says nothing about falls back to a documented default, and
+        the profile records where each value came from.
+        """
         profile = cls()
-        profile.budgets = {name: fallback for name, (_, fallback) in _DECLARED_BUDGETS.items()}
+        profile.budgets = {
+            name: fallback for name, (_needles, fallback) in _DECLARED_BUDGETS.items()
+        }
         profile.origins = {name: "default" for name in _DECLARED_BUDGETS}
 
         if not bundle_path:
             return profile
 
         root = Path(bundle_path)
-        robot_params = _read_yaml(root / "config" / "robot_params.yaml")
-        inference = _read_yaml(root / "config" / "inference.yaml")
+        if not root.is_dir():
+            return profile
 
-        safety = robot_params.get("safety") if isinstance(robot_params, dict) else None
-        perception = robot_params.get("perception") if isinstance(robot_params, dict) else None
-        batching = inference.get("dynamic_batching") if isinstance(inference, dict) else None
-        resources = robot_params.get("resources") if isinstance(robot_params, dict) else None
-
-        declared = {
-            "detection_freshness_budget_ms": _dig(safety, "detection_freshness_budget_ms"),
-            "control_loop_deadline_ms": _dig(safety, "control_loop_deadline_ms"),
-            "transform_timeout_ms": _dig(safety, "transform_timeout_ms"),
-            "batching_window_ms": _dig(batching, "batching_window_ms"),
-            "batching_timeout_ms": _dig(batching, "timeout_ms"),
-            "max_batch_size": _dig(batching, "max_batch_size"),
-            "detection_frequency_hz": _dig(perception, "required_detection_frequency_hz"),
-            "cpu_cores": _dig(resources, "default", "cpu_cores"),
-        }
-
-        sources = {
-            "detection_freshness_budget_ms": "config/robot_params.yaml:safety",
-            "control_loop_deadline_ms": "config/robot_params.yaml:safety",
-            "transform_timeout_ms": "config/robot_params.yaml:safety",
-            "batching_window_ms": "config/inference.yaml:dynamic_batching",
-            "batching_timeout_ms": "config/inference.yaml:dynamic_batching",
-            "max_batch_size": "config/inference.yaml:dynamic_batching",
-            "detection_frequency_hz": "config/robot_params.yaml:perception",
-            "cpu_cores": "config/robot_params.yaml:resources",
-        }
-
-        for name, value in declared.items():
-            if isinstance(value, (int, float)) and value > 0:
-                profile.budgets[name] = float(value)
-                profile.origins[name] = sources.get(name, "bundle")
+        for name, (value, origin) in _declared_quantities(root).items():
+            profile.budgets[name] = value
+            profile.origins[name] = origin
 
         return profile
 
@@ -465,24 +527,92 @@ class CalibrationProfile:
         }
 
 
-def _read_yaml(path: Path) -> Dict[str, Any]:
-    if not path.exists():
-        return {}
+def _config_files(root: Path) -> List[Path]:
+    """
+    The configuration files a bundle ships, most likely first.
+
+    A bundle's settings live where its author put them: in ``config/``, in
+    ``params/``, or beside the manifest in a ``robot.toml``.  Evidence
+    directories are skipped - a trace that happens to contain the word
+    ``timeout`` is not a declared budget.
+    """
+    suffixes = CONFIG_SUFFIXES + SECTIONED_CONFIG_SUFFIXES
+    preferred: List[Path] = []
+    rest: List[Path] = []
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception as exc:  # pragma: no cover - malformed config
-        logger.warning(f"Could not read {path}: {exc}")
-        return {}
-    return data if isinstance(data, dict) else {}
+        entries = sorted(root.rglob("*"))
+    except OSError:
+        return []
+    for path in entries:
+        try:
+            if not path.is_file():
+                continue
+        except OSError:
+            continue
+        if path.suffix.lower() not in suffixes:
+            continue
+        if is_packaging_file(path):
+            continue
+        try:
+            parts = path.relative_to(root).parts[:-1]
+        except ValueError:
+            continue
+        lowered = [part.lower() for part in parts]
+        if any(part in _EVIDENCE_DIRECTORIES for part in lowered):
+            continue
+        if not lowered or lowered[0] in _CONFIG_DIRECTORIES:
+            preferred.append(path)
+        else:
+            rest.append(path)
+    return preferred + rest
+
+
+def _declared_quantities(root: Path) -> Dict[str, Tuple[float, str]]:
+    """
+    The quantities the bundle's own configuration declares.
+
+    Returns:
+        A mapping of quantity name -> ``(value, origin)``, where the origin
+        names the file and the section the value was read from, so a
+        reconstruction can be audited rather than trusted.
+    """
+    found: Dict[str, Tuple[float, str]] = {}
+    for path in _config_files(root):
+        data = parse_config_file(path)
+        if not data:
+            continue
+        try:
+            relative = path.relative_to(root).as_posix()
+        except ValueError:
+            relative = path.name
+        for key, value in flatten_config(data).items():
+            number = coerce_number(value)
+            if number is None or number <= 0:
+                continue
+            leaf = key.rsplit(".", 1)[-1].lower()
+            lowered = key.lower()
+            for name, (needles, _fallback) in _DECLARED_BUDGETS.items():
+                if name in found:
+                    continue
+                if not any(needle in leaf or needle in lowered for needle in needles):
+                    continue
+                section = key.rsplit(".", 1)[0] if "." in key else ""
+                origin = f"{relative}:{section}" if section else relative
+                found[name] = (number, origin)
+    return found
 
 
 def _dig(mapping: Any, *keys: str) -> Any:
+    """The value at a path in a nested mapping, or ``None``."""
     current = mapping
     for key in keys:
         if not isinstance(current, Mapping):
             return None
         current = current.get(key)
     return current
+
+
+
 
 
 # ---------------------------------------------------------------------------

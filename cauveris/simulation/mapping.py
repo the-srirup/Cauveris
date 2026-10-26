@@ -25,24 +25,27 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from cauveris.analysis.parameter_registry import PATCHABLE_PARAMETERS
+
 logger = logging.getLogger(__name__)
 
-#: The twin parameters an intervention may set.  Anything else is ignored:
-#: a proposal that names a knob the twin does not model cannot be tested.
-TWIN_PARAMETERS = (
-    "batching_window_ms",
-    "max_batch_size",
-    "qos_queue_depth",
-    "consumer_rate_hz",
-    "transport_mean_ms",
-    "transport_sigma_ms",
-    "transport_loss_prob",
-    "server_workers",
-    "arrival_rate_hz",
-    "clock_skew_ms",
-    "service_base_ms",
-    "service_per_item_ms",
-)
+#: The parameters an intervention may set.  Anything else is ignored: a
+#: proposal that names a knob the twin cannot be asked to change cannot be
+#: tested.
+#:
+#: This is the *configurable* set, not the simulatable one.  The twin models
+#: a measured quantity as well as a knob - the working set a workload needed
+#: (``resource_demand_mb``) is a fact about the incident and not something a
+#: patch can set.  Letting an intervention assign it would let a patch
+#: "fix" an incident by rewriting the measurement of it.
+#:
+#: Derived from :mod:`cauveris.analysis.parameter_registry`.  The registry is
+#: the single source of truth: a parameter it lists as configurable can be
+#: simulated, patched and verified, and a parameter it does not list can do
+#: none of those.  The list used to be written out here by hand, which meant
+#: a new failure family could not be fixed until this tuple was edited - and
+#: until three other lists elsewhere were edited to match.
+TWIN_PARAMETERS = PATCHABLE_PARAMETERS
 
 
 @dataclass
@@ -186,8 +189,13 @@ def _plan_from_text(plan: InterventionPlan, text: str) -> bool:
             )
         if new_window is not None:
             plan.parameter_overrides["batching_window_ms"] = new_window
-            target_f = detected_file or "config/inference.yaml"
-            plan.target_files["batching_window_ms"] = target_f
+            # No file is guessed: the golden incident's file names are
+            # meaningless for another incident, and a wrong preference is
+            # worse than none - the patch forge searches the real bundle
+            # for the key either way.
+            target_f = detected_file
+            if target_f:
+                plan.target_files["batching_window_ms"] = target_f
             plan.target_keys["batching_window_ms"] = "batching_window_ms"
             current_w = from_val if from_val is not None else 200
             _describe(plan, "batching_window_ms", int(current_w) if int(current_w) == current_w else current_w, int(new_window) if int(new_window) == new_window else new_window)
@@ -198,8 +206,9 @@ def _plan_from_text(plan: InterventionPlan, text: str) -> bool:
         if depth is None:
             depth = 1
         plan.parameter_overrides["qos_queue_depth"] = float(depth)
-        target_f = detected_file or "source/robot-stack/src/detection_client.py"
-        plan.target_files["qos_queue_depth"] = target_f
+        target_f = detected_file
+        if target_f:
+            plan.target_files["qos_queue_depth"] = target_f
         plan.target_keys["qos_queue_depth"] = "qos_depth"
         _describe(plan, "qos_queue_depth", int(from_val) if from_val is not None else 10, int(depth))
         return True
@@ -207,8 +216,9 @@ def _plan_from_text(plan: InterventionPlan, text: str) -> bool:
     if "clock" in text or "skew" in text or "ntp" in text:
         if "tolerance" in text or "correct" in text or "sync" in text:
             plan.parameter_overrides["clock_skew_ms"] = 0.0
-            target_f = detected_file or "config/robot_params.yaml"
-            plan.target_files["clock_skew_ms"] = target_f
+            target_f = detected_file
+            if target_f:
+                plan.target_files["clock_skew_ms"] = target_f
             plan.target_keys["clock_skew_ms"] = "max_clock_skew_tolerance_ms"
             _describe(plan, "clock_skew_ms", from_val, 0.0)
             return True
@@ -250,8 +260,9 @@ def _plan_from_text(plan: InterventionPlan, text: str) -> bool:
             size = _extract_number(params, r"max_batch[._ ]*size\s*(?:to|=|:)?\s*(\d+)")
         if size is not None:
             plan.parameter_overrides["max_batch_size"] = float(size)
-            target_f = detected_file or "config/inference.yaml"
-            plan.target_files["max_batch_size"] = target_f
+            target_f = detected_file
+            if target_f:
+                plan.target_files["max_batch_size"] = target_f
             plan.target_keys["max_batch_size"] = "max_batch_size"
             _describe(plan, "max_batch_size", int(from_val) if from_val is not None else 8, int(size))
             return True

@@ -12,6 +12,7 @@ import shutil
 from cauveris.schemas.incident import Incident, EvidenceItem
 from cauveris.schemas.base import StatusLabel
 from cauveris.security import scan_for_secrets, compute_file_hash, validate_file_size
+from cauveris.bundles import resolve_bundle
 from cauveris.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -65,22 +66,26 @@ class IngestionController:
         self.temp_dir.mkdir(exist_ok=True)
 
     def locate_bundle_path(self, incident: Incident) -> Optional[Path]:
-        """Resolve the directory containing incident bundle files."""
-        candidates = []
-        if hasattr(incident, "bundle_path") and incident.bundle_path:
-            candidates.append(Path(incident.bundle_path))
-        if incident.manifest and incident.manifest.get("bundle_path"):
-            candidates.append(Path(incident.manifest["bundle_path"]))
-        candidates.append(Path(self.settings.evidence_store_path) / incident.id)
-        candidates.append(Path(f"./incident-{incident.id}"))
-        candidates.append(Path("./incident-CAU-0001"))
-        candidates.append(self.temp_dir / incident.id)
-        candidates.append(Path("./golden_incident/incident-CAU-0001"))
+        """
+        Resolve the directory containing incident bundle files.
 
-        for candidate in candidates:
-            if candidate.exists() and candidate.is_dir():
-                return candidate
-        return None
+        A path the incident names outright - ``bundle_path``, or the path the
+        manifest declares - is trusted as given.  Everything else is a guess,
+        and a guess is only accepted when the directory it names belongs to
+        *this* incident.
+
+        That distinction is the whole point of the guard.  Without it, an
+        incident that shipped no bundle of its own was handed the demo
+        bundle's files, and every later stage - the model, the timeline, the
+        timeline's evidence - was calibrated on evidence the incident never
+        had.  The pipeline would have produced a confident report about
+        somebody else's robot.
+        """
+        return resolve_bundle(
+            incident,
+            evidence_store_path=self.settings.evidence_store_path,
+            require_manifest=False,
+        )
 
     async def process(self, incident: Incident) -> Incident:
         """

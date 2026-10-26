@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 import re
 from cauveris.schemas.incident import Incident
+from cauveris.bundles import resolve_bundle
 from cauveris.config import get_settings
 from cauveris.attribution import (
     DECLARED_ATTRIBUTE,
@@ -33,23 +34,18 @@ class TimelineBuilder:
         self.settings = get_settings()
 
     def _locate_bundle_path(self, incident: Incident) -> Optional[Path]:
-        """Locate the bundle directory for the incident."""
-        candidates = []
-        if hasattr(incident, "bundle_path") and incident.bundle_path:
-            candidates.append(Path(incident.bundle_path))
-        if incident.manifest and incident.manifest.get("bundle_path"):
-            candidates.append(Path(incident.manifest["bundle_path"]))
-        candidates.append(Path(self.settings.evidence_store_path) / incident.id)
-        candidates.append(Path(f"./incident-{incident.id}"))
-        candidates.append(Path("./temp_ingestion") / incident.id)
-        if incident.id.upper() in ["CAU-0001", "GOLDEN"]:
-            candidates.append(Path("./incident-CAU-0001"))
-            candidates.append(Path("./golden_incident/incident-CAU-0001"))
+        """
+        Locate the bundle directory for the incident.
 
-        for candidate in candidates:
-            if candidate.exists() and candidate.is_dir():
-                return candidate
-        return None
+        Searched directories are accepted only when they belong to *this*
+        incident, so a timeline can never be built from another incident's
+        logs.  The search is by incident id, never by a fixed path.
+        """
+        return resolve_bundle(
+            incident,
+            evidence_store_path=self.settings.evidence_store_path,
+            require_manifest=False,
+        )
 
     def _system_component(self, bundle_path: Path) -> Optional[str]:
         """The component name the bundle gives to the system under study."""
@@ -575,42 +571,82 @@ class TimelineBuilder:
     async def _parse_deployment_events(
         self, deploy_path: Path, bundle_path: Path
     ) -> List[Dict[str, Any]]:
-        """Parse deployment event file."""
-        events = []
+        """Parse deployment event file.
+
+        A deployment file may be encoded in any of the three shapes engineers
+        actually use, and all three carry the same information:
+
+          * a single deployment object ``{"deployment_id": ..., ...}``
+          * a list of deployment objects ``[{...}, {...}]``
+          * an envelope ``{"deployments": [{...}, ...]}``
+
+        Parsing only the first shape silently dropped the deployments of
+        every bundle that used the other two, which quietly degraded the
+        timeline without signalling anything to the caller.
+        """
+        events: List[Dict[str, Any]] = []
         try:
             with open(deploy_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to read deployment events {deploy_path}: {e}")
+            return events
 
-            ts_str = data.get("timestamp")
-            if ts_str:
-                dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        records: List[Dict[str, Any]] = []
+        if isinstance(data, list):
+            records = [r for r in data if isinstance(r, dict)]
+        elif isinstance(data, dict):
+            nested = data.get("deployments")
+            if isinstance(nested, list):
+                records = [r for r in nested if isinstance(r, dict)]
+            else:
+                records = [data]
+        else:
+            logger.error(
+                f"Unsupported deployment events shape in {deploy_path}: {type(data).__name__}"
+            )
+            return events
+
+        source = str(deploy_path.relative_to(bundle_path)).replace("\\", "/")
+        for record in records:
+            try:
+                ts_str = record.get("timestamp")
+                if not ts_str:
+                    # A deployment without a timestamp cannot be placed on
+                    # the timeline, but it is still a fact about the system.
+                    logger.warning("Deployment record without a timestamp in %s", deploy_path)
+                    continue
+
+                dt = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
                 timestamp_ns = int(dt.timestamp() * 1_000_000_000)
 
-                dep_id = data.get("deployment_id", "v42")
-                service = data.get("service", "cloud-service")
-                event = {
-                    "timestamp_ns": timestamp_ns,
-                    "original_timestamp": ts_str,
-                    "event_type": "deployment_event",
-                    "source_type": "deployment_json",
-                    "lane": "deployment_events",
-                    "source": str(deploy_path.relative_to(bundle_path)).replace("\\", "/"),
-                    "message": f"Deployment {dep_id} applied to {service}",
-                    "attributes": {
-                        "deployment_id": dep_id,
-                        "service": service,
-                        "changes": data.get("changes", []),
-                        "author": data.get("author", ""),
-                    },
-                    "component": service,
-                    "component_source": DECLARED_ATTRIBUTE,
-                    "component_confidence": 0.9,
-                    "confidence": 1.0,
-                    "status": "DEPLOYED",
-                }
-                events.append(event)
-        except Exception as e:
-            logger.error(f"Failed to parse deployment events: {e}")
+                dep_id = record.get("deployment_id", "v42")
+                service = record.get("service", "cloud-service")
+                events.append(
+                    {
+                        "timestamp_ns": timestamp_ns,
+                        "original_timestamp": ts_str,
+                        "event_type": "deployment_event",
+                        "source_type": "deployment_json",
+                        "lane": "deployment_events",
+                        "source": source,
+                        "message": f"Deployment {dep_id} applied to {service}",
+                        "attributes": {
+                            "deployment_id": dep_id,
+                            "service": service,
+                            "changes": record.get("changes", []),
+                            "author": record.get("author", ""),
+                        },
+                        "component": service,
+                        "component_source": DECLARED_ATTRIBUTE,
+                        "component_confidence": 0.9,
+                        "confidence": 1.0,
+                        "status": "DEPLOYED",
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Failed to parse a deployment record in {deploy_path}: {e}")
+                continue
         return events
 
     async def _parse_operator_note(

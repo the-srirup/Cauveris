@@ -2,17 +2,22 @@
 Evidence loading and normalisation.
 
 Everything Cauveris knows about an incident is read from the incident bundle.
-This module turns the raw, heterogeneous bundle contents (manifest, YAML/JSON
-configuration, deployment records, JSONL and syslog logs, CSV metric series,
-OpenTelemetry traces, MCAP recordings, operator notes and source trees) into
-typed records that the analysis layer can reason over.
+This module turns the raw, heterogeneous bundle contents (manifest, YAML/JSON/
+TOML/INI configuration, deployment records, JSONL, syslog and plain-text logs,
+CSV and Prometheus metric series, OpenTelemetry traces in JSON and NDJSON,
+MCAP recordings, operator notes and source trees) into typed records that the
+analysis layer can reason over.
 
 Nothing in here is incident-specific: the bundle layout is discovered, not
-assumed, and every reader degrades gracefully when a file is absent.
+assumed, and every reader degrades gracefully when a file is absent.  A bundle
+from a company Cauveris has never seen carries whatever formats that company
+uses, so the readers recognise the *shape* of a format rather than the name
+of a file.
 """
 
 from __future__ import annotations
 
+import configparser
 import csv
 import json
 import logging
@@ -23,6 +28,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
+
+try:  # Python 3.11 ships tomllib; a bundle may carry TOML configuration.
+    import tomllib
+except ImportError:  # pragma: no cover - only on older interpreters
+    tomllib = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +100,15 @@ def flatten_config(data: Any, prefix: str = "") -> Dict[str, Any]:
         else:
             flat[full] = value
     return flat
+
+
+#: A line of the Prometheus exposition format:
+#: ``name{label="value",other="value"} 12.5 1395066363000``.
+_PROMETHEUS_SAMPLE_RE = re.compile(
+    r"^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(?P<labels>[^}]*)\})?\s+"
+    r"(?P<value>[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?|Inf|NaN)"
+    r"(?:\s+(?P<timestamp>[0-9]+))?$"
+)
 
 
 @dataclass
@@ -224,6 +243,17 @@ class EvidenceBundle:
     _RECORDING_HINTS = ("recording", "mcap", "bag", "rosbag")
     _CONFIG_HINTS = ("config", "param", "yaml", "settings")
 
+    #: File suffixes that carry log lines.  ``.txt`` and ``.out`` are here
+    #: because a bundle captured from a shell redirect or from a console dump
+    #: is still a log, whatever it was called.
+    _LOG_SUFFIXES = (".log", ".txt", ".out", ".err")
+    #: Suffixes that carry one JSON object per line.
+    _JSONL_SUFFIXES = (".jsonl", ".ndjson")
+    #: Files whose *name* suggests they are prose rather than a log.
+    _NOTE_NAME_HINTS = ("observation", "note", "readme", "report", "postmortem")
+    #: Name fragments of an extension-less file that make it a log.
+    _BARE_LOG_HINTS = ("log", "journal", "stdout", "stderr", "console", "output")
+
     def __init__(self, root: Path):
         self.root = Path(root)
         self.manifest: Dict[str, Any] = {}
@@ -296,29 +326,45 @@ class EvidenceBundle:
             break
 
     def _load_configs(self) -> None:
-        """Read every YAML/JSON file that plausibly carries configuration."""
+        """Read every file that plausibly carries configuration."""
         for path in self._iter_files():
             rel = self._relative(path)
             suffix = path.suffix.lower()
-            if suffix not in (".yaml", ".yml", ".json"):
-                continue
             lowered = rel.lower()
             if any(part in lowered for part in ("/media/", "deployment", "/evidence/")):
                 continue
             if suffix == ".json" and "deploy" in lowered:
                 continue
-            if not any(hint in lowered for hint in self._CONFIG_HINTS) and "config" not in lowered:
-                # JSON files in the source tree are code, not configuration.
-                if suffix == ".json":
+
+            data: Any = None
+            if suffix in (".yaml", ".yml", ".json"):
+                if suffix == ".json" and not any(
+                    hint in lowered for hint in self._CONFIG_HINTS
+                ):
+                    # JSON files in the source tree are code, not configuration.
                     continue
-            try:
-                if suffix == ".json":
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                else:
-                    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                self.load_errors.append(f"config parse failed ({rel}): {exc}")
+                try:
+                    if suffix == ".json":
+                        data = json.loads(path.read_text(encoding="utf-8"))
+                    else:
+                        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    self.load_errors.append(f"config parse failed ({rel}): {exc}")
+                    continue
+            elif suffix in (".toml", ".ini", ".cfg", ".conf"):
+                # A robot's parameters often ship as TOML or INI rather than
+                # YAML, and a bundle that carries only those would otherwise be
+                # read as having no configuration at all.
+                if not self._is_config_candidate(lowered, suffix):
+                    continue
+                try:
+                    data = self._parse_ini_like(path, suffix)
+                except Exception as exc:
+                    self.load_errors.append(f"config parse failed ({rel}): {exc}")
+                    continue
+            else:
                 continue
+
             if not isinstance(data, dict):
                 continue
             flat = flatten_config(data)
@@ -329,6 +375,60 @@ class EvidenceBundle:
                 # First writer wins so the most specific config file wins over
                 # generic ones; later files fill in gaps only.
                 self.config.setdefault(key, value)
+
+    @classmethod
+    def _is_config_candidate(cls, lowered: str, suffix: str) -> bool:
+        """
+        Whether a TOML/INI file is configuration rather than packaging noise.
+
+        A directory named for configuration is taken at its word; a file at the
+        root of the bundle is taken when its own name says so.  ``setup.cfg``
+        and ``pyproject.toml`` are packaging files, not the robot's settings.
+        """
+        stem = lowered.rsplit("/", 1)[-1]
+        if stem.startswith(".") or stem in ("setup.cfg", "tox.ini", "pytest.ini"):
+            return False
+        if stem in ("pyproject.toml", "poetry.lock", "uv.lock", "cargo.toml"):
+            return False
+        if any(hint in lowered for hint in ("config", "param", "setting")):
+            return True
+        if "/" not in lowered and any(
+            hint in stem for hint in ("config", "param", "setting", "robot", "profile")
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _parse_ini_like(path: Path, suffix: str) -> Dict[str, Any]:
+        """Parse a TOML or INI file into a plain mapping."""
+        text = path.read_text(encoding="utf-8")
+        if suffix == ".toml":
+            if tomllib is None:  # pragma: no cover - older interpreters only
+                return {}
+            data = tomllib.loads(text)
+            return data if isinstance(data, dict) else {}
+        parser = configparser.ConfigParser(strict=False, interpolation=None)
+        parser.read_string(text)
+        result: Dict[str, Any] = {}
+        for section in parser.sections():
+            result[section] = dict(parser.items(section))
+        # A key that appears before any section header would be lost by
+        # configparser, so it is recovered from the raw text.
+        defaults: Dict[str, Any] = {}
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("#", ";")) or stripped.startswith("["):
+                continue
+            if "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            key = key.strip()
+            if key and key not in defaults:
+                defaults[key] = value.strip()
+        if defaults:
+            for key, value in defaults.items():
+                result.setdefault(key, value)
+        return result
 
     def _load_deployments(self) -> None:
         """Read deployment/rollout records."""
@@ -434,16 +534,127 @@ class EvidenceBundle:
         return changes
 
     def _load_logs(self) -> None:
-        """Read JSONL and syslog-style log files."""
+        """
+        Read the log files of the bundle, whatever shape they are in.
+
+        Three shapes are recognised: one JSON object per line, a JSON file
+        holding an array of records, and plain text - syslog, a console dump,
+        or a redirect of a program's output.  A bundle that names its logs
+        ``events.ndjson`` or ``stdout.txt`` is as readable as one that calls
+        them ``service.log``.
+        """
         for path in self._iter_files():
             rel = self._relative(path)
             lowered = rel.lower()
             if "/media/" in lowered or "/source/" in lowered:
                 continue
-            if path.suffix.lower() == ".jsonl":
+            if any(hint in Path(lowered).name for hint in self._NOTE_NAME_HINTS):
+                # Prose about the incident is read as an operator note, not as
+                # a log line: reading it twice would double every claim it
+                # makes.
+                continue
+            suffix = path.suffix.lower()
+            if suffix in self._JSONL_SUFFIXES:
                 self._load_jsonl_logs(path, rel)
-            elif path.suffix.lower() == ".log":
+            elif suffix in self._LOG_SUFFIXES or self._is_rotated_log(lowered):
                 self._load_text_logs(path, rel)
+            elif suffix == "" and any(
+                hint in Path(lowered).name for hint in self._BARE_LOG_HINTS
+            ):
+                self._load_text_logs(path, rel)
+            elif suffix == ".json" and any(
+                hint in lowered for hint in self._LOG_HINTS
+            ):
+                self._load_json_logs(path, rel)
+
+    @staticmethod
+    def _is_rotated_log(lowered: str) -> bool:
+        """Whether a file is a rotated log (``service.log.1``, ``service.log.gz``)."""
+        name = Path(lowered).name
+        if ".log." not in name:
+            return False
+        tail = name.rsplit(".log.", 1)[-1]
+        return bool(tail) and all(part.isdigit() or part in ("gz", "bz2", "xz") for part in tail.split("."))
+
+    def _load_json_logs(self, path: Path, rel: str) -> None:
+        """
+        Read a JSON file that holds log records.
+
+        The shape is whatever the producer wrote: a list of records, or a
+        mapping with the records under one of the usual keys.
+        """
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self.load_errors.append(f"log parse failed ({rel}): {exc}")
+            return
+        records: List[Any] = []
+        if isinstance(raw, list):
+            records = raw
+        elif isinstance(raw, dict):
+            for key in ("logs", "events", "records", "entries", "messages"):
+                value = raw.get(key)
+                if isinstance(value, list):
+                    records = value
+                    break
+        if not records:
+            return
+        # A JSON file that holds no message at all is not a log file; it is
+        # some other artefact that happens to live under a ``logs`` directory.
+        if not any(
+            isinstance(record, dict)
+            and any(
+                key in record
+                for key in ("message", "msg", "event", "text", "log", "level", "severity")
+            )
+            for record in records
+        ):
+            return
+        for record in records:
+            if isinstance(record, dict):
+                self._append_json_log_record(record, rel)
+            elif isinstance(record, str):
+                self.logs.append(
+                    LogRecord(timestamp=None, source=rel, level="INFO", message=record, raw=record)
+                )
+
+    def _append_json_log_record(
+        self, record: Dict[str, Any], rel: str, raw: Optional[str] = None
+    ) -> None:
+        """Turn one JSON record into a log record."""
+        message = str(
+            record.get("message")
+            or record.get("msg")
+            or record.get("event")
+            or record.get("text")
+            or record.get("log")
+            or ""
+        )
+        if not message:
+            # A record with fields but no message is still evidence: it is
+            # kept whole, so a pattern that names one of its fields still
+            # finds it.
+            message = json.dumps(
+                {k: v for k, v in record.items() if k not in ("timestamp", "ts", "time")},
+                default=str,
+            )
+        fields = {
+            k: v
+            for k, v in record.items()
+            if k not in ("timestamp", "ts", "time", "message", "msg", "level", "severity")
+        }
+        self.logs.append(
+            LogRecord(
+                timestamp=parse_timestamp(
+                    record.get("timestamp") or record.get("ts") or record.get("time")
+                ),
+                source=rel,
+                level=str(record.get("level") or record.get("severity") or "INFO").upper(),
+                message=message,
+                fields=fields,
+                raw=raw if raw is not None else json.dumps(record, default=str),
+            )
+        )
 
     def _load_jsonl_logs(self, path: Path, rel: str) -> None:
         try:
@@ -451,7 +662,7 @@ class EvidenceBundle:
         except Exception as exc:
             self.load_errors.append(f"log read failed ({rel}): {exc}")
             return
-        for lineno, line in enumerate(text.splitlines(), 1):
+        for line in text.splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -470,31 +681,7 @@ class EvidenceBundle:
                 continue
             if not isinstance(record, dict):
                 continue
-            message = str(
-                record.get("message")
-                or record.get("msg")
-                or record.get("event")
-                or record.get("text")
-                or ""
-            )
-            # Flatten the remaining fields so pattern matching can see them.
-            fields = {
-                k: v
-                for k, v in record.items()
-                if k not in ("timestamp", "ts", "time", "message", "msg", "level", "severity")
-            }
-            self.logs.append(
-                LogRecord(
-                    timestamp=parse_timestamp(
-                        record.get("timestamp") or record.get("ts") or record.get("time")
-                    ),
-                    source=rel,
-                    level=str(record.get("level") or record.get("severity") or "INFO").upper(),
-                    message=message,
-                    fields=fields,
-                    raw=line,
-                )
-            )
+            self._append_json_log_record(record, rel, raw=line)
 
     _SYSLOG_RE = re.compile(
         r"^(?P<ts>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+(?P<host>\S+)\s+"
@@ -540,59 +727,182 @@ class EvidenceBundle:
             )
 
     def _load_metrics(self) -> None:
-        """Read CSV metric series."""
+        """Read metric series: CSV tables and Prometheus exposition text."""
         for path in self._iter_files():
-            if path.suffix.lower() != ".csv":
-                continue
+            suffix = path.suffix.lower()
             rel = self._relative(path)
-            try:
-                rows = list(csv.DictReader(path.read_text(encoding="utf-8").splitlines()))
-            except Exception as exc:
-                self.load_errors.append(f"metrics parse failed ({rel}): {exc}")
-                continue
-            if not rows:
-                continue
-            series: List[MetricSample] = []
-            for row in rows:
-                values: Dict[str, float] = {}
-                ts_value = None
-                for key, raw in row.items():
-                    if key is None:
-                        continue
-                    if key.lower() in ("timestamp", "time", "ts", "date"):
-                        ts_value = raw
-                        continue
-                    try:
-                        values[key] = float(raw)
-                    except (TypeError, ValueError):
-                        continue
-                if not values:
+            if suffix == ".csv":
+                self._load_csv_metrics(path, rel)
+            elif suffix in (".prom", ".prometheus") or self._looks_like_prometheus(path):
+                self._load_prometheus_metrics(path, rel)
+
+    def _load_csv_metrics(self, path: Path, rel: str) -> None:
+        """Read a CSV metric table: one row per sample, one column per series."""
+        try:
+            rows = list(csv.DictReader(path.read_text(encoding="utf-8").splitlines()))
+        except Exception as exc:
+            self.load_errors.append(f"metrics parse failed ({rel}): {exc}")
+            return
+        if not rows:
+            return
+        series: List[MetricSample] = []
+        for row in rows:
+            values: Dict[str, float] = {}
+            ts_value = None
+            for key, raw in row.items():
+                if key is None:
                     continue
-                series.append(
-                    MetricSample(
-                        timestamp=parse_timestamp(ts_value),
-                        source=rel,
-                        values=values,
-                    )
+                if key.lower() in ("timestamp", "time", "ts", "date"):
+                    ts_value = raw
+                    continue
+                try:
+                    values[key] = float(raw)
+                except (TypeError, ValueError):
+                    continue
+            if not values:
+                continue
+            series.append(
+                MetricSample(
+                    timestamp=parse_timestamp(ts_value),
+                    source=rel,
+                    values=values,
                 )
-            if series:
-                self.metrics[rel] = series
+            )
+        if series:
+            self.metrics[rel] = series
+
+    @staticmethod
+    def _looks_like_prometheus(path: Path) -> bool:
+        """
+        Whether a file is a Prometheus exposition document.
+
+        The exposition format is identified by its own ``# HELP`` / ``# TYPE``
+        comments, which every exporter writes.  A file without them is left
+        alone: a stray text file that happens to contain numbers is far more
+        likely to be a log than a metric scrape.
+        """
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                head = [handle.readline() for _ in range(40)]
+        except OSError:
+            return False
+        for line in head:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                if re.match(r"#\s*(HELP|TYPE)\s+\S", stripped):
+                    return True
+                continue
+            break
+        return False
+
+    def _load_prometheus_metrics(self, path: Path, rel: str) -> None:
+        """
+        Read a Prometheus exposition document into metric samples.
+
+        Each line of the format is ``name{labels} value [timestamp]``.  The
+        metric name becomes the column and the label set is kept in it, so a
+        scrape that reports the same metric for two processes stays two
+        series rather than one series that silently changes meaning.
+        """
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:
+            self.load_errors.append(f"metrics read failed ({rel}): {exc}")
+            return
+        series: List[MetricSample] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            match = _PROMETHEUS_SAMPLE_RE.match(stripped)
+            if match is None:
+                continue
+            value_text = match.group("value")
+            try:
+                value = float(value_text)
+            except ValueError:
+                continue
+            if value != value or value in (float("inf"), float("-inf")):
+                continue
+            name = match.group("name")
+            labels = (match.group("labels") or "").strip()
+            column = f"{name}{{{labels}}}" if labels else name
+            timestamp = match.group("timestamp")
+            series.append(
+                MetricSample(
+                    timestamp=parse_timestamp(timestamp) if timestamp else None,
+                    source=rel,
+                    values={column: value},
+                )
+            )
+        if series:
+            self.metrics[rel] = series
 
     def _load_traces(self) -> None:
-        """Read OpenTelemetry-style trace exports."""
+        """
+        Read OpenTelemetry-style trace exports.
+
+        Traces arrive as a JSON document, as NDJSON, or as the OTLP structure
+        with ``resourceSpans`` and ``scopeSpans``.  A file is read as a trace
+        when its name says so, or when its own content carries spans - an
+        exporter that names its file ``telemetry.json`` still gets read.
+        """
         for path in self._iter_files():
-            if path.suffix.lower() != ".json":
-                continue
+            suffix = path.suffix.lower()
             rel = self._relative(path)
-            if "trace" not in rel.lower() and "otel" not in rel.lower() and "span" not in rel.lower():
-                continue
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                self.load_errors.append(f"trace parse failed ({rel}): {exc}")
-                continue
-            for span in self._iter_spans(raw):
-                self.spans.append(span)
+            lowered = rel.lower()
+            if suffix == ".json":
+                if not any(hint in lowered for hint in self._TRACE_HINTS):
+                    continue
+                try:
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    self.load_errors.append(f"trace parse failed ({rel}): {exc}")
+                    continue
+                for span in self._iter_spans(raw):
+                    self.spans.append(span)
+            elif suffix in self._JSONL_SUFFIXES:
+                if not self._ndjson_carries_spans(path):
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except Exception as exc:
+                    self.load_errors.append(f"trace read failed ({rel}): {exc}")
+                    continue
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        raw = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    for span in self._iter_spans(raw):
+                        self.spans.append(span)
+
+    @staticmethod
+    def _ndjson_carries_spans(path: Path) -> bool:
+        """Whether an NDJSON file's first records carry spans."""
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for _ in range(5):
+                    line = handle.readline().strip()
+                    if not line:
+                        continue
+                    try:
+                        raw = json.loads(line)
+                    except json.JSONDecodeError:
+                        return False
+                    if isinstance(raw, dict) and (
+                        "spans" in raw or "resourceSpans" in raw or "scopeSpans" in raw
+                    ):
+                        return True
+                    return False
+        except OSError:
+            return False
+        return False
 
     def _iter_spans(self, raw: Any):
         """Yield every :class:`Span` found in an arbitrarily shaped trace file."""
@@ -605,20 +915,59 @@ class EvidenceBundle:
                 for span in raw["spans"]:
                     if not isinstance(span, dict):
                         continue
-                    yield Span(
-                        name=str(span.get("name", "")),
-                        timestamp_ns=int(
-                            span.get("timestamp", span.get("startTimeUnixNano", 0)) or 0
-                        ),
-                        duration_ns=int(span.get("duration", 0) or 0),
-                        attributes=dict(span.get("attributes", {}) or {}),
-                        status=dict(span.get("status", {}) or {}),
-                        trace_id=trace_id,
-                    )
+                    yield self._span_from(span, trace_id)
             else:
+                # The OTLP structure nests spans under resourceSpans and
+                # scopeSpans; an exporter that uses it is read the same way as
+                # one that writes a flat list.
                 for value in raw.values():
                     if isinstance(value, (list, dict)):
                         yield from self._iter_spans(value)
+
+    @staticmethod
+    def _normalise_attributes(raw: Any) -> Dict[str, Any]:
+        """
+        The attributes of a span, whichever way the exporter stated them.
+
+        A plain JSON exporter writes ``{"http.method": "GET"}``; OTLP writes a
+        list of key/value pairs whose value carries its own type.  Both are
+        read as a mapping of attribute name to value.
+        """
+        if isinstance(raw, dict):
+            return dict(raw)
+        if not isinstance(raw, list):
+            return {}
+        attributes: Dict[str, Any] = {}
+        for item in raw:
+            if not isinstance(item, dict) or "key" not in item:
+                continue
+            value = item.get("value")
+            if isinstance(value, dict):
+                values = list(value.values())
+                value = values[0] if len(values) == 1 else value
+            attributes[str(item["key"])] = value
+        return attributes
+
+    def _span_from(self, span: Dict[str, Any], trace_id: str = "") -> Span:
+        """Build a span from whichever spelling of the fields the exporter used."""
+        start = int(
+            span.get("timestamp", span.get("startTimeUnixNano", span.get("start_time_unix_nano", 0)))
+            or 0
+        )
+        duration = span.get("duration")
+        if duration is None:
+            end = int(span.get("endTimeUnixNano", span.get("end_time_unix_nano", 0)) or 0)
+            duration = max(0, end - start)
+        attributes = span.get("attributes")
+        attributes = self._normalise_attributes(attributes)
+        return Span(
+            name=str(span.get("name", "")),
+            timestamp_ns=start,
+            duration_ns=int(duration or 0),
+            attributes=attributes,
+            status=dict(span.get("status", {}) or {}),
+            trace_id=trace_id or str(span.get("traceId", span.get("traceID", "")) or ""),
+        )
 
     def _load_recordings(self) -> None:
         """Read MCAP recordings (ROS 2 topic bags)."""

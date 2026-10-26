@@ -37,6 +37,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .parameter_registry import FailureMechanism
 from .statistics import Distribution, distribution
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,30 @@ __all__ = [
     "LatencyCalibration",
     "simulate_pipeline",
     "calibrate_latency_model",
+    "FAILURE_RESOURCE_EXHAUSTION",
+    "FAILURE_DEPENDENCY_TIMEOUT",
+    "FAILURE_LOCK_CONTENTION",
+    "FAILURE_MECHANISMS",
 ]
+
+
+#: The failure mechanisms the pipeline model knows how to reproduce.
+#:
+#: These are *mechanisms*, not symptoms.  A memory exhaustion and a
+#: dependency timeout both present as "the request did not complete", which
+#: is exactly why they need separate counters and separate remediations: the
+#: fix for one does nothing for the other, and a system that can only say
+#: "the request failed" cannot tell an operator which knob to turn.
+#:
+#: The names come from the parameter registry, so the analysis layer, the
+#: simulation layer and the verification layer all count the same mechanism
+#: under the same name.
+FAILURE_RESOURCE_EXHAUSTION = FailureMechanism.RESOURCE_EXHAUSTION
+FAILURE_DEPENDENCY_TIMEOUT = FailureMechanism.DEPENDENCY_TIMEOUT
+FAILURE_LOCK_CONTENTION = FailureMechanism.LOCK_CONTENTION
+
+#: Every mechanism the model can reproduce, in a stable order.
+FAILURE_MECHANISMS: Tuple[str, ...] = FailureMechanism.ALL
 
 
 @dataclass
@@ -82,6 +106,32 @@ class TwinParameters:
 
     # Time base
     clock_skew_ms: float = 0.0
+
+    # Resource envelope.  ``resource_limit_mb`` is the ceiling the workload
+    # is allowed (a container quota, a cgroup limit, a JVM heap cap);
+    # ``resource_demand_mb`` is the working set it actually needs, measured
+    # from the incident.  Their ratio is the pressure the service runs
+    # under: at 1.0 the workload is exactly at the ceiling, and above it the
+    # process is killed for exceeding its limit.
+    resource_limit_mb: float = 0.0
+    resource_demand_mb: float = 0.0
+    # The extra service time a fully loaded worker costs.  Measured from the
+    # incident: it is the difference between serving under pressure and
+    # serving with headroom.
+    resource_pressure_penalty_ms: float = 0.0
+
+    # The deadline the client gives the request.  A dependency that does not
+    # answer inside it does not make the caller slow - it makes the call
+    # *fail*, and the work is discarded.
+    request_timeout_ms: float = 0.0
+
+    # A contended shared resource.  ``lock_contention_prob`` is the chance a
+    # request has to wait for the lock, ``lock_hold_ms`` how long it is held
+    # for, and ``lock_timeout_ms`` how long a caller will wait before giving
+    # up on it.
+    lock_contention_prob: float = 0.0
+    lock_hold_ms: float = 0.0
+    lock_timeout_ms: float = 0.0
 
     def as_dict(self) -> Dict[str, Any]:
         return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in asdict(self).items()}
@@ -138,6 +188,17 @@ class SimulationOutcome:
     size_limited_epochs: int = 0
     window_limited_epochs: int = 0
     frames_served: int = 0
+    #: Requests that failed outright, counted by *mechanism*.  A request that
+    #: never produced a result is not a slow request - it is a lost one, and
+    #: conflating the two is what makes a system report "latency" for an
+    #: incident that was really an out-of-memory kill.
+    failed_requests: int = 0
+    failure_reasons: Dict[str, int] = field(default_factory=dict)
+    #: The fraction of *served* requests that failed.
+    failure_rate: float = 0.0
+    #: The resource pressure the workload ran under (demand / limit).  Zero
+    #: when no envelope is declared.
+    resource_pressure: float = 0.0
 
     @property
     def size_limited_fraction(self) -> float:
@@ -256,6 +317,21 @@ def simulate_pipeline(
     consumer_period_s = 1.0 / consumer_hz
     skew_s = params.clock_skew_ms / 1000.0
 
+    # The failure mechanisms.  Each is inert until the incident's own
+    # evidence gives it a value, so a bundle that declares no resource
+    # envelope and no deadline is simulated exactly as it was before these
+    # mechanisms existed.
+    resource_limit_mb = max(0.0, params.resource_limit_mb)
+    resource_demand_mb = max(0.0, params.resource_demand_mb)
+    resource_pressure = (
+        resource_demand_mb / resource_limit_mb if resource_limit_mb > 0 else 0.0
+    )
+    resource_pressure_penalty_s = max(0.0, params.resource_pressure_penalty_ms) / 1000.0
+    request_timeout_s = max(0.0, params.request_timeout_ms) / 1000.0
+    lock_contention_prob = _clamp(params.lock_contention_prob, 0.0, 1.0)
+    lock_hold_s = max(0.0, params.lock_hold_ms) / 1000.0
+    lock_timeout_s = max(0.0, params.lock_timeout_ms) / 1000.0
+
     total_end_s = warmup_s + duration_s
     measure_from_s = warmup_s
 
@@ -299,6 +375,11 @@ def simulate_pipeline(
     served = 0
     size_limited_epochs = 0
     window_limited_epochs = 0
+    #: Every request the server was handed, and how many of them died.
+    requests_total = 0
+    failed_requests = 0
+    #: The failures, counted by mechanism.
+    failure_reasons: Dict[str, int] = {}
 
     events: List[Tuple[float, int, str, Any]] = []
     seq = 0
@@ -339,9 +420,26 @@ def simulate_pipeline(
         filled up, ``"window"`` when the timer fired.  The two regimes respond
         oppositely to a change in the batching window, so downstream code needs
         to know which one the incident was in.
+
+        The batch then goes through the three failure mechanisms the model
+        knows, in the order a real request meets them:
+
+        1. the **resource envelope** - a workload whose working set exceeds
+           its limit is killed, and the request it was serving is lost;
+        2. the **lock** - a request that has to wait for a contended lock
+           waits for as long as the holder keeps it, and gives up if that is
+           longer than the caller's patience;
+        3. the **deadline** - a request whose latency exceeds the deadline
+           the caller set is cancelled, and its work is discarded.
+
+        A request that fails at any of these produces no result at all.  It
+        is not a slow request: it is a lost one, and the model counts it
+        separately so that an out-of-memory incident is never reported as a
+        latency problem.
         """
         nonlocal busy_workers, epoch_items, epoch_deadline
         nonlocal size_limited_epochs, window_limited_epochs, served
+        nonlocal requests_total, failed_requests, failure_reasons
         if not epoch_items:
             epoch_deadline = None
             return
@@ -349,13 +447,57 @@ def simulate_pipeline(
             return  # retry when a worker frees up
         served_items = list(epoch_items)
         n = len(served_items)
+        requests_total += 1
+
+        # --- 1. the resource envelope -------------------------------------
+        # The working set the incident needed, against the ceiling it was
+        # given.  Above 1.0 the workload does not slow down - it dies.
+        pressure = resource_pressure
         service_s = service_base_s + service_per_item_s * n
+        if resource_pressure_penalty_s > 0.0:
+            service_s += resource_pressure_penalty_s * pressure
+
+        # --- 2. the lock ---------------------------------------------------
+        lock_wait_s = 0.0
+        if lock_contention_prob > 0.0 and rng.random() < lock_contention_prob:
+            lock_wait_s = lock_hold_s
+
+        # --- 3. the deadline -----------------------------------------------
+        # ``served_items`` holds ``(capture_time, frame_id)`` pairs, so the
+        # capture time is element 0.  Reading element 1 here gave the wait
+        # as the difference between a timestamp and a frame counter, which
+        # is a large negative number - so the deadline was never missed and
+        # the mechanism never fired.
+        batch_wait_s = now - served_items[0][0] if served_items else 0.0
+        request_latency_s = batch_wait_s + lock_wait_s + service_s
+
+        failure: Optional[str] = None
+        if pressure > 1.0:
+            failure = FAILURE_RESOURCE_EXHAUSTION
+        elif lock_timeout_s > 0.0 and lock_wait_s > lock_timeout_s:
+            failure = FAILURE_LOCK_CONTENTION
+        elif request_timeout_s > 0.0 and request_latency_s > request_timeout_s:
+            failure = FAILURE_DEPENDENCY_TIMEOUT
+
+        if failure is not None:
+            failed_requests += 1
+            failure_reasons[failure] = failure_reasons.get(failure, 0) + 1
+            if now >= measure_from_s:
+                batch_sizes.append(float(n))
+            # The worker is released immediately: the request died inside the
+            # server, so it never occupied the worker for its service time.
+            busy_workers += 1
+            epoch_items = []
+            epoch_deadline = None
+            push(now, "server_failed", served_items)
+            return
+
         for capture_t, fid in served_items:
             # Server-side request latency: how long the request waited for the
             # batch, plus how long the batch took to execute.  It is recorded
             # per frame so that the per-cycle series can line up with the
             # frames the control loop actually consumed.
-            request_latency = ((now - capture_t) + service_s) * 1000.0
+            request_latency = ((now - capture_t) + lock_wait_s + service_s) * 1000.0
             request_latency_by_frame[fid] = request_latency
             if capture_t >= measure_from_s:
                 epoch_waits.append((now - capture_t) * 1000.0)
@@ -425,6 +567,22 @@ def simulate_pipeline(
                 push(now + delay, "deliver", fid)
             if pending:
                 # A worker is free again: open the next epoch from the backlog.
+                start_epoch(now)
+                take = min(max_batch, len(pending))
+                for _ in range(take):
+                    epoch_items.append(pending.pop(0))
+                if len(epoch_items) >= max_batch:
+                    dispatch(now, "size")
+            elif epoch_items and busy_workers < worker_count:
+                dispatch(now, "size")
+
+        elif kind == "server_failed":
+            # The request died inside the server.  The worker is free again
+            # and the backlog behind it gets its chance, but nothing was
+            # delivered: the frames this request carried are gone, which is
+            # what distinguishes a failed request from a slow one.
+            busy_workers = max(0, busy_workers - 1)
+            if pending:
                 start_epoch(now)
                 take = min(max_batch, len(pending))
                 for _ in range(take):
@@ -533,6 +691,12 @@ def simulate_pipeline(
     result.server_utilisation = (
         _clamp(busy_time / max(1e-9, duration_s * worker_count), 0.0, 1.0) if busy_time else 0.0
     )
+    result.failed_requests = failed_requests
+    result.failure_reasons = dict(failure_reasons)
+    result.failure_rate = (
+        failed_requests / requests_total if requests_total else 0.0
+    )
+    result.resource_pressure = resource_pressure
     return result
 
 
@@ -600,21 +764,15 @@ def _params_from_vector(
     silently rewritten by the fit.
     """
     values = {name: float(v) for name, v in zip(_FITTED_PARAMS, vector)}
-    return TwinParameters(
-        arrival_rate_hz=values["arrival_rate_hz"],
-        initial_backlog_frames=base.initial_backlog_frames,
-        batching_window_ms=base.batching_window_ms,
-        max_batch_size=base.max_batch_size,
-        server_workers=base.server_workers,
-        service_base_ms=values["service_base_ms"],
-        service_per_item_ms=values["service_per_item_ms"],
-        transport_mean_ms=values["transport_mean_ms"],
-        transport_sigma_ms=values["transport_sigma_ms"],
-        transport_loss_prob=base.transport_loss_prob,
-        qos_queue_depth=base.qos_queue_depth,
-        consumer_rate_hz=base.consumer_rate_hz,
-        clock_skew_ms=base.clock_skew_ms,
-    )
+    # Start from the base and overwrite only the fitted fields.  Naming every
+    # field explicitly - as this used to - meant that any parameter added to
+    # the model later was silently dropped by the calibration, so the twin
+    # simulated the failure mechanisms the model could not see.  A new
+    # parameter now survives calibration because it was never mentioned.
+    fitted = TwinParameters(**base.as_dict())
+    for name, value in values.items():
+        setattr(fitted, name, value)
+    return fitted
 
 
 def _simulated_targets(outcome: SimulationOutcome) -> Dict[str, float]:

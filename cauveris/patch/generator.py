@@ -30,8 +30,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from cauveris.analysis.parameters import (
+    SECTIONED_CONFIG_SUFFIXES,
     find_parameter_in_tree,
     replace_json_scalar,
+    replace_sectioned_scalar,
     replace_source_scalar,
     replace_yaml_scalar,
 )
@@ -611,6 +613,8 @@ def _file_format(rel: str) -> str:
         return "yaml"
     if suffix == ".json":
         return "json"
+    if suffix in SECTIONED_CONFIG_SUFFIXES:
+        return "sectioned"
     return "source"
 
 
@@ -681,7 +685,7 @@ class PatchGenerator:
         # reproductions is the one most likely to be the real cause.
         completed.sort(key=lambda x: getattr(x, "reproduction_rate", 1.0))
 
-        bundle = self._resolve_bundle()
+        bundle = self._resolve_bundle(completed)
         model = self._resolve_model(bundle)
         if bundle is None:
             logger.error(
@@ -709,17 +713,64 @@ class PatchGenerator:
 
     # -------------------------------------------------------------- context
 
-    def _resolve_bundle(self) -> Optional[Path]:
-        """The bundle the patches are derived from."""
+    def _resolve_bundle(
+        self, experiments: Optional[List[Experiment]] = None
+    ) -> Optional[Path]:
+        """
+        The bundle the patches are derived from.
+
+        An explicitly named bundle - one the caller passed, or one the
+        incident declared - is used as given.  Failing that, the bundle the
+        experiments were branched from is used, because the experiments know
+        which incident they were cut from.  Only when neither is known is the
+        bundle searched for, and then only a bundle that belongs to this
+        incident is accepted.
+        """
         if self._resolved:
             return self._bundle
         self._resolved = True
+
+        explicit = self._bundle_root is not None or bool(
+            getattr(self._incident, "bundle_path", None)
+        )
+        if explicit:
+            self._bundle = resolve_bundle(
+                self._incident,
+                self._bundle_root,
+                evidence_store_path=self.settings.evidence_store_path,
+            )
+            return self._bundle
+
+        if experiments:
+            self._bundle = self._bundle_from_experiments(experiments)
+            if self._bundle is not None:
+                logger.info(
+                    f"Deriving patches from the bundle the experiments used: {self._bundle}"
+                )
+                return self._bundle
+
         self._bundle = resolve_bundle(
             self._incident,
             self._bundle_root,
             evidence_store_path=self.settings.evidence_store_path,
         )
         return self._bundle
+
+    def _bundle_from_experiments(
+        self, experiments: List[Experiment]
+    ) -> Optional[Path]:
+        """
+        The bundle the experiments were branched from.
+
+        The experiments know which incident they were cut from; the patch
+        forge needs the same answer, and taking it from the experiments keeps
+        the diff and the verification about one incident.
+        """
+        for exp in experiments:
+            declared = getattr(exp, "bundle_path", None)
+            if declared and Path(declared).is_dir():
+                return Path(declared)
+        return None
 
     def _resolve_model(self, bundle: Optional[Path]) -> Optional[SystemModel]:
         """The incident's calibrated model, used to score and to write tests."""
@@ -917,6 +968,8 @@ class PatchGenerator:
             return replace_yaml_scalar(text, key, target)
         if suffix == ".json":
             return replace_json_scalar(text, key, target)
+        if suffix in SECTIONED_CONFIG_SUFFIXES:
+            return replace_sectioned_scalar(text, key, target)
         return replace_source_scalar(text, key, target)
 
     @staticmethod
@@ -1306,6 +1359,32 @@ def _read_config_value(relative_path, key, suffix):
                 raise AssertionError(f"{{path}} no longer declares {{key}}")
             node = node[part]
         return node
+    if suffix in (".toml", ".ini", ".cfg", ".conf"):
+        section = ""
+        for raw_line in text.splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith(("#", ";")):
+                continue
+            if stripped.startswith("[") and stripped.endswith("]"):
+                section = stripped[1:-1].strip()
+                continue
+            name, separator, value = stripped.partition("=")
+            if not separator:
+                continue
+            name = name.strip()
+            dotted = f"{{section}}.{{name}}" if section else name
+            if dotted != key and name != key:
+                continue
+            value = re.sub(r"\\s[#;].*$", "", value).strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\\\"":
+                value = value[1:-1]
+            if value.lower() in ("true", "false"):
+                return value.lower() == "true"
+            try:
+                return float(value)
+            except ValueError:
+                return value
+        raise AssertionError(f"{{path}} no longer declares {{key}}")
     match = re.search(
         r"^\\s*(?:self\\.)?" + re.escape(key) + r"\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?)\\s*$",
         text,

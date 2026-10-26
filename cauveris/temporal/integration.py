@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from cauveris.config import get_settings
+from cauveris.bundles import resolve_bundle
 from cauveris.temporal.causality import CausalityViolation, infer_causal_edges
 from cauveris.temporal.clock import ClockAnalysisResult, ClockSkewAnalyzer
 from cauveris.temporal.evidence import (
@@ -170,26 +171,19 @@ class TemporalAnalyzer:
         # Resolve bundle path
         if bundle_path is None:
             settings = get_settings()
-            if (
-                hasattr(incident, "bundle_path")
-                and incident.bundle_path
-                and Path(incident.bundle_path).exists()
-            ):
-                bundle_path = Path(incident.bundle_path)
-            elif (
-                incident.manifest
-                and incident.manifest.get("bundle_path")
-                and Path(incident.manifest["bundle_path"]).exists()
-            ):
-                bundle_path = Path(incident.manifest["bundle_path"])
+            resolved = resolve_bundle(
+                incident,
+                evidence_store_path=settings.evidence_store_path,
+                require_manifest=False,
+            )
+            if resolved is not None:
+                bundle_path = resolved
             else:
+                # Nothing was found for this incident.  Point at where its
+                # bundle would live if it arrives, rather than at some other
+                # incident's directory - the analysis below then reports the
+                # absence of evidence instead of reading somebody else's logs.
                 bundle_path = Path(settings.evidence_store_path) / incident.id
-                if not bundle_path.exists():
-                    bundle_path = Path(f"./incident-{incident.id}")
-                if not bundle_path.exists():
-                    bundle_path = Path("./temp_ingestion") / incident.id
-                if not bundle_path.exists() and incident.id.upper() in ["CAU-0001", "GOLDEN"]:
-                    bundle_path = Path("./golden_incident/incident-CAU-0001")
 
         # Extract raw signals for deeper analysis
         raw_extractor = RawSignalExtractor(bundle_path)
