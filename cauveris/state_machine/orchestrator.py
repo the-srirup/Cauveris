@@ -208,6 +208,8 @@ class PipelineOrchestrator:
         self._cancelled: bool = False
         self.started_at: Optional[str] = None
         self.completed_at: Optional[str] = None
+        # Assigned by the API for each explicit reconstruction request.
+        self.job_id: Optional[str] = None
         self._bg_task: Optional[asyncio.Task] = None
         # Test hooks
         self.simulate_failure_stage: Optional[str] = None
@@ -258,6 +260,7 @@ class PipelineOrchestrator:
             is_demo = getattr(self.context.incident, "is_demonstration", False)
 
         return {
+            "job_id": self.job_id,
             "state": self.current_state,
             "progress": self.current_progress,
             "active_stage_id": self.active_stage_id,

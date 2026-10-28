@@ -1043,10 +1043,14 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
                 break
 
     if not evidence_path.exists() or not (evidence_path / "manifest.yaml").exists():
-        # Implicit demo hydration only in demo mode — real deployments must
-        # load incidents from the evidence store or an explicit golden load.
+        # A sample is never hydrated from a read path. The only compatibility
+        # escape hatch is explicitly opt-in for a local demo deployment.
         settings = get_settings()
-        if incident_id.upper() in ["CAU-0001", "GOLDEN"] and settings.demo_mode:
+        if (
+            incident_id.upper() in ["CAU-0001", "GOLDEN"]
+            and settings.demo_mode
+            and settings.implicit_golden_loading
+        ):
             generator = GoldenIncidentGenerator()
             incident = generator.generate()
             incident.is_demonstration = True
@@ -1063,7 +1067,7 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
             # We're inside a running event loop (any live API endpoint).
             # asyncio.run() raises RuntimeError there, which the except below
             # used to swallow — so on-disk incidents always silently hydrated
-            # as the minimal fallback instead of their real state. Run the
+            # as a minimal fallback instead of their real state. Run the
             # coroutine on a private loop in a short-lived thread instead.
             import concurrent.futures
 
@@ -1072,16 +1076,11 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
         except RuntimeError:
             # No running loop (worker process / script context) — direct.
             incident = asyncio.run(coro)
-    except Exception:
-        # Fallback: create minimal incident
-        incident = Incident(
-            id=incident_id,
-            title=f"Incident {incident_id}",
-            description="Loaded from evidence store",
-            system_name="physical-ai-system",
-            status="OBSERVED",
-            bundle_path=str(evidence_path),
-        )
+    except Exception as exc:
+        # Never convert a failed read into a synthetic incident. Callers must
+        # receive the backend error and keep the UI in an honest error state.
+        logger.exception("Failed to load incident %s from evidence store", incident_id)
+        return None
     if incident.manifest is None:
         incident.manifest = {}
     incident.manifest["bundle_path"] = str(evidence_path)
@@ -2146,7 +2145,7 @@ async def submit_job(request: Request, user_data: tuple = Depends(get_current_us
     Body:
     {
         "type": "pipeline",
-        "payload": {"incident_id": "CAU-0001"},
+        "payload": {"incident_id": "<backend-created-incident-id>"},
         "priority": "NORMAL",
         "max_retries": 3,
         "owner_id": "user-123",
@@ -2243,9 +2242,6 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
     results = []
     seen = set()
 
-    # Pre-hydrate CAU-0001 if available
-    _ensure_incident("CAU-0001")
-
     # Determine filter criteria
     is_admin = user_id is not None and role in ("admin", "super_admin")
 
@@ -2281,50 +2277,6 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
                 else None,
             }
         )
-
-    # Discover any other incident folders on disk (only show if authenticated)
-    if user_id is not None:
-        try:
-            settings = get_settings()
-            store = Path(settings.evidence_store_path)
-            if store.exists():
-                for d in store.iterdir():
-                    if d.is_dir() and d.name not in seen:
-                        seen.add(d.name)
-                        results.append(
-                            {
-                                "id": d.name,
-                                "title": f"Incident {d.name}",
-                                "system_name": "embedded-system",
-                                "status": "OBSERVED",
-                                "pipeline_state": "OBSERVED",
-                                "evidence_count": len(list(d.glob("**/*.*"))),
-                                "timeline_events_count": 0,
-                                "is_demonstration": False,
-                                "approximate_time": None,
-                            }
-                        )
-
-            for p in Path(".").glob("incident-*"):
-                if p.is_dir():
-                    inc_id = p.name.replace("incident-", "")
-                    if inc_id not in seen:
-                        seen.add(inc_id)
-                        results.append(
-                            {
-                                "id": inc_id,
-                                "title": f"Incident {inc_id}",
-                                "system_name": "physical-ai-system",
-                                "status": "OBSERVED",
-                                "pipeline_state": "OBSERVED",
-                                "evidence_count": len(list(p.glob("**/*.*"))),
-                                "timeline_events_count": 0,
-                                "is_demonstration": (inc_id == "CAU-0001"),
-                                "approximate_time": None,
-                            }
-                        )
-        except Exception as e:
-            logger.debug(f"Error scanning disk for incidents: {e}")
 
     return {"incidents": results, "count": len(results)}
 
@@ -2580,8 +2532,12 @@ async def upload_incident(
             logger.error(f"ZIP extraction failed: {e}")
             raise HTTPException(status_code=500, detail="Failed to extract ZIP file")
 
-        # Process each extracted file and create EvidenceItem objects
+        # Process each extracted file and create EvidenceItem objects. Keep the
+        # inventory outcome explicit so clients do not have to infer it from a
+        # count or a success message.
         incident = incidents[incident_id]
+        warnings: List[str] = []
+        rejected_files: List[str] = []
         incident.bundle_path = str(extract_dir)
         if incident.manifest is None:
             incident.manifest = {}
@@ -2612,6 +2568,7 @@ async def upload_incident(
                 }
 
                 if detected_type not in allowed_types:
+                    warnings.append(f"Unsupported media type {detected_type}: {relative_path}")
                     logger.warning(
                         f"File type {detected_type} not in allowed list, but processing anyway"
                     )
@@ -2620,6 +2577,7 @@ async def upload_incident(
                 file_size = extracted_file.stat().st_size
                 max_size = 100 * 1024 * 1024  # 100MB limit for demo
                 if file_size > max_size:
+                    warnings.append(f"File exceeds the 100MB validation limit: {relative_path}")
                     logger.warning(f"File {relative_path} exceeds size limit: {file_size} bytes")
                     # Continue processing but flag in validation later
 
@@ -2645,6 +2603,7 @@ async def upload_incident(
                 validation_errors = []
 
                 if secrets_found:
+                    warnings.append(f"Potential secrets detected: {relative_path}")
                     validation_errors.append(
                         f"Potential secrets detected: {', '.join(set([s[0] for s in secrets_found]))}"
                     )
@@ -2679,6 +2638,8 @@ async def upload_incident(
                     validation_errors=[f"Processing error: {str(e)}"],
                 )
                 incident.evidence_items.append(evidence)
+                rejected_files.append(str(evidence.file_path))
+                warnings.append(f"Could not inventory {evidence.file_path}: {e}")
 
         # Update incident evidence counts
         incident.update_counts()
@@ -2687,10 +2648,16 @@ async def upload_incident(
             f"Successfully processed upload for incident {incident_id}: {len(incident.evidence_items)} evidence items"
         )
         return {
+            "incident_id": incident_id,
             "message": "File uploaded and processed",
             "filename": file.filename,
             "size": len(content),
             "evidence_count": len(incident.evidence_items),
+            "artifact_count": len(incident.evidence_items),
+            "server_validation_status": "FAILED" if rejected_files else ("WARNING" if warnings else "PASSED"),
+            "archive_status": "EXTRACTED",
+            "rejected_files": rejected_files,
+            "warnings": warnings,
         }
 
     finally:
@@ -2881,11 +2848,13 @@ async def reconstruct_incident(
             )
 
     orchestrator = PipelineOrchestrator()
+    job_id = str(uuid.uuid4())
+    orchestrator.job_id = job_id
     orchestrator.context = PipelineContext(incident=incident)
 
     def progress_callback(update, legacy_progress=None):
         if isinstance(update, dict):
-            pipeline_progress[incident_id] = update
+            pipeline_progress[incident_id] = {**update, "job_id": job_id}
         else:
             pipeline_progress[incident_id] = orchestrator.get_pipeline_summary()
 
@@ -2899,6 +2868,7 @@ async def reconstruct_incident(
     return {
         "message": "Reconstruction started successfully",
         "incident_id": incident_id,
+        "job_id": job_id,
         "pipeline_state": "RUNNING",
         "is_demonstration": getattr(incident, "is_demonstration", False),
     }
@@ -3384,7 +3354,7 @@ async def incident_progress_websocket(websocket: WebSocket, incident_id: str):
 @app.post("/api/v1/incidents/{incident_id}/reset")
 @app.post("/api/v1/reset-demo")
 async def reset_incident(
-    request: Request, incident_id: str = "CAU-0001", user_data: tuple = Depends(get_current_user)
+    request: Request, incident_id: str = "", user_data: tuple = Depends(get_current_user)
 ):
     """Reset an investigation and its pipeline stages back to ready IDLE state.
     Requires: incident:reset permission
@@ -3444,20 +3414,12 @@ async def reset_incident(
     if incident_id in pipeline_tasks:
         pipeline_tasks[incident_id].cancel()
 
-    # Reset by clearing pipeline state and reloading from storage
-    if incident_id.upper() in ["CAU-0001", "GOLDEN"]:
-        generator = GoldenIncidentGenerator()
-        incident = generator.generate()
-        incident.is_demonstration = True
-        incident._owner_user_id = user_id  # type: ignore[attr-defined]
-        incident._owner_org_id = org_id  # type: ignore[attr-defined]
-        incident._is_anonymous = False  # type: ignore[attr-defined]
-        incidents[incident.id] = incident
-    else:
-        incident = _ensure_incident(incident_id)
-        if not incident:
-            raise HTTPException(status_code=404, detail="Incident not found")
-        incident.status = "OBSERVED"
+    # Reset only the incident explicitly addressed by the caller. A reset must
+    # never manufacture or substitute a sample incident.
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    incident.status = "OBSERVED"
 
     # Clear existing pipeline data for this incident
     if incident_id in pipeline_contexts:
@@ -4708,12 +4670,6 @@ async def get_incident_report(
         with open(report_file, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    if incident_id.upper() == "CAU-0001":
-        alt_report = Path("./report/CAU-0001/incident_report.json")
-        if alt_report.exists():
-            with open(alt_report, "r", encoding="utf-8") as f:
-                return json.load(f)
-
     return {"message": "Report not yet generated for this incident"}
 
 
@@ -4778,9 +4734,6 @@ async def list_incident_reports(
 
     reports = []
     report_file = Path(f"./report/{incident_id}/incident_report.json")
-    if not report_file.exists() and incident_id.upper() == "CAU-0001":
-        report_file = Path("./report/CAU-0001/incident_report.json")
-
     # Only return reports that actually exist on disk. The pipeline produces one
     # investigation report per incident; client-side rendering offers HTML/PDF
     # print variants of the same real data.
@@ -5153,10 +5106,14 @@ async def test_model_connectivity(
 async def get_status_center():
     """Get orchestration and system health status center."""
     started = time.perf_counter()
-    _ensure_incident("CAU-0001")
     incident_count = len(incidents)
-    active_inc = incidents.get("CAU-0001")
-    stage = pipeline_progress.get("CAU-0001", {}).get("state", "IDLE")
+    active_ids = [
+        incident_id
+        for incident_id, progress in pipeline_progress.items()
+        if progress.get("state") == "RUNNING"
+    ]
+    active_incident_id = active_ids[0] if active_ids else None
+    stage = pipeline_progress.get(active_incident_id, {}).get("state", "UNAVAILABLE") if active_incident_id else "UNAVAILABLE"
     settings = get_settings()
 
     hosted_configured = bool(settings.nebius_api_key)
@@ -5166,16 +5123,16 @@ async def get_status_center():
         if part.strip()
     ]
     if hosted_configured:
-        route = "Hosted model (Nebius) with local fallback"
+        route = "Hosted model (Nebius)"
         mode = "live_gateway"
     else:
-        route = "Local model server with evidence-rule fallback"
+        route = "No hosted model configured; evidence-calibrated analysis"
         mode = "local_only"
 
     return {
         "status": "healthy",
         "incidents_count": incident_count,
-        "active_incident_id": "CAU-0001" if active_inc else None,
+        "active_incident_id": active_incident_id,
         "current_stage": stage,
         "model_route": route,
         "processing_mode": "Evidence-calibrated pipeline",
@@ -5259,10 +5216,6 @@ async def download_patch_package(
 
     pkg_dir = Path(f"./report/{incident_id}/patch-package")
     if not pkg_dir.exists():
-        # Check alternative report location
-        pkg_dir = Path("./report/CAU-0001/patch-package")
-
-    if not pkg_dir.exists():
         raise HTTPException(status_code=404, detail="Patch package not found for this incident")
 
     zip_dest = Path(f"./report/{incident_id}_patch_package.zip")
@@ -5343,8 +5296,6 @@ async def export_incident_patch(
     )
 
     pkg_dir = Path(f"./report/{incident_id}/patch-package")
-    if not pkg_dir.exists():
-        pkg_dir = Path("./report/CAU-0001/patch-package")
 
     # If patch package doesn't exist yet, generate from pipeline context or golden patch
     if not pkg_dir.exists():
@@ -5463,9 +5414,6 @@ async def apply_patch_to_target(
         )
 
     pkg_dir = Path(f"./report/{incident_id}/patch-package")
-    if not pkg_dir.exists():
-        pkg_dir = Path("./report/CAU-0001/patch-package")
-
     installer_file = pkg_dir / "apply_patch.py"
     if not installer_file.exists():
         ctx = pipeline_contexts.get(incident_id)

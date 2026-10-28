@@ -57,10 +57,15 @@ class Settings:
         default_factory=lambda: int(os.getenv("CAUVERIS_MAX_UPLOAD_SIZE", "104857600"))
     )  # 100MB
 
-    # Demo mode: seeds the demo user and allows implicit CAU-0001 golden-incident
-    # hydration in read paths. Must be disabled (false) in real deployments.
+    # Demo mode only enables demo-user setup. It never selects or hydrates a
+    # sample incident by itself.
     demo_mode: bool = field(
-        default_factory=lambda: os.getenv("CAUVERIS_DEMO_MODE", "true").lower() == "true"
+        default_factory=lambda: os.getenv("CAUVERIS_DEMO_MODE", "false").lower() == "true"
+    )
+    # Kept as a separate, opt-in switch for local compatibility. Production
+    # reads must never turn a missing incident ID into a generated sample.
+    implicit_golden_loading: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_IMPLICIT_GOLDEN_LOADING", "false").lower() == "true"
     )
 
     # Incident Creation Limits (Phase 2)
