@@ -37,6 +37,7 @@ import os
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -165,9 +166,9 @@ class VerificationEngine:
     ) -> VerificationReport:
         """Run the whole checklist against one candidate."""
         try:
-            workspace = self.workspace_dir / patch.candidate_id
+            workspace = self.workspace_dir / f"{patch.candidate_id}_{uuid.uuid4().hex[:8]}"
             if workspace.exists():
-                shutil.rmtree(workspace)
+                shutil.rmtree(workspace, ignore_errors=True)
             workspace.mkdir(parents=True, exist_ok=True)
 
             if bundle is None:
@@ -209,6 +210,8 @@ class VerificationEngine:
             ]
             patch.rollback_test_passes = results["rollback_test_passes"]
             patch.verified = results["verified"]
+            patch.verification_level = results.get("verification_level", "UNVERIFIED")
+            patch.verification_summary = results.get("verification_summary")
             patch.rejection_reason = results.get("rejection_reason")
             patch.policy_findings = list(results.get("details", {}).get("policy_findings", []))
 
@@ -260,6 +263,8 @@ class VerificationEngine:
             forbidden_change_scan_passes=results["forbidden_change_scan_passes"],
             rollback_test_passes=results["rollback_test_passes"],
             verified=results["verified"],
+            verification_level=results.get("verification_level", "UNVERIFIED"),
+            verification_summary=results.get("verification_summary"),
             details=results.get("details", {}),
         )
 
@@ -380,6 +385,13 @@ class VerificationEngine:
                 payload["failure_mechanism"] = evidence.mechanism
                 payload["mechanism_parameters"] = dict(evidence.parameters)
                 payload["mechanism_observations"] = dict(evidence.observations)
+            # Queue overflow/backpressure is a policy invariant rather than a
+            # latency sample.  Preserve it in the generated regression test so
+            # the baseline must fail on the uploaded buffer declaration and the
+            # patched workspace must clear that same declaration.
+            log_text = "\n".join(str(getattr(record, "text", "")) for record in model.bundle.logs)
+            if any(token in log_text.lower() for token in ("queue overflow", "backpressure", "buffer full")):
+                payload["subscriber_backpressure"] = True
         (workspace / "calibration.json").write_text(
             json.dumps(payload, indent=2), encoding="utf-8"
         )
@@ -462,6 +474,112 @@ class VerificationEngine:
         results["verified"] = len(failures) == 0
         if failures:
             results["rejection_reason"] = "; ".join(failures)
+
+        from cauveris.verifier.atomic_checks import (
+            AtomicCheckRecord,
+            CheckStatus,
+            VerificationLevel,
+            evaluate_verification_level,
+        )
+
+        atomic_checks = [
+            AtomicCheckRecord(
+                check_id="CHK-REG-FAIL-BEFORE",
+                name="Regression test fails on unpatched incident",
+                target_level=VerificationLevel.MODEL_VERIFIED,
+                required=True,
+                status=CheckStatus.PASSED if results["regression_test_fails_before"] else CheckStatus.FAILED,
+                expected="FAIL",
+                actual="FAIL" if results["regression_test_fails_before"] else "PASS",
+            ),
+            AtomicCheckRecord(
+                check_id="CHK-TWIN-CLEARED",
+                name="Original failure not reproduced in digital twin",
+                target_level=VerificationLevel.MODEL_VERIFIED,
+                required=True,
+                status=CheckStatus.PASSED if results["original_failure_not_reproduced"] else CheckStatus.FAILED,
+                expected="CLEARED",
+                actual="CLEARED" if results["original_failure_not_reproduced"] else "REPRODUCED",
+            ),
+            AtomicCheckRecord(
+                check_id="CHK-SAFETY-INVARIANTS",
+                name="Safety invariants preserved without weakening",
+                target_level=VerificationLevel.MODEL_VERIFIED,
+                required=True,
+                status=CheckStatus.PASSED if results["safety_invariants_pass"] else CheckStatus.FAILED,
+                expected="PRESERVED",
+                actual="PRESERVED" if results["safety_invariants_pass"] else "VIOLATED",
+            ),
+            AtomicCheckRecord(
+                check_id="CHK-PERF-BUDGET",
+                name="Performance within declared safety budget",
+                target_level=VerificationLevel.MODEL_VERIFIED,
+                required=True,
+                status=CheckStatus.PASSED if results["performance_within_budget"] else CheckStatus.FAILED,
+                expected="WITHIN_BUDGET",
+                actual="WITHIN_BUDGET" if results["performance_within_budget"] else "EXCEEDED",
+            ),
+            AtomicCheckRecord(
+                check_id="CHK-APPLIES-CLEANLY",
+                name="Patch applies cleanly without syntax or merge conflicts",
+                target_level=VerificationLevel.STAGING_VERIFIED,
+                required=True,
+                status=CheckStatus.PASSED if results["applies_cleanly"] else CheckStatus.FAILED,
+                expected="CLEAN",
+                actual="CLEAN" if results["applies_cleanly"] else "CONFLICT",
+            ),
+            AtomicCheckRecord(
+                check_id="CHK-REG-PASS-AFTER",
+                name="Regression test passes on patched workspace",
+                target_level=VerificationLevel.STAGING_VERIFIED,
+                required=True,
+                status=CheckStatus.PASSED if results["regression_test_passes_after"] else CheckStatus.FAILED,
+                expected="PASS",
+                actual="PASS" if results["regression_test_passes_after"] else "FAIL",
+            ),
+            AtomicCheckRecord(
+                check_id="CHK-EXISTING-TESTS",
+                name="Existing test suite and code integrity preserved",
+                target_level=VerificationLevel.STAGING_VERIFIED,
+                required=True,
+                status=CheckStatus.PASSED if results["existing_tests_pass"] else CheckStatus.FAILED,
+                expected="PASS",
+                actual="PASS" if results["existing_tests_pass"] else "FAIL",
+            ),
+            AtomicCheckRecord(
+                check_id="CHK-FORBIDDEN-SCAN",
+                name="Forbidden change and security policy scan passes",
+                target_level=VerificationLevel.STAGING_VERIFIED,
+                required=True,
+                status=CheckStatus.PASSED if results["forbidden_change_scan_passes"] else CheckStatus.FAILED,
+                expected="CLEAN",
+                actual="CLEAN" if results["forbidden_change_scan_passes"] else "POLICY_VIOLATION",
+            ),
+            AtomicCheckRecord(
+                check_id="CHK-CLEAN-ROLLBACK",
+                name="Patch reversible with byte-for-byte workspace rollback",
+                target_level=VerificationLevel.STAGING_VERIFIED,
+                required=True,
+                status=CheckStatus.PASSED if results["rollback_test_passes"] else CheckStatus.FAILED,
+                expected="REVERSIBLE",
+                actual="REVERSIBLE" if results["rollback_test_passes"] else "IRREVERSIBLE",
+            ),
+        ]
+
+        summary = evaluate_verification_level(
+            candidate_id=getattr(patch, "candidate_id", "patch"),
+            experiment_id=str(getattr(patch, "candidate_id", "patch")).replace("patch-", ""),
+            invariant_set_id=f"invset_{self._incident.id if self._incident else 'default'}",
+            baseline_run_id=f"base_{self._incident.id if self._incident else 'default'}",
+            intervention_run_id=f"interv_{getattr(patch, 'candidate_id', 'patch')}",
+            checks=atomic_checks,
+            is_staging_workspace_execution=True,
+            is_live_runtime_execution=False,
+        )
+
+        results["verification_summary"] = summary.model_dump()
+        results["verification_level"] = summary.achieved_level.value
+        results["verified"] = summary.verified
 
         passed = sum(
             1
@@ -636,6 +754,21 @@ class TestIncidentCondition(unittest.TestCase):
                 timeout,
                 hold,
                 f"The lock is held for {{hold:.0f}} ms but the caller gives up after {{timeout:.0f}} ms",
+            )
+        elif MECHANISM == "connection_pool_exhaustion":
+            pool_size = float(merged.get("db_pool_size", 0.0))
+            demand = float(MECHANISM_PARAMETERS.get("db_demand_connections", 0.0))
+            self.assertGreaterEqual(
+                pool_size,
+                demand,
+                f"The database workload needs {{demand:.0f}} connections but the pool capacity is only {{pool_size:.0f}}",
+            )
+        elif CALIBRATION.get("subscriber_backpressure"):
+            depth = float(merged.get("qos_queue_depth", 1.0))
+            self.assertLessEqual(
+                depth,
+                1.0,
+                f"The subscriber buffer remains {{depth:.0f}} frames deep under overflow evidence",
             )
         else:
             self.skipTest("the incident named no failure mechanism")

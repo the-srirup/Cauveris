@@ -42,6 +42,8 @@ export interface RegisterRequest {
   org_slug?: string;
 }
 
+export type AuthStatus = 'CHECKING' | 'AUTHENTICATED' | 'UNAUTHENTICATED' | 'ERROR';
+
 export interface AuthState {
   // Token storage
   accessToken: string | null;
@@ -50,6 +52,7 @@ export interface AuthState {
 
   // User state
   user: User | null;
+  status: AuthStatus;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
@@ -100,6 +103,11 @@ function storeTokens(accessToken: string, refreshToken: string, expiresIn: numbe
       refreshToken,
       expiry,
     }));
+    try {
+      document.cookie = `access_token=${accessToken}; path=/; max-age=${expiresIn}; SameSite=Lax`;
+    } catch {
+      // Ignore cookie errors
+    }
   }
 }
 
@@ -127,6 +135,11 @@ function clearTokens() {
   if (typeof window !== 'undefined') {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     localStorage.removeItem(userStorageKey);
+    try {
+      document.cookie = 'access_token=; path=/; max-age=0; SameSite=Lax';
+    } catch {
+      // Ignore
+    }
   }
 }
 
@@ -147,8 +160,9 @@ function getStoredUser(): User | null {
   return null;
 }
 
-// Single-flight promise for token refresh
+// Single-flight promises
 let refreshPromise: Promise<boolean> | null = null;
+let initAuthPromise: Promise<void> | null = null;
 
 // Check if token is expired (with 30 second buffer)
 function isTokenExpired(expiry: number | null): boolean {
@@ -166,6 +180,7 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       tokenExpiry: null,
       user: null,
+      status: 'CHECKING',
       isAuthenticated: false,
       isLoading: true, // Start with true to prevent flash of unauthenticated content
       error: null,
@@ -173,61 +188,117 @@ export const useAuthStore = create<AuthState>()(
       // Clear error
       clearError: () => set({ error: null }),
 
-      // Initialize auth from stored tokens
+      // Initialize auth from persistent session and backend verification
       initializeAuth: async () => {
-        set({ isLoading: true });
-        const { accessToken, refreshToken, expiry } = getStoredTokens();
-        const user = getStoredUser();
+        if (initAuthPromise) {
+          return initAuthPromise;
+        }
 
-        if (accessToken && refreshToken && !isTokenExpired(expiry)) {
-          // Token is valid, set state
-          set({
-            accessToken,
-            refreshToken,
-            tokenExpiry: expiry,
-            user,
-            isAuthenticated: true,
-            isLoading: false,
-          });
-        } else if (accessToken && refreshToken) {
-          // Token expired, try to refresh
-          const refreshed = await get().refreshAccessToken();
-          if (!refreshed) {
-            // Refresh failed, clear everything
+        initAuthPromise = (async () => {
+          set({ isLoading: true, status: 'CHECKING' });
+          const { accessToken, refreshToken, expiry } = getStoredTokens();
+          const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1';
+
+          try {
+            const headers: Record<string, string> = { 'Accept': 'application/json' };
+            if (accessToken) {
+              headers['Authorization'] = `Bearer ${accessToken}`;
+            }
+
+            const response = await fetch(`${apiBase}/auth/me`, {
+              method: 'GET',
+              headers,
+              credentials: 'include',
+            });
+
+            if (response.ok) {
+              const userData: User = await response.json();
+              storeUser(userData);
+              set({
+                user: userData,
+                accessToken: accessToken || getStoredTokens().accessToken,
+                refreshToken: refreshToken || getStoredTokens().refreshToken,
+                tokenExpiry: expiry,
+                isAuthenticated: true,
+                status: 'AUTHENTICATED',
+                isLoading: false,
+                error: null,
+              });
+              return;
+            }
+
+            if (response.status === 401 && refreshToken) {
+              const refreshed = await get().refreshAccessToken();
+              if (refreshed) {
+                const newTokens = getStoredTokens();
+                const retryRes = await fetch(`${apiBase}/auth/me`, {
+                  method: 'GET',
+                  headers: {
+                    'Accept': 'application/json',
+                    'Authorization': `Bearer ${newTokens.accessToken}`,
+                  },
+                  credentials: 'include',
+                });
+                if (retryRes.ok) {
+                  const userData: User = await retryRes.json();
+                  storeUser(userData);
+                  set({
+                    user: userData,
+                    accessToken: newTokens.accessToken,
+                    refreshToken: newTokens.refreshToken,
+                    tokenExpiry: newTokens.expiry,
+                    isAuthenticated: true,
+                    status: 'AUTHENTICATED',
+                    isLoading: false,
+                    error: null,
+                  });
+                  return;
+                }
+              }
+            }
+
+            // Unauthenticated or revoked session
             clearTokens();
             set({
+              user: null,
               accessToken: null,
               refreshToken: null,
               tokenExpiry: null,
-              user: null,
               isAuthenticated: false,
+              status: 'UNAUTHENTICATED',
               isLoading: false,
+              error: null,
             });
-          } else {
-            // Refresh succeeded, state is updated in refreshAccessToken
-            set({ isLoading: false });
+          } catch (err: any) {
+            clearTokens();
+            set({
+              user: null,
+              accessToken: null,
+              refreshToken: null,
+              tokenExpiry: null,
+              isAuthenticated: false,
+              status: 'ERROR',
+              isLoading: false,
+              error: 'Cannot connect to Cauveris API. Please verify the backend is running.',
+            });
+          } finally {
+            initAuthPromise = null;
           }
-        } else {
-          // No tokens, not authenticated
-          set({
-            accessToken: null,
-            refreshToken: null,
-            tokenExpiry: null,
-            user: null,
-            isAuthenticated: false,
-            isLoading: false,
-          });
-        }
+        })();
+
+        return initAuthPromise;
       },
 
       // Login
       login: async (credentials: LoginRequest) => {
-        set({ isLoading: true, error: null });
+        set({ isLoading: true, error: null, status: 'CHECKING' });
         try {
-          const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1'}/auth/login`, {
+          const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1';
+          const response = await fetch(`${apiBase}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(credentials),
+            credentials: 'include',
           });
 
           if (!response.ok) {
@@ -249,6 +320,7 @@ export const useAuthStore = create<AuthState>()(
             tokenExpiry: Date.now() + data.expires_in * 1000,
             user: data.user,
             isAuthenticated: true,
+            status: 'AUTHENTICATED',
             isLoading: false,
             error: null,
           });
@@ -263,19 +335,22 @@ export const useAuthStore = create<AuthState>()(
             isLoading: false,
             error: errorMsg,
             isAuthenticated: false,
+            status: errorMsg.includes('Cannot connect') ? 'ERROR' : 'UNAUTHENTICATED',
           });
           throw err;
         }
       },
 
-      // Register
+      // Register / Signup
       register: async (data: RegisterRequest) => {
-        set({ isLoading: true, error: null });
+        set({ isLoading: true, error: null, status: 'CHECKING' });
         try {
-          const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1'}/auth/register`, {
+          const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1';
+          const response = await fetch(`${apiBase}/auth/signup`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
+            credentials: 'include',
           });
 
           if (!response.ok) {
@@ -297,6 +372,7 @@ export const useAuthStore = create<AuthState>()(
             tokenExpiry: Date.now() + responseData.expires_in * 1000,
             user: responseData.user,
             isAuthenticated: true,
+            status: 'AUTHENTICATED',
             isLoading: false,
             error: null,
           });
@@ -311,6 +387,7 @@ export const useAuthStore = create<AuthState>()(
             isLoading: false,
             error: errorMsg,
             isAuthenticated: false,
+            status: errorMsg.includes('Cannot connect') ? 'ERROR' : 'UNAUTHENTICATED',
           });
           throw err;
         }
@@ -318,32 +395,34 @@ export const useAuthStore = create<AuthState>()(
 
       // Logout
       logout: async () => {
-        const { refreshToken } = get();
-        try {
-          // Call logout endpoint to revoke session on server
-          if (refreshToken) {
-            await fetch(`${process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1'}/auth/logout`, {
+        const { refreshToken, accessToken } = get();
+        if (refreshToken || accessToken) {
+          try {
+            const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1';
+            await fetch(`${apiBase}/auth/logout`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${get().accessToken}`,
+                ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {}),
               },
               body: JSON.stringify({ refresh_token: refreshToken }),
+              credentials: 'include',
             });
+          } catch {
+            // Ignore network errors during logout
           }
-        } catch {
-          // Ignore logout errors - we clear local state regardless
-        } finally {
-          clearTokens();
-          set({
-            accessToken: null,
-            refreshToken: null,
-            tokenExpiry: null,
-            user: null,
-            isAuthenticated: false,
-            error: null,
-          });
         }
+        clearTokens();
+        set({
+          accessToken: null,
+          refreshToken: null,
+          tokenExpiry: null,
+          user: null,
+          isAuthenticated: false,
+          status: 'UNAUTHENTICATED',
+          isLoading: false,
+          error: null,
+        });
       },
 
       // Refresh access token
@@ -358,14 +437,15 @@ export const useAuthStore = create<AuthState>()(
 
         refreshPromise = (async () => {
           try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1'}/auth/refresh`, {
+            const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1';
+            const response = await fetch(`${apiBase}/auth/refresh`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ refresh_token: refreshToken }),
+              credentials: 'include',
             });
 
             if (!response.ok) {
-              // Clear auth state on failed refresh
               await get().logout();
               return false;
             }
@@ -381,11 +461,9 @@ export const useAuthStore = create<AuthState>()(
             });
             return true;
           } catch {
-            // Clear auth state on error
             await get().logout();
             return false;
           } finally {
-            // Clear the in-flight promise
             refreshPromise = null;
           }
         })();

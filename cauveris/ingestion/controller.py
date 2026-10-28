@@ -14,6 +14,9 @@ from cauveris.schemas.base import StatusLabel
 from cauveris.security import scan_for_secrets, compute_file_hash, validate_file_size
 from cauveris.bundles import resolve_bundle
 from cauveris.config import get_settings
+from cauveris.inventory.artifact_inventory import ArtifactInventory, ContentTypeDetector
+from cauveris.capability.planner import CapabilityPlanner
+from cauveris.discovery.repo_discovery import RepositoryDiscovery
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +33,20 @@ def extract_zip_safely(zip_path: Path, extract_to: Path) -> List[Path]:
         List of extracted file paths
     """
     extracted_files = []
+    settings = get_settings()
     extract_to.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        for member in zip_ref.namelist():
+        members = zip_ref.infolist()
+        if not members:
+            raise ValueError("ZIP archive is empty")
+        if len(members) > settings.max_archive_members:
+            raise ValueError("ZIP archive exceeds the member threshold")
+        uncompressed_size = sum(max(0, int(member.file_size)) for member in members)
+        if uncompressed_size > settings.max_archive_uncompressed_size:
+            raise ValueError("ZIP archive exceeds the uncompressed-size threshold")
+        for member_info in members:
+            member = member_info.filename
             member_path = Path(member)
             if member_path.is_absolute() or ".." in member_path.parts:
                 raise ValueError(f"Invalid path in ZIP: {member}")
@@ -49,7 +62,7 @@ def extract_zip_safely(zip_path: Path, extract_to: Path) -> List[Path]:
                 continue
 
             safe_path.parent.mkdir(parents=True, exist_ok=True)
-            with zip_ref.open(member) as source, open(safe_path, "wb") as target:
+            with zip_ref.open(member_info) as source, open(safe_path, "wb") as target:
                 shutil.copyfileobj(source, target)
 
             extracted_files.append(safe_path)
@@ -154,6 +167,25 @@ class IngestionController:
                 evidence.validation_errors.append(str(e))
                 evidence.status = StatusLabel.VALIDATION_FAILED
 
+        # Build dynamic artifact inventory, capability report, and repo discovery if bundle_path exists
+        if bundle_path and bundle_path.exists():
+            try:
+                inventory = ArtifactInventory(bundle_path)
+                entries = inventory.scan()
+                incident.artifact_inventory = [e.to_dict() for e in entries]
+
+                # Capability planner
+                planner = CapabilityPlanner()
+                cap_report = planner.evaluate_bundle(bundle_path, inventory_entries=entries)
+                incident.capability_report = cap_report.to_dict()
+
+                # Dynamic repo discovery
+                repo_disc = RepositoryDiscovery(bundle_path)
+                discovered_repo = repo_disc.discover()
+                incident.discovered_repository = discovered_repo.to_dict()
+            except Exception as e:
+                logger.warning(f"Failed to build artifact inventory / capability report: {e}")
+
         # Update incident evidence counts
         incident.update_counts()
         logger.info(
@@ -225,40 +257,13 @@ class IngestionController:
             evidence.status = StatusLabel.VALIDATION_FAILED
 
     def _detect_file_type(self, file_path: Path) -> str:
-        """Detect file MIME type from header or extension."""
+        """Detect file MIME type from header or extension safely using ContentTypeDetector."""
         try:
-            with open(file_path, "rb") as f:
-                header = f.read(16)
-
-            if header.startswith(b"\x89PNG\r\n\x1a\n"):
-                return "image/png"
-            elif header.startswith(b"\xff\xd8\xff"):
-                return "image/jpeg"
-            elif header.startswith(b"%PDF"):
-                return "application/pdf"
-            elif header.startswith(b"\x89MCAP"):
-                return "application/octet-stream"
-            elif header.startswith(b"PK\x03\x04"):
-                return "application/zip"
-            elif file_path.suffix.lower() in [".yaml", ".yml"]:
-                return "text/yaml"
-            elif file_path.suffix.lower() == ".json":
-                return "application/json"
-            elif file_path.suffix.lower() == ".jsonl":
-                return "application/x-jsonlines"
-            elif file_path.suffix.lower() == ".csv":
-                return "text/csv"
-            elif file_path.suffix.lower() == ".md":
-                return "text/markdown"
-            elif file_path.suffix.lower() in [".py", ".cpp", ".h", ".sh", ".log", ".txt"]:
-                return "text/plain"
-            elif file_path.suffix.lower() == ".mp4":
-                return "video/mp4"
+            detected_type, mime_type, _ = ContentTypeDetector.detect(file_path)
+            return mime_type or "application/octet-stream"
         except Exception:
-            pass
-
-        mime_type, _ = mimetypes.guess_type(str(file_path))
-        return mime_type or "application/octet-stream"
+            mime_type, _ = mimetypes.guess_type(str(file_path))
+            return mime_type or "application/octet-stream"
 
     async def process_zip_bundle(
         self, zip_path: Path, target_dir: Optional[Path] = None

@@ -31,6 +31,7 @@ import { useShell } from "@/lib/useShell";
 import { AuthGate } from "@/components/AuthGate";
 import { DataErrorBoundary } from "@/components/ErrorBoundary";
 import { readDeepLink } from "@/holographic";
+import { InstrumentPanel, SignalTag, TraceValue } from "@/design-system";
 import {
   ZoomIn, ZoomOut, ArrowLeft, ArrowRight, Maximize, RotateCcw,
   Play, SkipBack, SkipForward, AlertTriangle, Globe, Timer,
@@ -77,73 +78,73 @@ const laneConfigs: Record<
 > = {
   deployment: {
     name: "Deployment Changes",
-    color: "#38bdf8",
-    badgeBg: "rgba(56, 189, 248, 0.12)",
-    badgeBorder: "rgba(56, 189, 248, 0.3)",
-    badgeText: "#38bdf8",
+    color: "#e4e4e7",
+    badgeBg: "rgba(228, 228, 231, 0.08)",
+    badgeBorder: "rgba(228, 228, 231, 0.25)",
+    badgeText: "#e4e4e7",
     description: "Binary rollout & package versions",
     Icon: GitBranch,
   },
   configuration: {
     name: "Configuration Changes",
-    color: "#f59e0b",
-    badgeBg: "rgba(245, 158, 11, 0.12)",
-    badgeBorder: "rgba(245, 158, 11, 0.3)",
-    badgeText: "#f59e0b",
+    color: "#d4d4d8",
+    badgeBg: "rgba(212, 212, 216, 0.08)",
+    badgeBorder: "rgba(212, 212, 216, 0.25)",
+    badgeText: "#d4d4d8",
     description: "Tunables, YAML flags & dynamic envs",
     Icon: FileText,
   },
   "application-log": {
     name: "Application Logs",
-    color: "#a855f7",
-    badgeBg: "rgba(168, 85, 247, 0.12)",
-    badgeBorder: "rgba(168, 85, 247, 0.3)",
-    badgeText: "#a855f7",
+    color: "#a1a1aa",
+    badgeBg: "rgba(161, 161, 170, 0.08)",
+    badgeBorder: "rgba(161, 161, 170, 0.25)",
+    badgeText: "#a1a1aa",
     description: "Daemon stderr/stdout & structured logs",
     Icon: Terminal,
   },
   trace: {
     name: "Distributed Traces",
-    color: "#60a5fa",
-    badgeBg: "rgba(96, 165, 250, 0.12)",
-    badgeBorder: "rgba(96, 165, 250, 0.3)",
-    badgeText: "#60a5fa",
+    color: "#e4e4e7",
+    badgeBg: "rgba(228, 228, 231, 0.08)",
+    badgeBorder: "rgba(228, 228, 231, 0.25)",
+    badgeText: "#e4e4e7",
     description: "gRPC & span RPC execution boundaries",
     Icon: Zap,
   },
   metric: {
     name: "System Metrics",
-    color: "#ec4899",
-    badgeBg: "rgba(236, 72, 153, 0.12)",
-    badgeBorder: "rgba(236, 72, 153, 0.3)",
-    badgeText: "#ec4899",
+    color: "#d4d4d8",
+    badgeBg: "rgba(212, 212, 216, 0.08)",
+    badgeBorder: "rgba(212, 212, 216, 0.25)",
+    badgeText: "#d4d4d8",
     description: "Telemetry time-series & sensor spikes",
     Icon: Database,
   },
   "robotic-message": {
     name: "Robotic Messages",
-    color: "#06b6d4",
-    badgeBg: "rgba(6, 182, 212, 0.12)",
-    badgeBorder: "rgba(6, 182, 212, 0.3)",
-    badgeText: "#06b6d4",
+    color: "#a1a1aa",
+    badgeBg: "rgba(161, 161, 170, 0.08)",
+    badgeBorder: "rgba(161, 161, 170, 0.25)",
+    badgeText: "#a1a1aa",
     description: "ROS2 topics, kinematics & actuators",
     Icon: Bot,
   },
   "operator-observation": {
     name: "Operator Observations",
-    color: "#10b981",
-    badgeBg: "rgba(16, 185, 129, 0.12)",
-    badgeBorder: "rgba(16, 185, 129, 0.3)",
-    badgeText: "#10b981",
+    color: "#e4e4e7",
+    badgeBg: "rgba(228, 228, 231, 0.08)",
+    badgeBorder: "rgba(228, 228, 231, 0.25)",
+    badgeText: "#e4e4e7",
     description: "Human manual overrides & visual inspection",
     Icon: Eye,
   },
   "safety-event": {
     name: "Safety & Guardrail Events",
-    color: "#ef4444",
-    badgeBg: "rgba(239, 68, 68, 0.15)",
-    badgeBorder: "rgba(239, 68, 68, 0.4)",
-    badgeText: "#ef4444",
+    color: "#ffffff",
+    badgeBg: "rgba(255, 255, 255, 0.12)",
+    badgeBorder: "rgba(255, 255, 255, 0.35)",
+    badgeText: "#ffffff",
     description: "E-stops, interlocking trips & budget halts",
     Icon: Shield,
   },
@@ -617,6 +618,7 @@ function RealityRewindContent() {
   };
 
   const handleExportTimeline = async () => {
+    if (!incidentId) return;
     setLoading(true);
     try {
       const tl = await api.getTimeline(incidentId);
@@ -741,8 +743,10 @@ function RealityRewindContent() {
     <div className="w-full space-y-5">
       {/* Header */}
       <PageHeader
-        title="Reality Rewind"
+        title="Timeline"
+        ariaLabel="Reality Rewind"
         subtitle="Synchronized multi-source timeline reconstruction & causal event playback"
+        breadcrumbs={[{ label: "Overview", href: "/" }, { label: "Timeline" }]}
         badge={
           <Badge tone={events.length > 0 ? "success" : "secondary"} dot={true}>
             {events.length} Synchronized Events ({timeRange.end.toFixed(3)}s span)
@@ -1051,7 +1055,7 @@ function RealityRewindContent() {
         </Toolbar>
 
         {/* Synchronized Multi-Lane Reality Timeline */}
-        <Card title="Synchronized Multi-Lane Reality Timeline">
+        <InstrumentPanel title="Synchronized Multi-Lane Reality Timeline" subtitle="Multi-source temporal registration with Kalman phase alignment">
           <div className="space-y-4">
             {/* Top Telemetry & Scrubber Header */}
             <div className="p-3.5 rounded-[var(--radius-md)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] flex flex-wrap items-center justify-between gap-3">
@@ -1327,7 +1331,7 @@ function RealityRewindContent() {
               </div>
             </div>
           </div>
-        </Card>
+        </InstrumentPanel>
 
         {/* Filters Bar */}
         <Toolbar bordered={false} aria-label="Timeline filters" className="px-0 py-2 gap-3 bg-transparent">
@@ -1412,7 +1416,7 @@ function RealityRewindContent() {
         </Toolbar>
 
         {/* Active Event Inspector */}
-        <Card title="Active Event Inspector">
+        <InstrumentPanel title="Active Event Inspector" subtitle="Selected event telemetry, provenance, and causal links">
           {currentEvent ? (
             <div className="space-y-5">
               {/* Event Top Bar */}
@@ -1586,10 +1590,10 @@ function RealityRewindContent() {
               </p>
             </div>
           )}
-        </Card>
+        </InstrumentPanel>
 
         {/* Textual Event List (accessible) */}
-        <Card title="Synchronized Chronological Event Stream">
+        <InstrumentPanel title="Synchronized Chronological Event Stream" subtitle="Normalized multi-channel event sequence">
           <div className="space-y-4">
             {/* Filter and Search Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1714,7 +1718,7 @@ function RealityRewindContent() {
               </ul>
             </div>
           </div>
-        </Card>
+        </InstrumentPanel>
 
         {/* Actions Footer */}
         <div className="pt-4 border-t border-[var(--color-border-default)] flex flex-wrap justify-end gap-3">

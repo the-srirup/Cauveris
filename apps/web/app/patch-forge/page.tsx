@@ -172,6 +172,7 @@ function PatchForgeContent() {
 
   // Generate candidates
   const handleGenerateCandidates = async () => {
+    if (!incidentId) return;
     setLoading(true);
     setError(null);
     try {
@@ -189,6 +190,7 @@ function PatchForgeContent() {
 
   // Create patch package
   const handleCreatePatchPackage = async () => {
+    if (!incidentId) return;
     setLoading(true);
     setError(null);
     try {
@@ -223,16 +225,18 @@ function PatchForgeContent() {
 
   // Download verified patch
   const handleDownloadPatch = async () => {
+    if (!incidentId) return;
     setLoading(true);
     setError(null);
     try {
       notify("Preparing download for verified patch package...", "info");
-      const blob = await api.downloadPatchPackage(incidentId);
+      const blob = await api.downloadPatchPackage(incidentId, selectedPatch?.candidate_id);
 
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `cauveris-verified-patch-${incidentId.slice(0, 8)}.zip`;
+      const repairSuffix = selectedPatch?.candidate_id ? `-${selectedPatch.candidate_id}` : '';
+      a.download = `cauveris-repair-package-${incidentId.slice(0, 8)}${repairSuffix}.zip`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -251,8 +255,10 @@ function PatchForgeContent() {
     <div className="w-full space-y-5">
       {/* Header */}
       <PageHeader
-        title="Patch Forge"
+        title="Patch"
+        ariaLabel="Patch Forge"
         subtitle="Automated patch candidate synthesis & 9-point invariant gate verification"
+        breadcrumbs={[{ label: "Overview", href: "/" }, { label: "Patch" }]}
         badge={
           <Badge tone="success" dot={true}>
             {verifiedCount} Verified Patch Ready

@@ -249,9 +249,12 @@ vi.mock('@/lib/auth', () => ({
     token: "mock-token",
     isAuthenticated: true,
     isLoading: false,
+    status: 'AUTHENTICATED',
     login: vi.fn(),
     logout: vi.fn(),
     checkAuth: vi.fn(),
+    initializeAuth: vi.fn(),
+    refreshAccessToken: vi.fn(),
   }),
 }));
 
@@ -468,11 +471,11 @@ vi.mock("@/components/ui", () => ({
   ),
 
   // PageHeader
-  PageHeader: ({ title, subtitle, badge, actions, ...props }: any) => (
+  PageHeader: ({ title, subtitle, badge, actions, ariaLabel, ...props }: any) => (
     <div className="mb-8" {...props}>
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <h1 className="text-gradient text-3xl font-bold tracking-tight">{title}</h1>
+          <h1 aria-label={ariaLabel || props["aria-label"] || title} className="text-gradient text-3xl font-bold tracking-tight">{title}</h1>
           {badge}
         </div>
         {actions && <div className="flex items-center gap-2">{actions}</div>}

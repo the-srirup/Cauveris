@@ -71,7 +71,7 @@ export function PatchMutations({ mutations, nodes, visible = true }: PatchMutati
                   whiteSpace: "nowrap",
                 }}
               >
-                <div className="px-2 py-0.5 rounded bg-amber-950/90 border border-amber-500/80 text-[10px] font-mono text-amber-300 shadow">
+                <div className="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-[10px] font-mono text-zinc-200 shadow">
                   Patch: {delta > 0 ? "+" : ""}
                   {(delta * 100).toFixed(0)}% causal weight
                 </div>

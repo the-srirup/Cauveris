@@ -53,6 +53,18 @@ __all__ = [
     "spec_for",
     "parameters_for_family",
     "needles_for",
+    "MEMORY_NEEDLES",
+    "TIMEOUT_NEEDLES",
+    "LOCK_NEEDLES",
+    "DB_POOL_NEEDLES",
+    "QUEUE_OVERFLOW_NEEDLES",
+    "TRANSPORT_NEEDLES",
+    "WORKER_SATURATION_NEEDLES",
+    "CLOCK_SKEW_NEEDLES",
+    "ARRIVAL_OVERLOAD_NEEDLES",
+    "MECHANISM_NEEDLES",
+    "MECHANISM_FAMILY",
+    "MECHANISM_PRIORITY",
 ]
 
 
@@ -74,12 +86,53 @@ class FailureMechanism:
     DEPENDENCY_TIMEOUT = "dependency_timeout"
     #: A shared resource could not be acquired in time.
     LOCK_CONTENTION = "lock_contention"
+    #: A distributed database or storage connection pool was exhausted.
+    CONNECTION_POOL_EXHAUSTION = "connection_pool_exhaustion"
+    #: A bounded queue or buffer overflowed, and the excess was dropped.
+    QUEUE_OVERFLOW_BACKPRESSURE = "queue_overflow_backpressure"
+    #: Samples were lost or badly delayed in transit between two hosts.
+    TRANSPORT_LOSS_JITTER = "transport_loss_jitter"
+    #: Every worker in the pool was busy, so work had to wait.
+    WORKER_SATURATION = "worker_saturation"
+    #: The clocks of two hosts disagree, so an arrival is misjudged.
+    CLOCK_SKEW = "clock_skew"
+    #: Work arrives faster than the service can complete it.
+    ARRIVAL_OVERLOAD = "arrival_overload"
     #: The frame arrived, but too late to be acted on.  This is not a lost
     #: request - the request completed - so it is not one of the mechanisms
     #: above; it is the symptom the pipeline has always reported.
     CONTROL_DEADLINE_MISSED = "control_deadline_missed"
 
-    ALL = (RESOURCE_EXHAUSTION, DEPENDENCY_TIMEOUT, LOCK_CONTENTION)
+    ALL = (
+        RESOURCE_EXHAUSTION,
+        DEPENDENCY_TIMEOUT,
+        LOCK_CONTENTION,
+        CONNECTION_POOL_EXHAUSTION,
+        QUEUE_OVERFLOW_BACKPRESSURE,
+        TRANSPORT_LOSS_JITTER,
+        WORKER_SATURATION,
+        CLOCK_SKEW,
+        ARRIVAL_OVERLOAD,
+    )
+
+    #: The mechanisms the digital twin can actually reproduce.
+    #:
+    #: A mechanism that is not twin-backed may still be *diagnosed* - the
+    #: evidence reader recognises it - but no simulation can demonstrate that
+    #: a proposed repair clears it, so the platform refuses to certify a
+    #: patch for it.  Claiming a verified repair for a mechanism the twin
+    #: cannot reproduce would be a fabrication.
+    TWIN_BACKED = (
+        RESOURCE_EXHAUSTION,
+        DEPENDENCY_TIMEOUT,
+        LOCK_CONTENTION,
+        CONNECTION_POOL_EXHAUSTION,
+        QUEUE_OVERFLOW_BACKPRESSURE,
+        TRANSPORT_LOSS_JITTER,
+        WORKER_SATURATION,
+        CLOCK_SKEW,
+        ARRIVAL_OVERLOAD,
+    )
 
 
 class FailureFamily:
@@ -100,6 +153,8 @@ class FailureFamily:
     DEPENDENCY_TIMEOUT = "dependency_timeout"
     #: The request failed because a shared resource could not be acquired.
     LOCK_CONTENTION = "lock_contention"
+    #: The request failed because a distributed database or storage pool was exhausted.
+    DATABASE_STORAGE = "database_storage"
     #: Samples were lost between the producer and the consumer.
     TRANSPORT = "transport"
     #: The clocks of two hosts disagree.
@@ -116,6 +171,7 @@ class FailureFamily:
         RESOURCE_EXHAUSTION,
         DEPENDENCY_TIMEOUT,
         LOCK_CONTENTION,
+        DATABASE_STORAGE,
         TRANSPORT,
         TIME_BASE,
         ARRIVAL,
@@ -513,6 +569,64 @@ _add(
     )
 )
 
+# ---------------------------------------------------------------------------
+# Database and distributed storage connection pool family
+# ---------------------------------------------------------------------------
+
+_add(
+    ParameterSpec(
+        name="db_pool_size",
+        unit="connections",
+        family=FailureFamily.DATABASE_STORAGE,
+        default=0.0,
+        minimum=0.0,
+        maximum=65536.0,
+        description="Connection pool capacity for distributed database or storage.",
+        needles=(
+            "db_pool_size",
+            "max_connections",
+            "max_pool_size",
+            "max_active",
+            "pool_size",
+            "pool_max",
+            "max_total",
+        ),
+    )
+)
+
+_add(
+    ParameterSpec(
+        name="db_connection_timeout_ms",
+        unit="ms",
+        family=FailureFamily.DATABASE_STORAGE,
+        default=0.0,
+        minimum=0.0,
+        maximum=600000.0,
+        description="Timeout when acquiring a connection from the database connection pool.",
+        needles=(
+            "db_connection_timeout",
+            "checkout_timeout",
+            "connection_timeout_ms",
+            "pool_timeout",
+        ),
+    )
+)
+
+_add(
+    ParameterSpec(
+        name="db_demand_connections",
+        unit="connections",
+        family=FailureFamily.DATABASE_STORAGE,
+        default=0.0,
+        minimum=0.0,
+        maximum=65536.0,
+        description="The peak concurrent connection demand observed during the incident.",
+        needles=(),
+        patchable=False,
+        measured=True,
+    )
+)
+
 
 #: Parameters grouped by the failure family they remediate.
 FAMILY_PARAMETERS: Dict[str, Tuple[str, ...]] = {}
@@ -563,3 +677,197 @@ def needles_for(names: Tuple[str, ...]) -> Tuple[Tuple[str, Tuple[str, ...]], ..
 
     pairs.sort(key=lambda item: -max(len(needle) for needle in item[1]))
     return tuple(pairs)
+
+
+# ---------------------------------------------------------------------------
+# The vocabulary of mechanisms
+# ---------------------------------------------------------------------------
+#
+# The words an incident uses to describe its own failure.  These needle sets
+# live here, beside the parameter registry, because they are the other half
+# of the same contract: the parameter registry says *which knob* remediates a
+# family, and this table says *which words* name that family in a log.
+#
+# They used to live in ``failure_evidence.py`` and in a second, parallel
+# module for the mechanism detectors.  The two copies drifted - the
+# detector's lock pattern did not match ``lock wait timeout``, so a bundle
+# whose log said exactly that was diagnosed as a dependency timeout - and a
+# bundle that one copy recognised and the other did not was refused a
+# repair the pipeline could perform.  One copy removes that class of bug.
+
+#: An exhausted memory envelope.
+MEMORY_NEEDLES: Tuple[str, ...] = (
+    r"out\s*of\s*memory",
+    r"oomkilled",
+    r"oom[-_ ]kill",
+    r"\boom\b",
+    r"memoryerror",
+    r"memory\s*limit",
+    r"memory\s*(?:exceeded|exhausted|over)",
+    r"exceeded\s+(?:its\s+|the\s+)?(?:memory|heap|ram)",
+    r"cgroup",
+    r"heap\s*space",
+    r"allocation\s*failed",
+    r"cannot\s+allocate\s*memory",
+    r"killed\s*process",
+    r"resource\s*exhaust",
+)
+
+#: A dependency that did not answer in time.
+TIMEOUT_NEEDLES: Tuple[str, ...] = (
+    r"timed?\s*out",
+    r"time(?:d)?\s*out",
+    r"timeout",
+    r"deadline\s+exceeded",
+    r"context\s+deadline",
+    r"read\s+timed",
+    r"etimedout",
+    r"econnreset",
+    r"connection\s+refused",
+    r"connection\s+reset",
+    r"upstream\s+(?:unavailable|timed)",
+)
+
+#: A shared resource that could not be acquired.
+LOCK_NEEDLES: Tuple[str, ...] = (
+    r"deadlock",
+    r"lock\s*timeout",
+    r"lock\s*contention",
+    r"lock\s*wait",
+    r"contended\s+lock",
+    r"mutex",
+    r"semaphore",
+)
+
+#: An exhausted database or distributed storage connection pool.
+DB_POOL_NEEDLES: Tuple[str, ...] = (
+    r"connection\s*pool\s*(?:exhausted|timeout|full|limit)",
+    r"timeout:\s*pool\s*exhausted",
+    r"too\s*many\s*connections",
+    r"remaining\s*connection\s*slots",
+    r"connection\s*(?:checkout|acquisition)\s*timeout",
+    r"hikari.*(?:timeout|unavailable|is not available)",
+    r"max_connections\s*exceeded",
+    r"db\s*pool\s*(?:exhausted|full)",
+    r"cannot\s+get\s+connection",
+)
+
+#: A bounded queue or buffer that overflowed.
+QUEUE_OVERFLOW_NEEDLES: Tuple[str, ...] = (
+    r"queue\s*(?:overfl|full)",
+    r"buffer\s*overfl",
+    r"backpressure",
+    r"rejectedexecutionexception",
+    r"dropped\s*(?:message|frame|sample|item)",
+    r"inbox\s*full",
+    r"too\s*many\s*(?:frames|messages|samples)\s*queued",
+    r"oldest\s+(?:retained\s+)?(?:frame|sample|message)\s*is\s*stale",
+    r"consumer\s*(?:buffer|queue)\s*full",
+)
+
+#: Samples lost or delayed in transit between two hosts.
+TRANSPORT_NEEDLES: Tuple[str, ...] = (
+    r"packet\s*loss",
+    r"packet\s*drop",
+    r"retransmit",
+    r"network\s*jitter",
+    r"transport\s*(?:error|loss|delay)",
+    r"dropped\s*packets?",
+    r"excessive\s+transport",
+    r"link\s*(?:latency|jitter|loss)",
+    r"econnreset",
+)
+
+#: Every worker in the pool was busy.
+WORKER_SATURATION_NEEDLES: Tuple[str, ...] = (
+    r"worker\s*pool\s*saturated",
+    r"workers?\s+busy",
+    r"all\s*\d+\s*workers?\s+busy",
+    r"max_workers\s*reached",
+    r"pool\s*exhausted",
+    r"thread\s*pool\s*exhausted",
+    r"no\s*free\s*workers?",
+    r"worker\s*starvation",
+    r"requests?\s*queued\s+behind",
+)
+
+#: The clocks of two hosts disagree.
+CLOCK_SKEW_NEEDLES: Tuple[str, ...] = (
+    r"clock\s*skew",
+    r"time\s*drift",
+    r"ntp\s*(?:sync|offset|unsynchron)",
+    r"timestamp\s+in\s+the\s+future",
+    r"clock\s*unsynchron",
+    r"ptp\s*offset",
+    r"hosts?\s+disagree\s+about\s+the\s+time",
+)
+
+#: Work arrives faster than the service completes it.
+ARRIVAL_OVERLOAD_NEEDLES: Tuple[str, ...] = (
+    r"rate\s*limit\s*exceeded",
+    r"traffic\s*spike",
+    r"too\s+many\s+requests",
+    r"\b429\b",
+    r"queue\s*depth\s*increas",
+    r"queue\s*rising",
+    r"backlog\s*accumulat",
+    r"(?:arrival|ingress|inflow)\s*rate\s*exceed",
+    r"overload(?:ed)?",
+)
+
+
+#: The needle set that names each mechanism, keyed by mechanism id.
+#:
+#: This is the single answer to "which words mean this mechanism".  The
+#: evidence reader, the hypothesis layer and the mechanism detectors all
+#: consult it, so a log line cannot be an OOM to one and a timeout to
+#: another.
+MECHANISM_NEEDLES: Dict[str, Tuple[str, ...]] = {
+    FailureMechanism.RESOURCE_EXHAUSTION: MEMORY_NEEDLES,
+    FailureMechanism.DEPENDENCY_TIMEOUT: TIMEOUT_NEEDLES,
+    FailureMechanism.LOCK_CONTENTION: LOCK_NEEDLES,
+    FailureMechanism.CONNECTION_POOL_EXHAUSTION: DB_POOL_NEEDLES,
+    FailureMechanism.QUEUE_OVERFLOW_BACKPRESSURE: QUEUE_OVERFLOW_NEEDLES,
+    FailureMechanism.TRANSPORT_LOSS_JITTER: TRANSPORT_NEEDLES,
+    FailureMechanism.WORKER_SATURATION: WORKER_SATURATION_NEEDLES,
+    FailureMechanism.CLOCK_SKEW: CLOCK_SKEW_NEEDLES,
+    FailureMechanism.ARRIVAL_OVERLOAD: ARRIVAL_OVERLOAD_NEEDLES,
+}
+
+
+#: The family each mechanism belongs to.
+MECHANISM_FAMILY: Dict[str, str] = {
+    FailureMechanism.RESOURCE_EXHAUSTION: FailureFamily.RESOURCE_EXHAUSTION,
+    FailureMechanism.DEPENDENCY_TIMEOUT: FailureFamily.DEPENDENCY_TIMEOUT,
+    FailureMechanism.LOCK_CONTENTION: FailureFamily.LOCK_CONTENTION,
+    FailureMechanism.CONNECTION_POOL_EXHAUSTION: FailureFamily.DATABASE_STORAGE,
+    FailureMechanism.QUEUE_OVERFLOW_BACKPRESSURE: FailureFamily.SUBSCRIBER,
+    FailureMechanism.TRANSPORT_LOSS_JITTER: FailureFamily.TRANSPORT,
+    FailureMechanism.WORKER_SATURATION: FailureFamily.ARRIVAL,
+    FailureMechanism.CLOCK_SKEW: FailureFamily.TIME_BASE,
+    FailureMechanism.ARRIVAL_OVERLOAD: FailureFamily.ARRIVAL,
+}
+
+
+#: Which mechanism wins when one log record could name several.
+#:
+#: The precedence is not alphabetical and not a matter of confidence.  A
+#: dependency timeout is the *broadest* signal in the set - almost every
+#: other failure eventually mentions a timeout on its way out - so it ranks
+#: last.  A lock is more specific than a timeout ("lock wait timeout after
+#: 100 ms" is contention, not a slow dependency), and a saturated worker
+#: pool is more specific still.  Ranking them explicitly is what stops a
+#: bundle whose worker pool ran dry from being reported as a slow
+#: dependency, and therefore from being "repaired" by raising a timeout that
+#: was never the problem.
+MECHANISM_PRIORITY: Dict[str, int] = {
+    FailureMechanism.CONNECTION_POOL_EXHAUSTION: 0,
+    FailureMechanism.LOCK_CONTENTION: 1,
+    FailureMechanism.RESOURCE_EXHAUSTION: 2,
+    FailureMechanism.WORKER_SATURATION: 3,
+    FailureMechanism.QUEUE_OVERFLOW_BACKPRESSURE: 4,
+    FailureMechanism.ARRIVAL_OVERLOAD: 5,
+    FailureMechanism.TRANSPORT_LOSS_JITTER: 6,
+    FailureMechanism.CLOCK_SKEW: 7,
+    FailureMechanism.DEPENDENCY_TIMEOUT: 8,
+}

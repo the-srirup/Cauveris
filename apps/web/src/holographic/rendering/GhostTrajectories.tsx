@@ -127,7 +127,7 @@ export function GhostTrajectories({
             >
               <div className="px-1.5 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-[10px] font-mono text-white shadow-md flex items-center gap-1">
                 <span>{isIntervened ? "do(X):" : "CF:"}</span>
-                <span className={delta > 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
+                <span className={delta > 0 ? "text-zinc-200 font-bold" : "text-zinc-400 font-bold"}>
                   {delta > 0 ? "+" : ""}
                   {(delta * 100).toFixed(0)}%
                 </span>

@@ -1935,6 +1935,26 @@ def _reproduce_mechanism(model: SystemModel) -> None:
         )
         return
 
+    if mechanism == FailureMechanism.CONNECTION_POOL_EXHAUSTION:
+        pool_size = params.db_pool_size
+        if pool_size <= 0:
+            model.notes.append(
+                "The bundle reports database connection pool exhaustion but declares "
+                "no pool size or max_connections limit, so the twin cannot place the "
+                "demand against a capacity ceiling."
+            )
+            return
+        params.db_demand_connections = max(pool_size + 1.0, pool_size * 1.1)
+        model.parameter_sources["db_demand_connections"] = (
+            f"inferred:the connection pool exhausted capacity of {pool_size:.0f} connections; "
+            "demand is set to the smallest integer value exceeding capacity"
+        )
+        model.notes.append(
+            f"The connection pool exhausted capacity of {pool_size:.0f} connections. "
+            "The model places connection demand above the pool capacity to reproduce the failure."
+        )
+        return
+
 
 def _calibrate(model: SystemModel) -> None:
     """Fit the latency model to the incident's own measurements."""

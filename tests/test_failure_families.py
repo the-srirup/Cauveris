@@ -142,6 +142,20 @@ def _lock_bundle(root: Path) -> Path:
     )
 
 
+def _database_bundle(root: Path) -> Path:
+    config = dict(_BASE_CONFIG)
+    config["database"] = {"max_connections": 10, "connection_timeout_ms": 5000}
+    return _write_bundle(
+        root,
+        config=config,
+        logs=[
+            "2026-09-20T10:29:58Z INFO pgpool: connection granted to client 9",
+            "2026-09-20T10:29:59Z ERROR pgpool: connection pool exhausted: "
+            "active connections 35 exceeded pool capacity 10 (remaining: 0)",
+        ],
+    )
+
+
 def _incident(bundle: Path) -> Incident:
     return Incident(
         id=bundle.name,
@@ -251,6 +265,17 @@ def test_a_lock_incident_names_the_lock_mechanism(tmp_path):
     assert evidence.parameters["lock_hold_ms"] == 480
 
 
+def test_a_database_incident_names_the_connection_pool_mechanism(tmp_path):
+    from cauveris.analysis.evidence import EvidenceBundle
+
+    bundle = _database_bundle(tmp_path / "incident-CAU-9005")
+    evidence = extract_failure_evidence(EvidenceBundle.load(bundle))
+    assert evidence is not None
+    assert evidence.mechanism == FailureMechanism.CONNECTION_POOL_EXHAUSTION
+    assert evidence.parameters["db_pool_size"] == 10
+    assert evidence.parameters["db_demand_connections"] == 35
+
+
 def test_a_latency_incident_names_no_mechanism(tmp_path):
     """
     A bundle in which nothing was lost is a latency incident.
@@ -328,6 +353,23 @@ def test_the_twin_reproduces_a_lock_abandonment_and_a_longer_deadline_clears_it(
     fixed = TwinParameters(**{**params.as_dict(), "lock_timeout_ms": 600})
     after = _simulate(fixed)
     assert after.failure_reasons.get(FailureMechanism.LOCK_CONTENTION, 0) == 0
+
+
+def test_the_twin_reproduces_a_connection_pool_exhaustion_and_a_larger_pool_clears_it():
+    params = TwinParameters(
+        batching_window_ms=20,
+        max_batch_size=4,
+        server_workers=2,
+        db_pool_size=10.0,
+        db_demand_connections=35.0,
+        db_connection_timeout_ms=5000.0,
+    )
+    baseline = _simulate(params)
+    assert baseline.failure_reasons.get(FailureMechanism.CONNECTION_POOL_EXHAUSTION, 0) > 0
+
+    fixed = TwinParameters(**{**params.as_dict(), "db_pool_size": 50.0})
+    after = _simulate(fixed)
+    assert after.failure_reasons.get(FailureMechanism.CONNECTION_POOL_EXHAUSTION, 0) == 0
 
 
 def test_a_failure_is_not_reported_as_latency():
@@ -416,8 +458,19 @@ def test_a_lock_incident_produces_a_patchable_proposal(tmp_path):
     assert change.target_value >= 480
 
 
+def test_a_database_incident_produces_a_patchable_proposal(tmp_path):
+    bundle = _database_bundle(tmp_path / "incident-CAU-9025")
+    hypothesis = _by_id(_hypotheses(bundle), "h_connection_pool_exhaustion")
+    assert hypothesis is not None
+    assert hypothesis.proposed_changes
+    change = hypothesis.proposed_changes[0]
+    assert change.parameter == "db_pool_size"
+    assert change.target_value is not None
+    assert change.target_value >= 35
+
+
 def test_every_proposed_change_names_a_parameter_the_registry_knows(tmp_path):
-    for builder in (_memory_bundle, _timeout_bundle, _lock_bundle):
+    for builder in (_memory_bundle, _timeout_bundle, _lock_bundle, _database_bundle):
         bundle = builder(tmp_path / f"incident-{builder.__name__}")
         for hypothesis in _hypotheses(bundle):
             for change in hypothesis.proposed_changes:
@@ -453,6 +506,7 @@ def _apply(params: TwinParameters, overrides: Dict[str, float]) -> TwinParameter
         (_memory_bundle, FailureMechanism.RESOURCE_EXHAUSTION, "h_memory_exhaustion"),
         (_timeout_bundle, FailureMechanism.DEPENDENCY_TIMEOUT, "h_dependency_timeout"),
         (_lock_bundle, FailureMechanism.LOCK_CONTENTION, "h_lock_contention"),
+        (_database_bundle, FailureMechanism.CONNECTION_POOL_EXHAUSTION, "h_connection_pool_exhaustion"),
     ],
 )
 def test_the_proposed_change_clears_the_failure_in_the_twin(

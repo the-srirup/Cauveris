@@ -7,8 +7,8 @@ import { AuthProvider } from '@/components/AuthProvider';
 import ShellLayout from '@/components/ShellLayout';
 
 export const metadata: Metadata = {
-  title: 'Cauveris - Where Failures Meet Cause',
-  description: 'Autonomous reality debugger for AI-powered robotic systems',
+  title: 'Cauveris - Autonomous Systems Incident Analysis & Repair',
+  description: 'Evidence-based root cause analysis, digital twin simulation, and verified repairs for complex autonomous system failures.',
 };
 
 export default function RootLayout({
@@ -17,7 +17,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="h-full w-full" suppressHydrationWarning>
+    <html lang="en" className="h-full w-full dark" data-theme="dark" suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{
@@ -25,34 +25,27 @@ export default function RootLayout({
               (function() {
                 try {
                   var raw = localStorage.getItem('cauveris-settings');
-                  if (!raw) return;
-                  var s = JSON.parse(raw);
+                  var theme = 'dark';
+                  if (raw) {
+                    var s = JSON.parse(raw);
+                    if (s.theme) theme = s.theme;
+                  }
                   var root = document.documentElement;
-                  var theme = s.theme;
                   if (theme === 'light') {
                     root.classList.add('light');
                     root.classList.remove('dark');
-                  } else if (theme === 'dark') {
-                    root.classList.add('dark');
-                    root.classList.remove('light');
-                  } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-                    root.classList.add('light');
-                    root.classList.remove('dark');
+                    root.setAttribute('data-theme', 'light');
                   } else {
                     root.classList.add('dark');
                     root.classList.remove('light');
+                    root.setAttribute('data-theme', 'dark');
                   }
-                  if (s.accentColor) {
-                    root.classList.add('accent-' + s.accentColor);
-                  }
-                  if (s.density) {
-                    root.classList.add('density-' + s.density);
-                  }
-                  if (s.reducedMotion) {
-                    root.classList.add('reduced-motion');
-                  }
-                  if (s.animations === false) {
-                    root.classList.add('animations-disabled');
+                  if (raw) {
+                    var s = JSON.parse(raw);
+                    if (s.accentColor) root.classList.add('accent-' + s.accentColor);
+                    if (s.density) root.classList.add('density-' + s.density);
+                    if (s.reducedMotion) root.classList.add('reduced-motion');
+                    if (s.animations === false) root.classList.add('animations-disabled');
                   }
                 } catch (e) {}
               })();
@@ -60,7 +53,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="h-full w-full bg-background text-foreground font-sans antialiased">
+      <body className="h-full w-full bg-[var(--color-canvas)] text-[var(--color-fg-default)] font-sans antialiased">
         <AuthProvider>
           <ShellProvider>
             <ShellLayout>

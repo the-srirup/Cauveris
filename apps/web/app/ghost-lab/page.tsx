@@ -306,6 +306,7 @@ function GhostLabContent() {
   }, [isPlaying, playbackSpeed]);
 
   const handleRunSimulation = async () => {
+    if (!incidentId) return;
     setSimulating(true);
     setError(null);
     try {
@@ -326,6 +327,7 @@ function GhostLabContent() {
   };
 
   const handleRunCustomSimulation = async () => {
+    if (!incidentId) return;
     setSimulating(true);
     setError(null);
     try {
@@ -398,6 +400,7 @@ function GhostLabContent() {
   };
 
   const handleExportData = async () => {
+    if (!incidentId) return;
     setLoading(true);
     setError(null);
     try {
@@ -479,8 +482,10 @@ function GhostLabContent() {
   return (
     <div className="w-full space-y-5">
       <PageHeader
-        title="Ghost Lab"
-        subtitle="Controlled experiment execution and counterfactual reality branch analysis"
+        title="Experiments"
+        ariaLabel="Ghost Lab"
+        subtitle="Controlled experiment execution & counterfactual branch simulation"
+        breadcrumbs={[{ label: "Overview", href: "/" }, { label: "Experiments" }]}
         badge={
           <Badge tone={interventionEliminatesFailure ? "success" : "secondary"} dot={true}>
             {interventionEliminatesFailure ? "Root Cause Fix Discovered" : "Branch Active"}

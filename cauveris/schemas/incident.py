@@ -58,6 +58,15 @@ class Incident(BaseEntity):
     is_demonstration: bool = Field(
         default=False, description="Whether this incident is demonstration benchmark data"
     )
+    artifact_inventory: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Detailed inventory of all files in bundle"
+    )
+    capability_report: Optional[Dict[str, Any]] = Field(
+        default=None, description="Pre-repair honest capability evaluation report"
+    )
+    discovered_repository: Optional[Dict[str, Any]] = Field(
+        default=None, description="Discovered source repository analysis"
+    )
 
     # Computed properties
     evidence_count: int = Field(0, description="Number of evidence items")

@@ -894,6 +894,24 @@ class PatchGenerator:
                 directories=("config", "source", "deploy"),
             )
             if found is None:
+                # Fall back to checking via ConfigLocatorRegistry across all bundle files
+                from cauveris.patch.config_locators import ConfigLocatorRegistry
+                from cauveris.analysis.parameter_registry import needles_for
+                cl_reg = ConfigLocatorRegistry()
+                p_needles = list(needles_for(parameter))
+                for file_candidate in bundle.rglob("*"):
+                    if not file_candidate.is_file():
+                        continue
+                    plugin = cl_reg.select_plugin(file_candidate)
+                    if plugin is not None:
+                        loc = plugin.locate_parameter(file_candidate, p_needles)
+                        if loc is not None:
+                            k, current_val = loc
+                            rel_p = str(file_candidate.relative_to(bundle)).replace("\\", "/")
+                            found = (rel_p, k, current_val)
+                            break
+
+            if found is None:
                 logger.info(
                     f"The bundle does not declare {parameter}; the intervention "
                     "cannot be turned into a file change."
@@ -970,6 +988,28 @@ class PatchGenerator:
             return replace_json_scalar(text, key, target)
         if suffix in SECTIONED_CONFIG_SUFFIXES:
             return replace_sectioned_scalar(text, key, target)
+
+        # Check ConfigLocatorRegistry plugins (e.g. TOML, env, XML, Java properties)
+        from cauveris.patch.config_locators import ConfigLocatorRegistry
+        cl_reg = ConfigLocatorRegistry()
+        p = Path(rel)
+        for plugin in cl_reg.plugins:
+            if plugin.can_handle(p, text[:2000]):
+                try:
+                    # Create temporary path or in-memory write to edit
+                    import tempfile
+                    with tempfile.NamedTemporaryFile("w+", suffix=p.suffix, encoding="utf-8", delete=False) as tf:
+                        tf.write(text)
+                        tf_path = Path(tf.name)
+                    try:
+                        edited_content = plugin.edit_parameter(tf_path, key, target)
+                        return edited_content, "(original)"
+                    finally:
+                        if tf_path.exists():
+                            tf_path.unlink()
+                except Exception as e:
+                    logger.debug(f"Plugin {plugin.format_name} failed editing {key}: {e}")
+
         return replace_source_scalar(text, key, target)
 
     @staticmethod

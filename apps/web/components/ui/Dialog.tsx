@@ -170,8 +170,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(
               position: fixed;
               inset: 0;
               z-index: var(--z-modal);
-              background: rgba(1, 4, 9, 0.8);
-              backdrop-filter: blur(2px);
+              background: rgba(0, 0, 0, 0.5);
               animation: fade-in var(--duration-fast) var(--easing-standard);
               display: flex;
               align-items: center;
@@ -184,7 +183,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(
               overflow-y: auto;
               background: var(--color-canvas-inset);
               border: 1px solid var(--color-border-default);
-              border-radius: var(--radius-lg);
+              border-radius: var(--radius-xl, 10px);
               box-shadow: var(--shadow-lg);
               animation: scale-in var(--duration-normal) var(--easing-emphasized);
             }

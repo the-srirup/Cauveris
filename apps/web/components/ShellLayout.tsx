@@ -26,7 +26,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
 
   // Dynamic widths for CSS grid tracks:
   // Desktop:
-  //   Sidebar: 240px (expanded) or 64px (collapsed - icon-only width)
+  //   Sidebar: 220px (expanded) or 56px (collapsed - icon-only width)
   //   Inspector: 360px (open) or 0px (closed)
   // Mobile/Tablet (isDrawer):
   //   Sidebar & Inspector are fixed overlay drawers and do not consume desktop grid columns
@@ -104,7 +104,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
         className={
           isLoginPage
             ? "relative h-full w-full flex items-center justify-center bg-[var(--color-canvas)]"
-            : "relative h-full w-full lg:grid lg:grid-rows-[var(--shell-topbar-height)_1fr_var(--shell-tray-closed-height)] transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none"
+            : "relative h-full w-full lg:grid lg:grid-rows-[var(--shell-topbar-height)_1fr] transition-[grid-template-columns] duration-150 ease-out motion-reduce:transition-none"
         }
         style={
           isLoginPage
@@ -124,7 +124,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
             {/* Left Sidebar Column - Row 2, Col 1 */}
             <div
               id="shell-sidebar-col"
-              className="lg:row-start-2 lg:col-start-1 lg:row-span-1 relative transition-[width] duration-200 ease-out motion-reduce:transition-none overflow-visible"
+              className="lg:row-start-2 lg:col-start-1 lg:row-span-1 relative transition-[width] duration-150 ease-out motion-reduce:transition-none overflow-visible"
               style={{ width: `${sidebarWidthPx}px` }}
             >
               <Sidebar />
@@ -133,7 +133,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
             {/* Main Content Area - Row 2, Col 2 (flexibly expands/contracts) */}
             <main
               id="main-content"
-              className="relative min-w-0 w-full overflow-y-auto lg:row-start-2 lg:col-start-2 pt-[calc(var(--shell-topbar-height)+1.5rem)] lg:pt-6 pb-[calc(var(--shell-tray-closed-height)+1.5rem)] lg:pb-6 px-5 sm:px-8 transition-all duration-200 ease-out motion-reduce:transition-none"
+              className="relative min-w-0 w-full overflow-y-auto lg:row-start-2 lg:col-start-2 pt-[calc(var(--shell-topbar-height)+1rem)] lg:pt-5 pb-8 px-4 sm:px-6 lg:px-8 transition-all duration-150 ease-out motion-reduce:transition-none"
               role="main"
             >
               <ClientErrorBoundary>{children}</ClientErrorBoundary>

@@ -73,6 +73,8 @@ class PatchCandidate(BaseEntity):
     forbidden_change_scan_passes: bool = Field(False, description="Forbidden change scan passes")
     rollback_test_passes: bool = Field(False, description="Rollback test passes")
     verified: bool = Field(False, description="Whether patch meets all verification criteria")
+    verification_level: str = Field("UNVERIFIED", description="Achieved verification level: UNVERIFIED, MODEL_VERIFIED, STAGING_VERIFIED, RUNTIME_VERIFIED")
+    verification_summary: Optional[Dict[str, Any]] = Field(None, description="Detailed atomic check summary")
 
 
 class VerificationReport(BaseEntity):
@@ -95,6 +97,8 @@ class VerificationReport(BaseEntity):
     forbidden_change_scan_passes: bool = Field(False, description="Forbidden change scan passes")
     rollback_test_passes: bool = Field(False, description="Rollback test passes")
     verified: bool = Field(False, description="Overall verification result")
+    verification_level: str = Field("UNVERIFIED", description="Achieved verification level")
+    verification_summary: Optional[Dict[str, Any]] = Field(None, description="Detailed atomic check summary")
     details: Dict[str, Any] = Field(
         default_factory=dict, description="Detailed verification results"
     )

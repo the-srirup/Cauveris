@@ -94,6 +94,8 @@ def reset_all_state():
             auth_store._api_keys.clear()
         if hasattr(auth_store, "_audit_logs"):
             auth_store._audit_logs.clear()
+        if hasattr(auth_store, "clear"):
+            auth_store.clear()
         # Re-add demo user if needed
         from cauveris.auth import User, UserRole, Organization
 
@@ -114,8 +116,9 @@ def reset_all_state():
             is_active=True,
         )
         demo_user.set_password("demo123456")
-        auth_store._orgs["org_demo"] = demo_org
-        auth_store._users["usr_demo"] = demo_user
+        if hasattr(auth_store, "_orgs") and hasattr(auth_store, "_users"):
+            auth_store._orgs["org_demo"] = demo_org
+            auth_store._users["usr_demo"] = demo_user
 
 
 @pytest.fixture(autouse=True)

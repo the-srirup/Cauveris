@@ -40,6 +40,7 @@ from cauveris.analysis.failure_evidence import (
     LOCK_NEEDLES,
     MEMORY_NEEDLES,
     TIMEOUT_NEEDLES,
+    DB_POOL_NEEDLES,
     FailureEvidence,
     classify_log_records,
     extract_all_mechanisms,
@@ -1206,6 +1207,16 @@ class HypothesisGenerator:
                 "Active worker threads turn over normally and the lock turnaround time stays flat",
                 ["lock_timeout_ms", "max_workers"],
             ),
+            (
+                "h_connection_pool_exhaustion",
+                FailureMechanism.CONNECTION_POOL_EXHAUSTION,
+                DB_POOL_NEEDLES,
+                "Database connection pool capacity was exhausted by concurrent client demand, "
+                "causing query and transaction timeouts",
+                "Active database connections reach 100% of the pool limit and checkout timeouts appear in logs",
+                "Active connection count remains comfortably below the configured pool limit",
+                ["db_pool_size", "max_connections", "pool_size"],
+            ),
         )
 
         hypotheses: List[Hypothesis] = []
@@ -1316,6 +1327,8 @@ class HypothesisGenerator:
             return self._propose_timeout(ev, evidence)
         if mechanism == FailureMechanism.LOCK_CONTENTION:
             return self._propose_lock(ev, evidence)
+        if mechanism == FailureMechanism.CONNECTION_POOL_EXHAUSTION:
+            return self._propose_connection_pool(ev, evidence)
         return []
 
     def _declared_in_bundle(
@@ -1623,6 +1636,41 @@ class HypothesisGenerator:
             )
         ]
 
+    def _propose_connection_pool(
+        self, ev: _Evidence, evidence: FailureEvidence
+    ) -> List[ProposedChange]:
+        """Scale database connection pool capacity so peak concurrent query demand fits inside."""
+        pool_size = evidence.parameters.get("db_pool_size", 0.0)
+        demand = evidence.parameters.get("db_demand_connections", 0.0)
+        declared = self._declared_in_bundle(ev, "db_pool_size")
+        if pool_size <= 0 and declared:
+            try:
+                pool_size = float(declared[2])
+            except (ValueError, TypeError):
+                pool_size = 10.0
+        if pool_size <= 0:
+            return []
+
+        target = float(int(math.ceil(max(demand, pool_size) * 1.5)))
+        if target <= pool_size:
+            target = pool_size * 2.0
+
+        return [
+            ProposedChange(
+                parameter="db_pool_size",
+                current_value=round(pool_size, 1),
+                target_value=round(target, 1),
+                file=declared[0] if declared else None,
+                config_key=declared[1] if declared else None,
+                rationale=(
+                    f"Peak connection demand ({demand:.0f} connections) exhausted the configured "
+                    f"pool limit ({pool_size:.0f} connections). Scaling pool capacity to {target:.0f} "
+                    "connections restores headroom and prevents connection checkout timeouts."
+                ),
+                sufficient_on_its_own=True,
+            )
+        ]
+
     def _intervention_text(
         self, mechanism: str, changes: Sequence[ProposedChange]
     ) -> str:
@@ -1638,6 +1686,11 @@ class HypothesisGenerator:
                     "Bring the request inside the deadline the client set: shorten the "
                     "wait for the batch to close, and serve requests concurrently instead "
                     "of one behind another."
+                )
+            if mechanism == FailureMechanism.CONNECTION_POOL_EXHAUSTION:
+                return (
+                    "Scale the connection pool capacity so peak concurrent query demand "
+                    "fits inside, eliminating checkout timeouts."
                 )
             return (
                 "Give the caller enough patience for the lock it is waiting on, bounded "
@@ -1675,6 +1728,10 @@ class HypothesisGenerator:
             constraints.append(
                 "The new envelope must fit the host's available memory; a limit the "
                 "machine cannot honour is not a fix"
+            )
+        if mechanism == FailureMechanism.CONNECTION_POOL_EXHAUSTION:
+            constraints.append(
+                "The scaled connection pool must not exceed upstream database server maximum connection limits"
             )
         return constraints
 

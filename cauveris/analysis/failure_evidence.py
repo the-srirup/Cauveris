@@ -36,7 +36,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .parameter_registry import FailureFamily, FailureMechanism
+from .parameter_registry import (
+    DB_POOL_NEEDLES,
+    LOCK_NEEDLES,
+    MEMORY_NEEDLES,
+    TIMEOUT_NEEDLES,
+    FailureFamily,
+    FailureMechanism,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +55,7 @@ __all__ = [
     "MEMORY_NEEDLES",
     "TIMEOUT_NEEDLES",
     "LOCK_NEEDLES",
+    "DB_POOL_NEEDLES",
     "matches_any",
 ]
 
@@ -56,55 +64,14 @@ __all__ = [
 # The words an incident uses
 # ---------------------------------------------------------------------------
 #
-# The needles are shared with the hypothesis layer, so the hypothesis that
-# names a mechanism and the model that reproduces it cannot drift apart.
+# The needle sets live in ``parameter_registry`` now, beside the parameter
+# registry they pair with, and are re-exported above so that the analysis
+# layer, the hypothesis layer and the mechanism detectors all name a
+# mechanism the same way.  When these were two separate lists they drifted,
+# and a bundle that one of them recognised and the other did not was
+# refused a repair the pipeline could perform.
 
-#: An exhausted memory envelope.
-MEMORY_NEEDLES: Tuple[str, ...] = (
-    r"out\s*of\s*memory",
-    r"oomkilled",
-    r"oom[-_ ]kill",
-    r"\boom\b",
-    r"memoryerror",
-    r"memory\s*limit",
-    r"memory\s*(?:exceeded|exhausted|over)",
-    r"exceeded\s+(?:its\s+|the\s+)?(?:memory|heap|ram)",
-    r"cgroup",
-    r"heap\s*space",
-    r"allocation\s+failed",
-    r"cannot\s+allocate\s+memory",
-    r"killed\s+process",
-    r"resource\s*exhaust",
-)
 
-#: A dependency that did not answer in time.
-TIMEOUT_NEEDLES: Tuple[str, ...] = (
-    r"timed?\s*out",
-    r"time(?:d)?\s*out",
-    r"timeout",
-    r"deadline\s+exceeded",
-    r"context\s+deadline",
-    r"read\s+timed",
-    r"etimedout",
-    r"econnreset",
-    r"connection\s+refused",
-    r"connection\s+reset",
-    r"upstream\s+(?:unavailable|timed)",
-)
-
-#: A shared resource that could not be acquired.
-LOCK_NEEDLES: Tuple[str, ...] = (
-    r"deadlock",
-    r"lock\s*timeout",
-    r"lock\s*contention",
-    r"lock\s*wait",
-    r"contended\s+lock",
-    r"mutex",
-    r"semaphore",
-    r"pool\s+exhausted",
-    r"thread\s+starvation",
-    r"starved\s+(?:pool|thread)",
-)
 
 
 def matches_any(text: str, needles: Sequence[str]) -> bool:
@@ -521,12 +488,15 @@ def _classify_records(records: Sequence[Any]) -> Dict[str, List[Any]]:
         FailureMechanism.LOCK_CONTENTION: [],
         FailureMechanism.RESOURCE_EXHAUSTION: [],
         FailureMechanism.DEPENDENCY_TIMEOUT: [],
+        FailureMechanism.CONNECTION_POOL_EXHAUSTION: [],
     }
     for record in records:
         text = _text_of(record)
         if not text:
             continue
-        if matches_any(text, LOCK_NEEDLES):
+        if matches_any(text, DB_POOL_NEEDLES):
+            buckets[FailureMechanism.CONNECTION_POOL_EXHAUSTION].append(record)
+        elif matches_any(text, LOCK_NEEDLES):
             buckets[FailureMechanism.LOCK_CONTENTION].append(record)
         elif matches_any(text, MEMORY_NEEDLES):
             buckets[FailureMechanism.RESOURCE_EXHAUSTION].append(record)
@@ -779,6 +749,66 @@ def extract_failure_evidence(
         )
         candidates.append((score, FailureMechanism.LOCK_CONTENTION, evidence))
 
+    # --- connection pool exhaustion -----------------------------------------
+    pool_records = buckets.get(FailureMechanism.CONNECTION_POOL_EXHAUSTION, [])
+    if pool_records and _wanted(FailureMechanism.CONNECTION_POOL_EXHAUSTION):
+        pool_size, pool_source = _config_parameter(config, "db_pool_size")
+        if pool_size is None:
+            for record in pool_records:
+                m = re.search(r"(?:max|limit|size|pool|capacity)[:\s=]+(\d+)", _text_of(record), re.I)
+                if m:
+                    pool_size = float(m.group(1))
+                    pool_source = f"log:{getattr(record, 'source', '?')}"
+                    break
+        if pool_size is None:
+            pool_size = 10.0
+            pool_source = "assumption:default_pool_size"
+
+        demand_connections: Optional[float] = None
+        for record in pool_records:
+            m = re.search(
+                r"(?:active|used|needed|demand|pending|waiting)(?:\s+(?:connections|clients|threads|queries|sessions|conns))?[:\s=]+(\d+)",
+                _text_of(record),
+                re.I,
+            )
+            if m:
+                demand_connections = float(m.group(1))
+                break
+        if demand_connections is None:
+            demand_connections = pool_size * 2.0
+
+        conn_timeout, timeout_source = _config_parameter(config, "db_connection_timeout_ms")
+        if conn_timeout is None:
+            conn_timeout = 5000.0
+            timeout_source = "assumption:default_connection_timeout"
+
+        pool_params = {
+            "db_pool_size": pool_size,
+            "db_demand_connections": demand_connections,
+            "db_connection_timeout_ms": conn_timeout,
+        }
+        pool_sources = {
+            "db_pool_size": f"declared:{pool_source}" if pool_source else "unknown",
+            "db_demand_connections": "measured:log_active_connections",
+            "db_connection_timeout_ms": f"declared:{timeout_source}" if timeout_source else "unknown",
+        }
+        score = _weighted_signal(pool_records) + (2.0 if pool_source else 0.0)
+        evidence = FailureEvidence(
+            mechanism=FailureMechanism.CONNECTION_POOL_EXHAUSTION,
+            family=FailureFamily.DATABASE_STORAGE,
+            parameters=pool_params,
+            sources=pool_sources,
+            signals={"records": len(pool_records)},
+            observations={"observed_demand_connections": demand_connections},
+            summary=(
+                f"Distributed database connection pool was exhausted "
+                f"({len(pool_records)} log record(s) report pool exhaustion; "
+                f"active demand {demand_connections:.0f} exceeded pool limit {pool_size:.0f})."
+            ),
+            confidence=_confidence(score, len(pool_records)),
+        )
+        candidates.append((score, FailureMechanism.CONNECTION_POOL_EXHAUSTION, evidence))
+
     if not candidates:
         return None
 
@@ -788,6 +818,7 @@ def extract_failure_evidence(
         FailureMechanism.RESOURCE_EXHAUSTION: 0,
         FailureMechanism.LOCK_CONTENTION: 1,
         FailureMechanism.DEPENDENCY_TIMEOUT: 2,
+        FailureMechanism.CONNECTION_POOL_EXHAUSTION: 3,
     }
     candidates.sort(key=lambda item: (-item[0], order.get(item[1], 9)))
     return candidates[0][2]
@@ -820,11 +851,7 @@ def extract_all_mechanisms(bundle: Any) -> Dict[str, FailureEvidence]:
         names no mechanism at all.
     """
     found: Dict[str, FailureEvidence] = {}
-    for mechanism in (
-        FailureMechanism.RESOURCE_EXHAUSTION,
-        FailureMechanism.DEPENDENCY_TIMEOUT,
-        FailureMechanism.LOCK_CONTENTION,
-    ):
+    for mechanism in FailureMechanism.ALL:
         evidence = extract_failure_evidence(bundle, only=(mechanism,))
         if evidence is not None:
             found[mechanism] = evidence

@@ -57,6 +57,7 @@ __all__ = [
     "FAILURE_RESOURCE_EXHAUSTION",
     "FAILURE_DEPENDENCY_TIMEOUT",
     "FAILURE_LOCK_CONTENTION",
+    "FAILURE_CONNECTION_POOL_EXHAUSTION",
     "FAILURE_MECHANISMS",
 ]
 
@@ -75,6 +76,7 @@ __all__ = [
 FAILURE_RESOURCE_EXHAUSTION = FailureMechanism.RESOURCE_EXHAUSTION
 FAILURE_DEPENDENCY_TIMEOUT = FailureMechanism.DEPENDENCY_TIMEOUT
 FAILURE_LOCK_CONTENTION = FailureMechanism.LOCK_CONTENTION
+FAILURE_CONNECTION_POOL_EXHAUSTION = FailureMechanism.CONNECTION_POOL_EXHAUSTION
 
 #: Every mechanism the model can reproduce, in a stable order.
 FAILURE_MECHANISMS: Tuple[str, ...] = FailureMechanism.ALL
@@ -132,6 +134,11 @@ class TwinParameters:
     lock_contention_prob: float = 0.0
     lock_hold_ms: float = 0.0
     lock_timeout_ms: float = 0.0
+
+    # Distributed database and storage connection pool
+    db_pool_size: float = 0.0
+    db_connection_timeout_ms: float = 0.0
+    db_demand_connections: float = 0.0
 
     def as_dict(self) -> Dict[str, Any]:
         return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in asdict(self).items()}
@@ -331,6 +338,9 @@ def simulate_pipeline(
     lock_contention_prob = _clamp(params.lock_contention_prob, 0.0, 1.0)
     lock_hold_s = max(0.0, params.lock_hold_ms) / 1000.0
     lock_timeout_s = max(0.0, params.lock_timeout_ms) / 1000.0
+    db_pool_size = max(0.0, params.db_pool_size)
+    db_demand_connections = max(0.0, params.db_demand_connections)
+    db_conn_timeout_s = max(0.0, params.db_connection_timeout_ms) / 1000.0
 
     total_end_s = warmup_s + duration_s
     measure_from_s = warmup_s
@@ -478,6 +488,8 @@ def simulate_pipeline(
             failure = FAILURE_LOCK_CONTENTION
         elif request_timeout_s > 0.0 and request_latency_s > request_timeout_s:
             failure = FAILURE_DEPENDENCY_TIMEOUT
+        elif db_pool_size > 0.0 and db_demand_connections > db_pool_size:
+            failure = FAILURE_CONNECTION_POOL_EXHAUSTION
 
         if failure is not None:
             failed_requests += 1

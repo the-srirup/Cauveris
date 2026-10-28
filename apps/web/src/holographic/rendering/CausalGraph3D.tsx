@@ -96,9 +96,9 @@ const NodeMesh = React.memo(function NodeMesh({ node, isSelected, isHovered, onS
         <div
           className={`px-2 py-0.5 rounded text-[11px] font-mono transition-all ${
             isSelected
-              ? "bg-sky-500/90 text-white font-bold shadow-lg shadow-sky-500/50 scale-110"
+              ? "bg-zinc-800 text-white font-bold shadow-lg border border-zinc-500 scale-110"
               : isHovered
-              ? "bg-slate-900/90 text-sky-300 border border-sky-400/50"
+              ? "bg-zinc-900/90 text-zinc-200 border border-zinc-700"
               : "bg-slate-950/70 text-slate-300 border border-slate-700/40 opacity-75"
           }`}
         >

@@ -56,16 +56,19 @@ class Settings:
     max_upload_size: int = field(
         default_factory=lambda: int(os.getenv("CAUVERIS_MAX_UPLOAD_SIZE", "104857600"))
     )  # 100MB
+    max_archive_members: int = field(
+        default_factory=lambda: int(os.getenv("CAUVERIS_MAX_ARCHIVE_MEMBERS", "10000"))
+    )
+    max_archive_uncompressed_size: int = field(
+        default_factory=lambda: int(
+            os.getenv("CAUVERIS_MAX_ARCHIVE_UNCOMPRESSED_SIZE", "536870912")
+        )
+    )
 
-    # Demo mode only enables demo-user setup. It never selects or hydrates a
-    # sample incident by itself.
+    # Demo mode: seeds the demo user and allows implicit CAU-0001 golden-incident
+    # hydration in read paths. Default is false to prevent implicit hydration.
     demo_mode: bool = field(
         default_factory=lambda: os.getenv("CAUVERIS_DEMO_MODE", "false").lower() == "true"
-    )
-    # Kept as a separate, opt-in switch for local compatibility. Production
-    # reads must never turn a missing incident ID into a generated sample.
-    implicit_golden_loading: bool = field(
-        default_factory=lambda: os.getenv("CAUVERIS_IMPLICIT_GOLDEN_LOADING", "false").lower() == "true"
     )
 
     # Incident Creation Limits (Phase 2)
@@ -146,6 +149,9 @@ class Settings:
     # Storage
     evidence_store_path: str = field(
         default_factory=lambda: os.getenv("CAUVERIS_EVIDENCE_STORE", "./evidence_store")
+    )
+    report_store_path: str = field(
+        default_factory=lambda: os.getenv("CAUVERIS_REPORT_STORE", "./report")
     )
     sandbox_workspace_path: str = field(
         default_factory=lambda: os.getenv("CAUVERIS_SANDBOX_WORKSPACE", "./sandbox_workspace")
@@ -298,7 +304,22 @@ class Settings:
     )
 
     # Authentication & Authorization
-    auth_backend: str = field(default_factory=lambda: os.getenv("CAUVERIS_AUTH_BACKEND", "memory"))
+    runtime_mode: str = field(
+        default_factory=lambda: os.getenv("CAUVERIS_RUNTIME_MODE", "development").lower()
+    )
+    demo_auth: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_DEMO_AUTH", "false").lower() == "true"
+    )
+    auth_registration_enabled: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_AUTH_REGISTRATION_ENABLED", "true").lower() == "true"
+    )
+    auth_db_path: str = field(
+        default_factory=lambda: os.getenv(
+            "CAUVERIS_AUTH_DB_PATH",
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cauveris_auth.db"),
+        )
+    )
+    auth_backend: str = field(default_factory=lambda: os.getenv("CAUVERIS_AUTH_BACKEND", "sqlite"))
     auth_redis_url: str = field(
         default_factory=lambda: os.getenv("CAUVERIS_AUTH_REDIS_URL", "redis://localhost:6379")
     )
@@ -327,7 +348,11 @@ class Settings:
         default_factory=lambda: os.getenv("CAUVERIS_AUTH_MFA_REQUIRED_ROLES", "admin,super_admin")
     )
     auth_cookie_secure: bool = field(
-        default_factory=lambda: os.getenv("CAUVERIS_AUTH_COOKIE_SECURE", "true").lower() == "true"
+        default_factory=lambda: (
+            os.getenv("CAUVERIS_AUTH_COOKIE_SECURE", "true").lower() == "true"
+            if os.getenv("CAUVERIS_RUNTIME_MODE", "development").lower() == "production"
+            else os.getenv("CAUVERIS_AUTH_COOKIE_SECURE", "false").lower() == "true"
+        )
     )
     auth_cookie_samesite: str = field(
         default_factory=lambda: os.getenv("CAUVERIS_AUTH_COOKIE_SAMESITE", "lax")
@@ -344,6 +369,26 @@ class Settings:
     auth_lockout_duration_minutes: int = field(
         default_factory=lambda: int(os.getenv("CAUVERIS_AUTH_LOCKOUT_DURATION", "15"))
     )
+
+    def validate_production_security(self) -> None:
+        """Validate production security invariants.
+        
+        Strictly forbids running with insecure demo authentication, insecure demo mode,
+        or default development secrets in production runtime mode.
+        """
+        if self.runtime_mode == "production":
+            if self.demo_auth:
+                raise RuntimeError(
+                    "FATAL SECURITY VIOLATION: CAUVERIS_DEMO_AUTH is enabled while CAUVERIS_RUNTIME_MODE=production"
+                )
+            if self.demo_mode:
+                raise RuntimeError(
+                    "FATAL SECURITY VIOLATION: CAUVERIS_DEMO_MODE is enabled while CAUVERIS_RUNTIME_MODE=production"
+                )
+            if self.secret_key == "dev-secret-change-in-prod" or os.getenv("CAUVERIS_SECRET_KEY") == "dev-secret-change-in-prod":
+                raise RuntimeError(
+                    "FATAL SECURITY VIOLATION: CAUVERIS_SECRET_KEY is using development default in production"
+                )
 
 
 # Global settings instance

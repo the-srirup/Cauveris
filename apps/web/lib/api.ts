@@ -442,6 +442,65 @@ export interface VictoryReplayResponse {
   freshness_budget_ms?: number;
   patch?: (PatchCandidate & { id?: string; diff?: string }) | null;
   verification?: VerificationReport | null;
+  verification_level?: "UNVERIFIED" | "MODEL_VERIFIED" | "STAGING_VERIFIED" | "RUNTIME_VERIFIED";
+  verification_summary?: {
+    overall_status: string;
+    achieved_level: string;
+    target_level: string;
+    checks: Array<{
+      check_name: string;
+      level: string;
+      status: string;
+      measured_value?: any;
+      threshold_value?: any;
+      evidence_source?: string;
+      failure_reason?: string;
+      notes?: string;
+    }>;
+    unmet_requirements: string[];
+    caveats: string[];
+  };
+  canonical_invariants?: Array<{
+    name: string;
+    authority: string;
+    target_value: number;
+    unit: string;
+    comparator: string;
+    description: string;
+    status: string;
+  }>;
+  latency_decomposition?: {
+    mechanism: string;
+    total_measured_latency_ms: number;
+    budget_ms: number;
+    control_deadline_ms?: number;
+    physical_lower_bound_ms: number;
+    repair_physically_feasible: boolean;
+    dominant_compressible_component?: string;
+    components: Array<{
+      name: string;
+      measured_ms: number;
+      compressible: boolean;
+      physical_minimum_ms: number;
+      dominant: boolean;
+    }>;
+    recommended_strategy: string;
+    rationale: string;
+  };
+  before_outcome?: {
+    mission_outcome: string;
+    freshness_outcome: string;
+    physical_safety_outcome: string;
+    control_deadline_outcome: string;
+    overall_safety: string;
+  };
+  after_outcome?: {
+    mission_outcome: string;
+    freshness_outcome: string;
+    physical_safety_outcome: string;
+    control_deadline_outcome: string;
+    overall_safety: string;
+  };
 }
 
 export interface TemporalVisualizationEvent {
@@ -899,6 +958,10 @@ class ApiClient {
     return this.request<EvidenceValidationSummary>(`/incidents/${incidentId}/validate`, { method: "POST" });
   }
 
+  async validateEvidence(incidentId: string): Promise<EvidenceValidationSummary> {
+    return this.validate(incidentId);
+  }
+
   // Status checking - debounced for polling
   async getEvents(incidentId: string): Promise<PipelineEventsResponse> {
     return this.requestDebounced<PipelineEventsResponse>(`/incidents/${incidentId}/events`);
@@ -984,18 +1047,31 @@ class ApiClient {
   }
 
   // Download patch package as blob for file download
-  async downloadPatchPackage(incidentId: string): Promise<Blob> {
+  async downloadPatchPackage(incidentId: string, repairId?: string): Promise<Blob> {
     const { accessToken } = useAuthStore.getState();
     const headers: Record<string, string> = {};
     if (accessToken) {
       headers['Authorization'] = `Bearer ${accessToken}`;
     }
 
-    const response = await fetch(`${this.baseUrl}/incidents/${incidentId}/download-patch-package`, { headers });
+    const query = repairId ? `?repair_id=${encodeURIComponent(repairId)}` : '';
+    const response = await fetch(`${this.baseUrl}/incidents/${incidentId}/download-patch-package${query}`, { headers });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Failed to download patch package: ${response.status} ${errorText}`);
+      let structuredMessage = errorText;
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed.message) structuredMessage = parsed.message;
+        else if (parsed.detail && typeof parsed.detail === 'object' && parsed.detail.message) {
+          structuredMessage = parsed.detail.message;
+        } else if (parsed.detail && typeof parsed.detail === 'string') {
+          structuredMessage = parsed.detail;
+        }
+      } catch {
+        // use raw text
+      }
+      throw new Error(`Failed to download patch package: ${response.status} ${structuredMessage}`);
     }
 
     return response.blob();

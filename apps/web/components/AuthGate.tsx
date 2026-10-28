@@ -33,14 +33,20 @@ interface AuthGateProps {
 export function AuthGate({
   children,
   redirect = "/",
-  loadingLabel = "Loading...",
+  loadingLabel = "Authenticating...",
 }: AuthGateProps) {
-  const { isAuthenticated, isLoading } = useAuthStore();
+  const { isAuthenticated, isLoading, initializeAuth } = useAuthStore();
   const router = useRouter();
 
   useEffect(() => {
+    if (typeof initializeAuth === "function") {
+      initializeAuth();
+    }
+  }, [initializeAuth]);
+
+  useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      router.push(`/login?redirect=${redirect}`);
+      router.push(`/login?redirect=${encodeURIComponent(redirect)}`);
     }
   }, [isAuthenticated, isLoading, router, redirect]);
 

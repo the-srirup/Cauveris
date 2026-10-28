@@ -160,6 +160,15 @@ out/
 .DS_Store
 Thumbs.db
 
+# SQLite local databases and runtime data
+data/*.db
+data/*.db-shm
+data/*.db-wal
+*.db
+*.db-shm
+*.db-wal
+!data/.gitkeep
+
 # Environment variables & secrets
 .env
 .env.*

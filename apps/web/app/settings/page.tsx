@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { PageHeader, Card, Badge, Button, Input, Toggle, Slider, Panel, PanelSection } from "@/components/ui";
+import { AuthGate } from "@/components/AuthGate";
 import {
   Palette,
   Bell,
@@ -95,7 +96,7 @@ export type SettingsType = {
 };
 
 const defaultSettings: SettingsType = {
-  theme: "system",
+  theme: "dark",
   accentColor: "primary",
   density: "comfortable",
   animations: true,
@@ -125,7 +126,7 @@ const defaultSettings: SettingsType = {
   modelEscalation: "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF",
 };
 
-export default function SettingsPage() {
+function SettingsContent() {
   const { state: shellState, addActivity, setIncidentContext, toggleNavCollapse, openInspector, closeInspector, setTrayState } = useShell();
   const { incidentId, judgeMode, setJudgeMode, engineerMode, setEngineerMode, loadIncident } = useActiveIncident();
   const { isAuthenticated, isLoading: authLoading } = useAuthStore();
@@ -443,6 +444,7 @@ export default function SettingsPage() {
   };
 
   const handleReconstruct = async () => {
+    if (!incidentId) return;
     try {
       addActivity({
         type: "system",
@@ -465,6 +467,7 @@ export default function SettingsPage() {
   };
 
   const handleExportReport = async () => {
+    if (!incidentId) return;
     try {
       const report = await api.getReport(incidentId);
       const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
@@ -489,6 +492,7 @@ export default function SettingsPage() {
   };
 
   const handleDownloadPatch = async () => {
+    if (!incidentId) return;
     try {
       const blob = await api.downloadPatchPackage(incidentId);
       const url = URL.createObjectURL(blob);
@@ -595,8 +599,10 @@ export default function SettingsPage() {
   return (
     <div className="w-full space-y-5">
       <PageHeader
-        title="Settings"
-        subtitle="Manage display preferences, live model credentials, and application controls"
+        title="System Status & Preferences"
+        ariaLabel="Settings"
+        subtitle="Diagnostic telemetry, model gateway configuration, and user preferences"
+        breadcrumbs={[{ label: "Overview", href: "/" }, { label: "System Status" }]}
       />
 
       <div className="grid gap-5 lg:grid-cols-4">
@@ -650,7 +656,7 @@ export default function SettingsPage() {
               </h2>
               <div className="grid gap-3 sm:grid-cols-3">
                 {[
-                  { id: "light", label: "Light", desc: "Clean bright theme for daytime", icon: Sun, iconColor: "text-amber-400" },
+                  { id: "light", label: "Light", desc: "Clean bright theme for daytime", icon: Sun, iconColor: "text-zinc-300" },
                   { id: "dark", label: "Dark", desc: "High-contrast dark reality debugger", icon: Moon, iconColor: "text-[var(--color-accent-fg)]" },
                   { id: "system", label: "System", desc: "Follow operating system preference", icon: Monitor, iconColor: "text-[var(--color-fg-muted)]" },
                 ].map((item) => (
@@ -681,8 +687,8 @@ export default function SettingsPage() {
                 {[
                   { id: "primary", name: "Monochrome Charcoal", bg: "bg-neutral-600" },
                   { id: "secondary", name: "Slate Neutral", bg: "bg-slate-500" },
-                  { id: "success", name: "Emerald Matrix", bg: "bg-emerald-500" },
-                  { id: "amber", name: "Amber Alert", bg: "bg-amber-500" },
+                  { id: "success", name: "Monochrome Zinc", bg: "bg-zinc-400" },
+                  { id: "amber", name: "High Contrast", bg: "bg-zinc-200" },
                 ].map((color) => (
                   <button
                     key={color.id}
@@ -856,10 +862,10 @@ export default function SettingsPage() {
 
                 <button
                   onClick={handleLoadGolden}
-                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-amber-500/10 hover:border-amber-500/40 text-left transition-all ${BTN_FOCUS}`}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-zinc-800 hover:border-zinc-600 text-left transition-all ${BTN_FOCUS}`}
                 >
                   <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
-                    <Clock className="h-4 w-4 text-amber-400" />
+                    <Clock className="h-4 w-4 text-zinc-300" />
                     <span>Load Golden Benchmark</span>
                   </div>
                   <p className="text-xs text-[var(--color-fg-muted)]">Load CAU-0001 AMR Batching Bottleneck</p>
@@ -867,10 +873,10 @@ export default function SettingsPage() {
 
                 <button
                   onClick={handleReconstruct}
-                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-emerald-500/10 hover:border-emerald-500/40 text-left transition-all ${BTN_FOCUS}`}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-zinc-800 hover:border-zinc-600 text-left transition-all ${BTN_FOCUS}`}
                 >
                   <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
-                    <RotateCcw className="h-4 w-4 text-emerald-400" />
+                    <RotateCcw className="h-4 w-4 text-zinc-300" />
                     <span>Reconstruct Pipeline</span>
                   </div>
                   <p className="text-xs text-[var(--color-fg-muted)]">Re-run causal discovery & verification</p>
@@ -889,10 +895,10 @@ export default function SettingsPage() {
 
                 <button
                   onClick={handleDownloadPatch}
-                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-purple-500/10 hover:border-purple-500/40 text-left transition-all ${BTN_FOCUS}`}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-zinc-800 hover:border-zinc-600 text-left transition-all ${BTN_FOCUS}`}
                 >
                   <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
-                    <Wrench className="h-4 w-4 text-purple-400" />
+                    <Wrench className="h-4 w-4 text-zinc-300" />
                     <span>Download Patch Package</span>
                   </div>
                   <p className="text-xs text-[var(--color-fg-muted)]">Export verified patch artifact zip</p>
@@ -947,12 +953,12 @@ export default function SettingsPage() {
                   }}
                   className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
                     judgeMode
-                      ? "border-amber-500 bg-amber-500/10 ring-1 ring-amber-500"
-                      : "border-[var(--color-border-default)] hover:border-amber-500/40 bg-[var(--color-canvas-subtle)]/50"
+                      ? "border-zinc-500 bg-zinc-800 ring-1 ring-zinc-500"
+                      : "border-[var(--color-border-default)] hover:border-zinc-600 bg-[var(--color-canvas-subtle)]/50"
                   }`}
                 >
                   <div className="flex items-center gap-2 font-medium text-[var(--color-fg-default)] mb-1">
-                    <Shield className="h-4 w-4 text-amber-400" />
+                    <Shield className="h-4 w-4 text-zinc-300" />
                     <span>Judge Mode</span>
                   </div>
                   <p className="text-xs text-[var(--color-fg-muted)]">Human verification required before applying any patch</p>
@@ -966,12 +972,12 @@ export default function SettingsPage() {
                   }}
                   className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
                     engineerMode
-                      ? "border-purple-500 bg-purple-500/10 ring-1 ring-purple-500"
-                      : "border-[var(--color-border-default)] hover:border-purple-500/40 bg-[var(--color-canvas-subtle)]/50"
+                      ? "border-zinc-500 bg-zinc-800 ring-1 ring-zinc-500"
+                      : "border-[var(--color-border-default)] hover:border-zinc-600 bg-[var(--color-canvas-subtle)]/50"
                   }`}
                 >
                   <div className="flex items-center gap-2 font-medium text-[var(--color-fg-default)] mb-1">
-                    <Wrench className="h-4 w-4 text-purple-400" />
+                    <Wrench className="h-4 w-4 text-zinc-300" />
                     <span>Engineer Mode</span>
                   </div>
                   <p className="text-xs text-[var(--color-fg-muted)]">Deep telemetry traces, raw kernel timings, and step-through</p>
@@ -1251,7 +1257,7 @@ export default function SettingsPage() {
                 >
                   <span
                     className={`h-2 w-2 rounded-full ${
-                      isLiveGateway ? "bg-emerald-400 animate-pulse" : "bg-[var(--color-fg-muted)]"
+                      isLiveGateway ? "bg-zinc-200 animate-pulse" : "bg-[var(--color-fg-muted)]"
                     }`}
                   />
                   <span>{isLiveGateway ? "Nebius Live Gateway Active" : "Deterministic Local Fixtures"}</span>
@@ -1270,11 +1276,11 @@ export default function SettingsPage() {
                   </div>
                   <div>
                     <span className="text-xs text-[var(--color-fg-muted)] block">Reasoning Model</span>
-                    <span className="font-mono text-purple-400">{settings.modelReasoning}</span>
+                    <span className="font-mono text-zinc-200">{settings.modelReasoning}</span>
                   </div>
                   <div>
                     <span className="text-xs text-[var(--color-fg-muted)] block">Escalation Model</span>
-                    <span className="font-mono text-amber-400">{settings.modelEscalation}</span>
+                    <span className="font-mono text-zinc-200">{settings.modelEscalation}</span>
                   </div>
                 </div>
               </div>
@@ -1287,7 +1293,7 @@ export default function SettingsPage() {
                       <Key className="h-4 w-4 text-[var(--color-accent-fg)]" /> Nebius / OpenAI API Key
                     </label>
                     {maskedKey && (
-                      <span className="text-xs text-emerald-400 flex items-center gap-1">
+                      <span className="text-xs text-zinc-300 flex items-center gap-1">
                         <Check className="h-3 w-3" /> Key Stored & Protected
                       </span>
                     )}
@@ -1299,11 +1305,11 @@ export default function SettingsPage() {
 
                   {/* Masked Preview if stored */}
                   {maskedKey && (
-                    <div className="mb-3 flex items-center justify-between p-3 rounded-[var(--radius-lg)] bg-emerald-950/20 border border-emerald-500/30">
+                    <div className="mb-3 flex items-center justify-between p-3 rounded-[var(--radius-lg)] bg-zinc-900 border border-zinc-700">
                       <div className="flex items-center gap-2.5">
-                        <Shield className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                        <Shield className="h-4 w-4 text-zinc-300 flex-shrink-0" />
                         <div>
-                          <span className="text-xs text-emerald-300 font-mono tracking-wider">{maskedKey}</span>
+                          <span className="text-xs text-zinc-200 font-mono tracking-wider">{maskedKey}</span>
                           <span className="text-[10px] text-[var(--color-fg-muted)] block">Stored safely in runtime environment</span>
                         </div>
                       </div>
@@ -1315,7 +1321,7 @@ export default function SettingsPage() {
                           className={`text-xs ${BTN_FOCUS}`}
                           aria-label="Copy masked key id"
                         >
-                          {copiedKey ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                          {copiedKey ? <Check className="h-3.5 w-3.5 text-zinc-100" /> : <Copy className="h-3.5 w-3.5" />}
                         </Button>
                         <Button
                           variant="danger"
@@ -1359,14 +1365,14 @@ export default function SettingsPage() {
                       testResult.isTesting
                         ? "bg-[var(--color-canvas-subtle)] border-[var(--color-border-default)] text-[var(--color-fg-default)]"
                         : testResult.success
-                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                        : "bg-[var(--color-danger-muted)] border-[var(--color-danger-muted)]/30 text-red-300"
+                        ? "bg-zinc-800 border-zinc-700 text-zinc-200"
+                        : "bg-[var(--color-danger-muted)] border-[var(--color-danger-muted)]/30 text-zinc-200"
                     }`}
                   >
                     {testResult.isTesting ? (
                       <Loader2 className="h-4 w-4 animate-spin mt-0.5 flex-shrink-0" />
                     ) : testResult.success ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400 mt-0.5 flex-shrink-0" />
+                      <CheckCircle2 className="h-4 w-4 text-zinc-200 mt-0.5 flex-shrink-0" />
                     ) : (
                       <XCircle className="h-4 w-4 text-[var(--color-danger-fg)] mt-0.5 flex-shrink-0" />
                     )}
@@ -1553,5 +1559,13 @@ export default function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <AuthGate redirect="/settings" loadingLabel="Loading settings...">
+      <SettingsContent />
+    </AuthGate>
   );
 }

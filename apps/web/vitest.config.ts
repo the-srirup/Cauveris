@@ -21,6 +21,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@/design-system': path.resolve(import.meta.dirname, './src/design-system'),
       '@/holographic': path.resolve(import.meta.dirname, './src/holographic'),
       '@': path.resolve(import.meta.dirname, './'),
     },

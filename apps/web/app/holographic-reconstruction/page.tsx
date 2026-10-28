@@ -403,8 +403,8 @@ function HolographicReconstructionContent() {
       )}
 
       {error && (
-        <Panel variant="inset" padding="sm" className="bg-rose-500/10 border border-rose-500/20">
-          <div className="flex items-center gap-2 text-xs text-rose-400">
+        <Panel variant="inset" padding="sm" className="bg-zinc-900 border border-zinc-700">
+          <div className="flex items-center gap-2 text-xs text-zinc-200">
             <Activity className="h-3.5 w-3.5" />
             Error: {error}
             <Button size="sm" variant="ghost" onClick={fetchHolographicData} className="ml-2">
@@ -499,9 +499,9 @@ function HolographicReconstructionContent() {
           </Canvas>
 
           {fieldMode === "intensity_slice" && (
-            <div className="absolute top-4 left-4 p-3 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/70 text-xs flex flex-col gap-2 w-64 shadow-xl">
+            <div className="absolute top-4 left-4 p-3 rounded-[2px] bg-[var(--panel-recessed,#0e0e11)]/95 border border-[var(--divider,#27272a)] text-xs flex flex-col gap-2 w-64 shadow-md font-mono">
               <div className="flex justify-between items-center text-slate-300">
-                <span className="font-semibold text-emerald-400">
+                <span className="font-semibold text-zinc-100">
                   {PAGE_TERMS.sliceOverlayTitle}
                 </span>
                 <span className="font-mono">
@@ -514,7 +514,7 @@ function HolographicReconstructionContent() {
                 max={Math.max(0, depthSliceCount - 1)}
                 value={activeDepthIndex}
                 onChange={(e) => setDepthSliceIndex(parseInt(e.target.value, 10))}
-                className="w-full h-1.5 bg-slate-700 rounded accent-emerald-400"
+                className="w-full h-1.5 bg-slate-700 rounded accent-zinc-200"
                 aria-label="Bulk depth slice"
               />
             </div>
@@ -573,13 +573,13 @@ function HolographicReconstructionContent() {
                   <span className="text-slate-400" title={QUALITY_TERMS.fidelity.implementationNote}>
                     {QUALITY_TERMS.fidelity.label}
                   </span>
-                  <span className="font-mono text-emerald-400 font-bold">
+                  <span className="font-mono text-zinc-100 font-bold">
                     {(hologramState.quality.ssim * 100).toFixed(1)}%
                   </span>
                 </div>
                 <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-emerald-400 transition-all duration-300"
+                    className="h-full bg-zinc-200 transition-all duration-300"
                     style={{ width: `${hologramState.quality.ssim * 100}%` }}
                   />
                 </div>
@@ -593,13 +593,13 @@ function HolographicReconstructionContent() {
                   >
                     {QUALITY_TERMS.peakRecovery.label}
                   </span>
-                  <span className="font-mono text-amber-400 font-bold">
+                  <span className="font-mono text-zinc-300 font-bold">
                     {(hologramState.quality.strehlRatio * 100).toFixed(1)}%
                   </span>
                 </div>
                 <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-amber-400 transition-all duration-300"
+                    className="h-full bg-zinc-400 transition-all duration-300"
                     style={{ width: `${hologramState.quality.strehlRatio * 100}%` }}
                   />
                 </div>
@@ -610,7 +610,7 @@ function HolographicReconstructionContent() {
                   <Cpu className="h-3.5 w-3.5" />
                   Compute Backend
                 </span>
-                <span className={`font-mono font-bold ${gpuEnabled ? "text-emerald-400" : "text-amber-400"}`}>
+                <span className={`font-mono font-bold ${gpuEnabled ? "text-zinc-100" : "text-zinc-300"}`}>
                   {gpuEnabled ? "CUDA GPU Active" : "CPU Fallback"}
                 </span>
               </div>
@@ -648,7 +648,7 @@ function HolographicReconstructionContent() {
                   <span className="text-slate-500">
                     {INSTRUMENTATION_TERMS.layout.label}:
                   </span>
-                  <div className="font-mono text-emerald-400">
+                  <div className="font-mono text-zinc-100">
                     {isConverged ? "Converged" : "Relaxing..."}
                   </div>
                 </div>
@@ -690,10 +690,10 @@ function HolographicReconstructionContent() {
                       <span
                         className={`font-mono font-bold ${
                           selectedNode.health > 0.7
-                            ? "text-emerald-400"
+                            ? "text-zinc-100"
                             : selectedNode.health > 0.4
-                            ? "text-amber-400"
-                            : "text-rose-400"
+                            ? "text-zinc-300"
+                            : "text-zinc-200"
                         }`}
                       >
                         {(selectedNode.health * 100).toFixed(0)}%
@@ -705,11 +705,7 @@ function HolographicReconstructionContent() {
                         style={{
                           width: `${selectedNode.health * 100}%`,
                           backgroundColor:
-                            selectedNode.health > 0.7
-                              ? "#10b981"
-                              : selectedNode.health > 0.4
-                              ? "#f59e0b"
-                              : "#ef4444",
+                            selectedNode.health > 0.7 ? "#e4e4e7" : selectedNode.health > 0.4 ? "#a1a1aa" : "#71717a",
                         }}
                       />
                     </div>
@@ -740,7 +736,7 @@ function HolographicReconstructionContent() {
                           <Wifi className="h-3 w-3" />
                           Network
                         </div>
-                        <div className="font-mono text-emerald-400">
+                        <div className="font-mono text-zinc-100">
                           {(selectedNode.metrics.network_usage * 100).toFixed(0)}%
                         </div>
                       </Panel>
@@ -749,19 +745,19 @@ function HolographicReconstructionContent() {
                           <Activity className="h-3 w-3" />
                           P99 Latency
                         </div>
-                        <div className="font-mono text-rose-400">
+                        <div className="font-mono text-zinc-200">
                           {selectedNode.metrics.latency_p99_ms} ms
                         </div>
                       </Panel>
                       <Panel variant="inset" padding="sm">
                         <div className="text-[var(--color-fg-muted)] text-[10px]">Error Rate</div>
-                        <div className="font-mono text-rose-400">
+                        <div className="font-mono text-zinc-200">
                           {(selectedNode.metrics.error_rate * 100).toFixed(1)}%
                         </div>
                       </Panel>
                       <Panel variant="inset" padding="sm">
                         <div className="text-[var(--color-fg-muted)] text-[10px]">Confidence</div>
-                        <div className="font-mono text-emerald-400">
+                        <div className="font-mono text-zinc-100">
                           {((selectedNode.confidence ?? 0) * 100).toFixed(0)}%
                         </div>
                       </Panel>
@@ -853,7 +849,7 @@ function HolographicReconstructionContent() {
                         <span className="font-mono text-slate-300">{d.nodeId}</span>
                         <span
                           className={`font-mono font-bold ${
-                            d.valueDelta > 0 ? "text-emerald-400" : "text-rose-400"
+                            d.valueDelta > 0 ? "text-zinc-100" : "text-zinc-200"
                           }`}
                         >
                           {d.valueDelta > 0 ? "+" : ""}

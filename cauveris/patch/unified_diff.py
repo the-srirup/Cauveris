@@ -410,7 +410,15 @@ def apply_unified_diff(
                 if not content:
                     target.unlink(missing_ok=True)
                     continue
-            target.write_text(content, encoding="utf-8")
+            # ``Path.write_text`` uses the platform newline conversion on
+            # Windows.  A patch must preserve the uploaded file's byte
+            # content so reverse application can prove a byte-for-byte
+            # rollback; use the target's existing line ending explicitly.
+            raw = target.read_bytes() if target.exists() else b""
+            newline = "\r\n" if b"\r\n" in raw else "\n"
+            rendered = content.replace("\n", newline) if newline != "\n" else content
+            with target.open("w", encoding="utf-8", newline="") as handle:
+                handle.write(rendered)
 
     return {str(t.relative_to(root)) if t.is_relative_to(root) else str(t): (c or "") for t, c in staged}
 

@@ -40,6 +40,24 @@ class StageStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+class WorkflowStatus(str, Enum):
+    """Explicit workflow lifecycle statuses."""
+
+    IDLE = "IDLE"
+    RUNNING = "RUNNING"
+    ANALYSIS_COMPLETED = "ANALYSIS_COMPLETED"
+    REPAIR_GENERATED = "REPAIR_GENERATED"
+    VERIFICATION_COMPLETED = "VERIFICATION_COMPLETED"
+    REPORT_READY = "REPORT_READY"
+    PACKAGE_BUILDING = "PACKAGE_BUILDING"
+    PACKAGE_READY = "PACKAGE_READY"
+    PACKAGE_FAILED = "PACKAGE_FAILED"
+    COMPLETED = "COMPLETED"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
 @dataclass
 class PipelineStage:
     """Represents a discrete stage in the investigation pipeline."""
@@ -144,7 +162,7 @@ def create_default_stages() -> List[PipelineStage]:
 
 
 class PipelineState(Enum):
-    """Legacy state enum preserved for backward compatibility."""
+    """State enum preserved for backward compatibility and lifecycle progression."""
 
     RECEIVED = auto()  # Incident bundle received
     VALIDATING = auto()  # Validating evidence
@@ -160,6 +178,15 @@ class PipelineState(Enum):
     AWAITING_REVIEW = auto()  # Ready for human review
     COMPLETED = auto()  # Processing complete
     FAILED = auto()  # Processing failed
+    # Explicit workflow & packaging stage statuses
+    ANALYSIS_COMPLETED = auto()
+    REPAIR_GENERATED = auto()
+    VERIFICATION_COMPLETED = auto()
+    REPORT_READY = auto()
+    PACKAGE_BUILDING = auto()
+    PACKAGE_READY = auto()
+    PACKAGE_FAILED = auto()
+    PARTIAL = auto()
 
 
 @dataclass
@@ -178,6 +205,14 @@ class PipelineContext:
     patch_candidates: Optional[list] = None
     verification_reports: Optional[list] = None
     final_report: Optional[Any] = None
+    # Stage & packaging metadata
+    workflow_status: WorkflowStatus = WorkflowStatus.IDLE
+    selected_repair_id: Optional[str] = None
+    package_ready: bool = False
+    package_path: Optional[str] = None
+    package_zip_path: Optional[str] = None
+    package_checksum: Optional[str] = None
+    package_error: Optional[str] = None
     # Control flags
     cancelled: bool = False
     error: Optional[str] = None
@@ -201,6 +236,7 @@ class PipelineOrchestrator:
         self._progress_callback: Optional[Callable[..., None]] = None
         self.stages: List[PipelineStage] = create_default_stages()
         self.current_state: str = "IDLE"
+        self.workflow_status: WorkflowStatus = WorkflowStatus.IDLE
         self.current_progress: float = 0.0
         self.active_stage_id: Optional[str] = None
         self.error: Optional[str] = None
@@ -259,9 +295,15 @@ class PipelineOrchestrator:
         if self.context and self.context.incident:
             is_demo = getattr(self.context.incident, "is_demonstration", False)
 
+        wf_val = (
+            self.workflow_status.value
+            if isinstance(self.workflow_status, WorkflowStatus)
+            else str(self.workflow_status)
+        )
         return {
             "job_id": self.job_id,
             "state": self.current_state,
+            "workflow_status": wf_val,
             "progress": self.current_progress,
             "active_stage_id": self.active_stage_id,
             "stages": [s.to_dict() for s in self.stages],
@@ -269,6 +311,10 @@ class PipelineOrchestrator:
             "is_demonstration": is_demo,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "selected_repair_id": getattr(self.context, "selected_repair_id", None) if self.context else None,
+            "package_ready": getattr(self.context, "package_ready", False) if self.context else False,
+            "package_zip_path": getattr(self.context, "package_zip_path", None) if self.context else None,
+            "package_checksum": getattr(self.context, "package_checksum", None) if self.context else None,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -432,6 +478,16 @@ class PipelineOrchestrator:
         Process an incident through the full pipeline.
         """
         self.context = PipelineContext(incident=incident)
+        # A cancellation can arrive after the HTTP handler schedules the
+        # off-loop worker but before that worker enters this coroutine.  Do not
+        # reset the cancellation flag and resurrect a job the operator already
+        # stopped.
+        if self._cancelled:
+            self.context.cancelled = True
+            self.current_state = "CANCELLED"
+            self.error = "Investigation cancelled by operator"
+            self.completed_at = datetime.now(timezone.utc).isoformat()
+            return self.context
         self._cancelled = False
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.completed_at = None
@@ -554,13 +610,31 @@ class PipelineOrchestrator:
             )
             if not ok:
                 self.current_state = "FAILED"
+                self.workflow_status = WorkflowStatus.FAILED
+                context.workflow_status = WorkflowStatus.FAILED
                 self.error = stage_map["simulation_execution"].error
                 self.completed_at = datetime.now(timezone.utc).isoformat()
                 self._notify_progress(PipelineState.FAILED)
                 return context
 
-            # 7. Patch Forge
+            self.workflow_status = WorkflowStatus.ANALYSIS_COMPLETED
+            context.workflow_status = WorkflowStatus.ANALYSIS_COMPLETED
+            self._notify_progress(PipelineState.ANALYSIS_COMPLETED)
+
+            # 7. Patch Forge (Capability-Aware: Refuse speculative repair if unsupported)
             async def do_patch_forge():
+                cap_report = getattr(context.incident, "capability_report", None)
+                if cap_report and cap_report.get("honest_repair_decision") == "REFUSE":
+                    logger.info(
+                        "Honest capability refusal: Repair is unsupported for this incident bundle; "
+                        "refusing speculative patch generation."
+                    )
+                    context.patch_candidates = []
+                    stage_map["patch_forge"].details["patches"] = 0
+                    stage_map["patch_forge"].details["honest_refusal"] = True
+                    stage_map["patch_forge"].details["refusal_reasons"] = cap_report.get("limitations", [])
+                    return
+
                 context.patch_candidates = await self.patch_generator.generate(
                     context.experiments,
                     incident=context.validated_incident or context.incident,
@@ -573,10 +647,16 @@ class PipelineOrchestrator:
             )
             if not ok:
                 self.current_state = "FAILED"
+                self.workflow_status = WorkflowStatus.FAILED
+                context.workflow_status = WorkflowStatus.FAILED
                 self.error = stage_map["patch_forge"].error
                 self.completed_at = datetime.now(timezone.utc).isoformat()
                 self._notify_progress(PipelineState.FAILED)
                 return context
+
+            self.workflow_status = WorkflowStatus.REPAIR_GENERATED
+            context.workflow_status = WorkflowStatus.REPAIR_GENERATED
+            self._notify_progress(PipelineState.REPAIR_GENERATED)
 
             # 8. 9-Point Invariant Verification
             async def do_verification():
@@ -594,10 +674,16 @@ class PipelineOrchestrator:
             )
             if not ok:
                 self.current_state = "FAILED"
+                self.workflow_status = WorkflowStatus.FAILED
+                context.workflow_status = WorkflowStatus.FAILED
                 self.error = stage_map["invariant_verification"].error
                 self.completed_at = datetime.now(timezone.utc).isoformat()
                 self._notify_progress(PipelineState.FAILED)
                 return context
+
+            self.workflow_status = WorkflowStatus.VERIFICATION_COMPLETED
+            context.workflow_status = WorkflowStatus.VERIFICATION_COMPLETED
+            self._notify_progress(PipelineState.VERIFICATION_COMPLETED)
 
             # 9. Audit Report Generation (Non-required)
             async def do_report():
@@ -616,24 +702,108 @@ class PipelineOrchestrator:
                 stage_map["report_generation"], do_report, PipelineState.AWAITING_REVIEW
             )
 
+            self.workflow_status = WorkflowStatus.REPORT_READY
+            context.workflow_status = WorkflowStatus.REPORT_READY
+            self._notify_progress(PipelineState.REPORT_READY)
+
+            # Package export & verification
+            verified_patches = [
+                p for p in (context.patch_candidates or [])
+                if getattr(p, "verified", False)
+            ]
+
+            if verified_patches:
+                winning = verified_patches[0]
+                context.selected_repair_id = winning.candidate_id
+                self.workflow_status = WorkflowStatus.PACKAGE_BUILDING
+                context.workflow_status = WorkflowStatus.PACKAGE_BUILDING
+                self._notify_progress(PipelineState.PACKAGE_BUILDING)
+
+                # If report generation already built the archive, verify it
+                if context.final_report and context.final_report.get("patch_package_zip_path"):
+                    zip_p = Path(context.final_report["patch_package_zip_path"])
+                    if zip_p.exists() and zip_p.stat().st_size > 0:
+                        context.package_ready = True
+                        context.package_path = context.final_report.get("patch_package_path")
+                        context.package_zip_path = str(zip_p)
+                        context.package_checksum = context.final_report.get("patch_package_checksum_sha256")
+                        self.workflow_status = WorkflowStatus.PACKAGE_READY
+                        context.workflow_status = WorkflowStatus.PACKAGE_READY
+                        self._notify_progress(PipelineState.PACKAGE_READY)
+                    else:
+                        context.package_ready = False
+                        context.package_error = f"Package file {zip_p} was not found on disk"
+                        self.workflow_status = WorkflowStatus.PACKAGE_FAILED
+                        context.workflow_status = WorkflowStatus.PACKAGE_FAILED
+                        self.current_state = "FAILED"
+                        self.error = context.package_error
+                        self.completed_at = datetime.now(timezone.utc).isoformat()
+                        self._notify_progress(PipelineState.PACKAGE_FAILED)
+                        return context
+                else:
+                    # Build on demand
+                    try:
+                        from cauveris.patch.package_builder import PatchPackageBuilder
+                        builder = PatchPackageBuilder(settings=self.settings)
+                        target_dir = Path(self.settings.report_store_path) / str(context.incident.id)
+                        pkg_res = await builder.build_package(
+                            incident=context.incident,
+                            patch=winning,
+                            experiment=None,
+                            hypotheses=context.hypotheses or [],
+                            verification_reports=context.verification_reports or [],
+                            system_model=self._system_model(context),
+                            output_dir=target_dir,
+                        )
+                        context.package_ready = True
+                        context.package_path = str(pkg_res.package_dir)
+                        context.package_zip_path = str(pkg_res.zip_path)
+                        context.package_checksum = pkg_res.checksum_sha256
+                        self.workflow_status = WorkflowStatus.PACKAGE_READY
+                        context.workflow_status = WorkflowStatus.PACKAGE_READY
+                        self._notify_progress(PipelineState.PACKAGE_READY)
+                    except Exception as pkg_err:
+                        logger.exception(f"Package export failed: {pkg_err}")
+                        context.package_ready = False
+                        context.package_error = str(pkg_err)
+                        self.workflow_status = WorkflowStatus.PACKAGE_FAILED
+                        context.workflow_status = WorkflowStatus.PACKAGE_FAILED
+                        self.current_state = "FAILED"
+                        self.error = f"Package export failed: {pkg_err}"
+                        self.completed_at = datetime.now(timezone.utc).isoformat()
+                        self._notify_progress(PipelineState.PACKAGE_FAILED)
+                        return context
+
             # Determine final terminal state
             has_failed = any(s.status == StageStatus.FAILED for s in self.stages)
             has_degraded = any(s.status == StageStatus.DEGRADED for s in self.stages)
 
             if self._cancelled:
+                self.workflow_status = WorkflowStatus.CANCELLED
                 self.current_state = "CANCELLED"
-            elif has_failed:
+            elif has_failed or self.workflow_status == WorkflowStatus.PACKAGE_FAILED:
+                self.workflow_status = WorkflowStatus.FAILED
                 self.current_state = "FAILED"
+            elif not verified_patches:
+                self.workflow_status = WorkflowStatus.PARTIAL
+                self.current_state = "PARTIAL"
+                self.current_progress = 1.0
             elif has_degraded:
+                self.workflow_status = WorkflowStatus.COMPLETED
                 self.current_state = "DEGRADED"
                 self.current_progress = 1.0
             else:
+                self.workflow_status = WorkflowStatus.COMPLETED
                 self.current_state = "SUCCESS"
                 self.current_progress = 1.0
 
             self.active_stage_id = None
             self.completed_at = datetime.now(timezone.utc).isoformat()
-            self._notify_progress(PipelineState.COMPLETED)
+            self._notify_progress(
+                PipelineState.COMPLETED
+                if self.workflow_status == WorkflowStatus.COMPLETED
+                else (PipelineState.PARTIAL if self.workflow_status == WorkflowStatus.PARTIAL else PipelineState.FAILED)
+            )
 
         except asyncio.CancelledError:
             self._cancelled = True
@@ -653,8 +823,10 @@ class PipelineOrchestrator:
         except Exception as e:
             logger.exception(f"Pipeline failed: {e}")
             self.current_state = "FAILED"
+            self.workflow_status = WorkflowStatus.FAILED
             self.error = str(e)
             context.error = str(e)
+            context.workflow_status = WorkflowStatus.FAILED
             self.active_stage_id = None
             self.completed_at = datetime.now(timezone.utc).isoformat()
             self._notify_progress(PipelineState.FAILED)
@@ -675,6 +847,7 @@ class PipelineOrchestrator:
             elif s.status == StageStatus.PENDING:
                 s.status = StageStatus.SKIPPED
         self.current_state = "CANCELLED"
+        self.workflow_status = WorkflowStatus.CANCELLED
         self.error = "Investigation cancelled by operator"
         self.active_stage_id = None
         self.completed_at = datetime.now(timezone.utc).isoformat()
@@ -685,6 +858,7 @@ class PipelineOrchestrator:
         self._cancelled = False
         self.stages = create_default_stages()
         self.current_state = "IDLE"
+        self.workflow_status = WorkflowStatus.IDLE
         self.current_progress = 0.0
         self.active_stage_id = None
         self.error = None

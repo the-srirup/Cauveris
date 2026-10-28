@@ -95,7 +95,7 @@ export function TemporalController({
   return (
     <div className="flex flex-col gap-2 p-3 bg-slate-900/80 backdrop-blur border border-slate-700/60 rounded-xl text-slate-200">
       <div className="flex items-center justify-between text-xs">
-        <span className="font-semibold text-sky-400">
+        <span className="font-semibold text-zinc-200">
           Reality Timeline: Stage {currentFrameIdx + 1} / {frameCount}
         </span>
         <span className="font-mono text-slate-400">{(currentTime * 100).toFixed(1)}%</span>
@@ -109,7 +109,7 @@ export function TemporalController({
         step={0.005}
         value={currentTime}
         onChange={(e) => handleSeek(parseFloat(e.target.value))}
-        className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-sky-400"
+        className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-zinc-200"
       />
 
       {/* Playback controls */}
@@ -131,7 +131,7 @@ export function TemporalController({
           </button>
           <button
             onClick={() => setIsPlaying(!isPlaying)}
-            className="p-1.5 rounded bg-sky-500/20 text-sky-400 hover:bg-sky-500/30 font-medium"
+            className="p-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700 font-medium"
             title={isPlaying ? "Pause" : "Play"}
           >
             {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}

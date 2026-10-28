@@ -2,10 +2,9 @@
 
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import { useAuthStore, LoginRequest, RegisterRequest } from '@/lib/auth';
-import { Button, Input, Card, PageHeader } from '@/components/ui';
-import { Mail, Lock, User, AlertCircle, Loader2 } from 'lucide-react';
+import { Button, Input, Card } from '@/components/ui';
+import { Mail, Lock, User, AlertCircle, Loader2, Eye, EyeOff } from 'lucide-react';
 import { NotificationContainer } from '@/components/Notification';
 
 function LoginForm() {
@@ -13,27 +12,30 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const { login, register, isLoading, error, clearError } = useAuthStore();
   const [isRegister, setIsRegister] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
   interface FormDataState {
     email: string;
     password: string;
+    confirm_password?: string;
     remember_me: boolean;
     full_name: string;
     org_name: string;
     org_slug: string;
     mfa_code: string;
   }
+
   const [formData, setFormData] = useState<FormDataState>({
     email: '',
     password: '',
-    remember_me: false,
+    confirm_password: '',
+    remember_me: true,
     full_name: '',
     org_name: '',
     org_slug: '',
     mfa_code: '',
   });
-  const [mfaCode, setMfaCode] = useState('');
 
-  // Check for redirect param
   const redirectTo = searchParams.get('redirect') || '/';
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -49,91 +51,113 @@ function LoginForm() {
     e.preventDefault();
     clearError();
 
+    if (isRegister && formData.confirm_password && formData.password !== formData.confirm_password) {
+      alert("Passwords do not match");
+      return;
+    }
+
     try {
       if (isRegister) {
-        await register(formData as RegisterRequest);
+        await register({
+          email: formData.email,
+          password: formData.password,
+          full_name: formData.full_name,
+          org_name: formData.org_name || undefined,
+          org_slug: formData.org_slug || undefined,
+        });
       } else {
         const loginData: LoginRequest = {
           email: formData.email,
           password: formData.password,
           remember_me: formData.remember_me || false,
-          mfa_code: mfaCode || undefined,
+          mfa_code: formData.mfa_code || undefined,
         };
         await login(loginData);
       }
       router.push(redirectTo);
       router.refresh();
-    } catch (err: any) {
-      // Error is already set in store
+    } catch {
+      // Error handled in auth store
     }
   };
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[var(--color-canvas)]">
+    <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[var(--color-canvas)] font-sans">
       <NotificationContainer />
 
-      <div className="w-full max-w-md">
+      <div className="w-full max-w-md space-y-4">
         {/* Brand Header */}
-        <div className="text-center mb-8">
-          <span className="inline-flex items-center justify-center w-12 h-12 rounded-[var(--radius-lg)] bg-[var(--color-accent-emphasis)] text-white font-bold text-xl mr-2">
-            C
-          </span>
-          <span className="font-bold text-xl text-[var(--color-fg-default)]">Cauveris</span>
+        <div className="flex flex-col items-center text-center space-y-1">
+          <div className="flex h-11 w-11 items-center justify-center rounded-[var(--radius-lg,8px)] bg-[var(--color-accent-emphasis,#1f6feb)] text-white shadow-xs">
+            <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2.4} viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7Z" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold tracking-tight text-[var(--color-fg-default)] pt-2">
+            Cauveris
+          </h1>
+          <p className="text-xs text-[var(--color-fg-muted)]">
+            Incident Engineering & Autonomous System Repair
+          </p>
         </div>
 
-        <Card>
-          <PageHeader
-            title={isRegister ? "Create your account" : "Sign in to your account"}
-            subtitle={isRegister ? "Get started with Cauveris incident investigation" : "Access your mission control dashboard"}
-            className="text-center pb-4"
-          />
+        <Card className="border border-[var(--color-border-default)] shadow-md bg-[var(--color-canvas-inset)]">
+          <div className="pb-3 border-b border-[var(--color-border-default)] mb-4">
+            <h2 className="text-base font-semibold text-[var(--color-fg-default)]">
+              {isRegister ? "Create an Operator Account" : "Operator Sign In"}
+            </h2>
+            <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">
+              {isRegister
+                ? "Enter your details to create an engineering workstation account"
+                : "Enter your registered credentials to access the workbench"}
+            </p>
+          </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3.5">
             {error && (
-              <div className="flex items-center gap-2 p-3 rounded-[var(--radius-md)] bg-[var(--color-danger-muted)] border border-[var(--color-danger-muted)]/30 text-[var(--color-danger-fg)] text-sm">
-                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              <div className="flex items-center gap-2 p-2.5 rounded-[var(--radius-md,6px)] bg-[var(--color-danger-muted)] border border-[var(--color-danger-emphasis)]/30 text-[var(--color-danger-fg)] text-xs">
+                <AlertCircle className="h-4 w-4 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
 
-            {!isRegister || (isRegister && (
-              <>
-                <div className="space-y-2">
-                  <label htmlFor="full_name" className="block text-sm font-medium text-[var(--color-fg-default)]">
-                    Full Name
-                  </label>
-                  <div className="relative">
-                    <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-fg-muted)]" />
-                    <Input
-                      id="full_name"
-                      name="full_name"
-                      type="text"
-                      value={formData.full_name}
-                      onChange={handleInputChange}
-                      placeholder="John Doe"
-                      className="pl-10"
-                      required={isRegister}
-                      disabled={isLoading}
-                    />
-                  </div>
+            {isRegister && (
+              <div className="space-y-1">
+                <label htmlFor="full_name" className="block text-xs font-medium text-[var(--color-fg-default)]">
+                  Full Name
+                </label>
+                <div className="relative">
+                  <User className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--color-fg-muted)]" />
+                  <Input
+                    id="full_name"
+                    name="full_name"
+                    type="text"
+                    value={formData.full_name}
+                    onChange={handleInputChange}
+                    placeholder="Engineering Specialist"
+                    className="pl-8 text-xs h-8"
+                    required={isRegister}
+                    disabled={isLoading}
+                    autoComplete="name"
+                  />
                 </div>
-              </>
-            ))}
+              </div>
+            )}
 
-            <div className="space-y-2">
-              <label htmlFor="email" className="block text-sm font-medium text-[var(--color-fg-default)]">
-                Email
+            <div className="space-y-1">
+              <label htmlFor="email" className="block text-xs font-medium text-[var(--color-fg-default)]">
+                Email Address
               </label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-fg-muted)]" />
+                <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--color-fg-muted)]" />
                 <Input
                   id="email"
                   name="email"
                   type="email"
                   value={formData.email}
                   onChange={handleInputChange}
-                  placeholder="you@example.com"
-                  className="pl-10"
+                  placeholder="operator@organization.com"
+                  className="pl-8 text-xs h-8 font-mono"
                   required
                   disabled={isLoading}
                   autoComplete="email"
@@ -142,10 +166,10 @@ function LoginForm() {
             </div>
 
             {isRegister && (
-              <>
-                <div className="space-y-2">
-                  <label htmlFor="org_name" className="block text-sm font-medium text-[var(--color-fg-default)]">
-                    Organization Name
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label htmlFor="org_name" className="block text-xs font-medium text-[var(--color-fg-default)]">
+                    Organization
                   </label>
                   <Input
                     id="org_name"
@@ -153,14 +177,15 @@ function LoginForm() {
                     type="text"
                     value={formData.org_name}
                     onChange={handleInputChange}
-                    placeholder="Acme Corp"
+                    placeholder="Robotics Division"
+                    className="text-xs h-8"
                     disabled={isLoading}
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <label htmlFor="org_slug" className="block text-sm font-medium text-[var(--color-fg-default)]">
-                    Organization Slug
+                <div className="space-y-1">
+                  <label htmlFor="org_slug" className="block text-xs font-medium text-[var(--color-fg-default)]">
+                    Org Slug (optional)
                   </label>
                   <Input
                     id="org_slug"
@@ -168,76 +193,97 @@ function LoginForm() {
                     type="text"
                     value={formData.org_slug}
                     onChange={handleInputChange}
-                    placeholder="acme-corp"
+                    placeholder="robotics-div"
+                    className="text-xs h-8 font-mono"
                     disabled={isLoading}
                   />
                 </div>
-              </>
+              </div>
             )}
 
-            <div className="space-y-2">
-              <label htmlFor="password" className="block text-sm font-medium text-[var(--color-fg-default)]">
-                Password
-              </label>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <label htmlFor="password" className="block text-xs font-medium text-[var(--color-fg-default)]">
+                  Password
+                </label>
+                {isRegister && (
+                  <span className="text-[10px] text-[var(--color-attention-fg)] font-mono">
+                    min 12 characters
+                  </span>
+                )}
+              </div>
               <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-fg-muted)]" />
+                <Lock className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--color-fg-muted)]" />
                 <Input
                   id="password"
                   name="password"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   value={formData.password}
                   onChange={handleInputChange}
-                  placeholder="••••••••"
-                  className="pl-10"
+                  placeholder="••••••••••••"
+                  className="pl-8 pr-8 text-xs h-8"
                   required
                   disabled={isLoading}
                   autoComplete={isRegister ? 'new-password' : 'current-password'}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
               </div>
             </div>
 
-            {!isRegister && (
-              <div className="space-y-2">
-                <label htmlFor="mfa_code" className="block text-sm font-medium text-[var(--color-fg-default)]">
-                  MFA Code (if enabled)
+            {isRegister && (
+              <div className="space-y-1">
+                <label htmlFor="confirm_password" className="block text-xs font-medium text-[var(--color-fg-default)]">
+                  Confirm Password
                 </label>
-                <Input
-                  id="mfa_code"
-                  name="mfa_code"
-                  type="text"
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value)}
-                  placeholder="123456"
-                  disabled={isLoading}
-                  autoComplete="one-time-code"
-                />
+                <div className="relative">
+                  <Lock className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--color-fg-muted)]" />
+                  <Input
+                    id="confirm_password"
+                    name="confirm_password"
+                    type={showPassword ? "text" : "password"}
+                    value={formData.confirm_password || ""}
+                    onChange={handleInputChange}
+                    placeholder="••••••••••••"
+                    className="pl-8 text-xs h-8"
+                    required={isRegister}
+                    disabled={isLoading}
+                    autoComplete="new-password"
+                  />
+                </div>
               </div>
             )}
 
             {!isRegister && (
-              <div className="flex items-center">
+              <div className="flex items-center pt-1">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     name="remember_me"
                     checked={formData.remember_me || false}
                     onChange={handleInputChange}
-                    className="rounded-[var(--radius-sm)] border-[var(--color-border-default)] text-[var(--color-accent-fg)] focus:ring-[var(--color-accent-fg)] focus:ring-offset-[var(--color-canvas)] h-4 w-4"
+                    className="rounded-[var(--radius-sm,4px)] border-[var(--color-border-default)] text-[var(--color-accent-emphasis)] focus:ring-[var(--color-accent-fg)] h-3.5 w-3.5"
                   />
-                  <span className="text-sm text-[var(--color-fg-muted)]">Remember me</span>
+                  <span className="text-xs text-[var(--color-fg-muted)]">Remember session on this device</span>
                 </label>
               </div>
             )}
 
             <Button
               type="submit"
-              className="w-full"
+              variant="primary"
+              className="w-full h-8.5 text-xs font-semibold mt-2"
               disabled={isLoading}
-              size="lg"
             >
               {isLoading ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                   {isRegister ? 'Creating account...' : 'Signing in...'}
                 </>
               ) : (
@@ -246,46 +292,49 @@ function LoginForm() {
             </Button>
           </form>
 
-          <div className="mt-6 text-center text-sm text-[var(--color-fg-muted)]">
+          <div className="mt-4 pt-3 border-t border-[var(--color-border-default)] text-center text-xs text-[var(--color-fg-muted)]">
             {isRegister ? (
-              <>
+              <span>
                 Already have an account?{' '}
                 <button
                   type="button"
                   onClick={() => {
                     setIsRegister(false);
                     clearError();
-                    setFormData({ email: '', password: '', remember_me: false, full_name: '', org_name: '', org_slug: '', mfa_code: '' });
-                    setMfaCode('');
+                    setFormData({ email: '', password: '', confirm_password: '', remember_me: true, full_name: '', org_name: '', org_slug: '', mfa_code: '' });
                   }}
-                  className="text-[var(--color-accent-fg)] hover:underline font-medium"
+                  className="text-[var(--color-accent-fg)] hover:underline font-semibold"
                 >
                   Sign in
                 </button>
-              </>
+              </span>
             ) : (
-              <>
-                Don't have an account?{' '}
+              <span>
+                Need an engineering account?{' '}
                 <button
                   type="button"
                   onClick={() => {
                     setIsRegister(true);
                     clearError();
-                    setFormData({ email: '', password: '', remember_me: false, full_name: '', org_name: '', org_slug: '', mfa_code: '' });
-                    setMfaCode('');
+                    setFormData({ email: '', password: '', confirm_password: '', remember_me: true, full_name: '', org_name: '', org_slug: '', mfa_code: '' });
                   }}
-                  className="text-[var(--color-accent-fg)] hover:underline font-medium"
+                  className="text-[var(--color-accent-fg)] hover:underline font-semibold"
                 >
-                  Create account
+                  Register here
                 </button>
-              </>
+              </span>
             )}
           </div>
         </Card>
 
-        <p className="mt-6 text-center text-xs text-[var(--color-fg-subtle)]">
-          By continuing, you agree to our <Link href="/terms" className="text-[var(--color-accent-fg)] hover:underline">Terms of Service</Link> and <Link href="/privacy" className="text-[var(--color-accent-fg)] hover:underline">Privacy Policy</Link>.
-        </p>
+        <div className="flex items-center justify-between text-[11px] text-[var(--color-fg-subtle)] px-2">
+          <span>Cauveris v2.4.0 (Production Authentication)</span>
+          <div className="flex items-center gap-3">
+            <span className="cursor-default hover:text-[var(--color-fg-muted)]">Server Session</span>
+            <span>·</span>
+            <span className="cursor-default hover:text-[var(--color-fg-muted)]">Bcrypt Verified</span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -296,7 +345,7 @@ export default function LoginPage() {
     <Suspense
       fallback={
         <div className="min-h-screen flex items-center justify-center bg-[var(--color-canvas)] p-4">
-          <Loader2 className="h-8 w-8 animate-spin text-[var(--color-accent-fg)]" />
+          <Loader2 className="h-6 w-6 animate-spin text-[var(--color-accent-fg)]" />
         </div>
       }
     >

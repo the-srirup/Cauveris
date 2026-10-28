@@ -642,19 +642,19 @@ export function HolographicCanvas({
         <div className="font-semibold text-[var(--color-text-primary)] mb-2">Legend</div>
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-green-500" />
+            <div className="w-3 h-3 rounded-full bg-zinc-200" />
             <span className="text-[var(--color-text-muted)]">Healthy</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-yellow-500" />
+            <div className="w-3 h-3 rounded-full bg-zinc-400" />
             <span className="text-[var(--color-text-muted)]">Degraded</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-red-500" />
+            <div className="w-3 h-3 rounded-full bg-zinc-600" />
             <span className="text-[var(--color-text-muted)]">Critical</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full border-2 border-dashed border-amber-500" />
+            <div className="w-3 h-3 rounded-full border-2 border-dashed border-zinc-400" />
             <span className="text-[var(--color-text-muted)]">Ambiguous</span>
           </div>
         </div>

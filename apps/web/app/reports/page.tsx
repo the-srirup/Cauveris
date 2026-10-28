@@ -91,7 +91,7 @@ function buildVerificationSection(data: any): string {
     INVARIANT_CHECKS.map(
       (check) =>
         `<tr><td>${check.label}</td><td style="text-align:right; color:${
-          report?.[check.key] ? "#10b981" : "#f87171"
+          report?.[check.key] ? "#f4f4f5" : "#71717a"
         };">${report?.[check.key] ? "PASS" : "FAIL"}</td></tr>`
     ).join("");
 
@@ -289,22 +289,22 @@ function ReportsPageContent() {
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       line-height: 1.6;
-      color: ${isDark ? "#e2e8f0" : "#1e293b"};
-      background-color: ${isDark ? "#0b0f19" : "#ffffff"};
+      color: ${isDark ? "#f4f4f5" : "#18181b"};
+      background-color: ${isDark ? "#09090b" : "#ffffff"};
       margin: 0;
       padding: 40px 20px;
     }
     .container {
       max-width: 860px;
       margin: 0 auto;
-      background: ${isDark ? "#111827" : "#f8fafc"};
-      border: 1px solid ${isDark ? "#1f2937" : "#e2e8f0"};
+      background: ${isDark ? "#121215" : "#f4f4f5"};
+      border: 1px solid ${isDark ? "#27272a" : "#e4e4e7"};
       border-radius: 12px;
       padding: 36px;
       box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
     }
     .header {
-      border-bottom: 2px solid ${isDark ? "#374151" : "#cbd5e1"};
+      border-bottom: 2px solid ${isDark ? "#3f3f46" : "#d4d4d8"};
       padding-bottom: 20px;
       margin-bottom: 28px;
     }
@@ -316,41 +316,41 @@ function ReportsPageContent() {
       font-weight: 600;
       text-transform: uppercase;
       margin-right: 8px;
-      background: ${isDark ? "#21262d" : "#f6f8fa"};
-      color: ${isDark ? "#f0f6fc" : "#1f2328"};
-      border: 1px solid ${isDark ? "#30363d" : "#d0d7de"};
+      background: ${isDark ? "#18181b" : "#e4e4e7"};
+      color: ${isDark ? "#f4f4f5" : "#18181b"};
+      border: 1px solid ${isDark ? "#27272a" : "#d4d4d8"};
     }
-    .badge-success { background: #10b98120; color: #10b981; border-color: #10b98140; }
-    h1 { margin: 12px 0 6px 0; font-size: 28px; color: ${isDark ? "#f8fafc" : "#0f172a"}; }
-    .meta { font-size: 14px; color: #94a3b8; font-family: monospace; }
+    .badge-success { background: rgba(255, 255, 255, 0.08); color: #f4f4f5; border-color: rgba(255, 255, 255, 0.25); }
+    h1 { margin: 12px 0 6px 0; font-size: 28px; color: ${isDark ? "#f4f4f5" : "#18181b"}; }
+    .meta { font-size: 14px; color: #a1a1aa; font-family: monospace; }
     .section { margin-top: 32px; }
     .section-title {
       font-size: 18px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      color: ${isDark ? "#f0f6fc" : "#1f2328"};
-      border-bottom: 1px solid ${isDark ? "#30363d" : "#e2e8f0"};
+      color: ${isDark ? "#f4f4f5" : "#18181b"};
+      border-bottom: 1px solid ${isDark ? "#27272a" : "#e4e4e7"};
       padding-bottom: 8px;
       margin-bottom: 16px;
     }
     .card {
-      background: ${isDark ? "#1e293b60" : "#ffffff"};
-      border: 1px solid ${isDark ? "#334155" : "#e2e8f0"};
+      background: ${isDark ? "#18181b" : "#ffffff"};
+      border: 1px solid ${isDark ? "#27272a" : "#e4e4e7"};
       border-radius: 8px;
       padding: 18px;
       margin-bottom: 14px;
     }
     .table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
-    .table th, .table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid ${isDark ? "#334155" : "#e2e8f0"}; }
-    .table th { background: ${isDark ? "#1e293b" : "#f1f5f9"}; color: #94a3b8; font-weight: 600; text-transform: uppercase; font-size: 12px; }
+    .table th, .table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid ${isDark ? "#27272a" : "#e4e4e7"}; }
+    .table th { background: ${isDark ? "#27272a" : "#e4e4e7"}; color: #a1a1aa; font-weight: 600; text-transform: uppercase; font-size: 12px; }
     pre {
-      background: ${isDark ? "#090d16" : "#f1f5f9"};
+      background: ${isDark ? "#0e0e11" : "#f4f4f5"};
       padding: 16px;
       border-radius: 8px;
       overflow-x: auto;
       font-size: 13px;
-      border: 1px solid ${isDark ? "#1f2937" : "#cbd5e1"};
+      border: 1px solid ${isDark ? "#27272a" : "#e4e4e7"};
     }
   </style>
 </head>
@@ -391,7 +391,7 @@ function ReportsPageContent() {
     ${verificationSection}
 
     <div class="section no-print" style="margin-top: 40px; text-align: right;">
-      <button onclick="window.print()" style="padding: 10px 20px; background: ${isDark ? "#f0f6fc" : "#1f2328"}; color: ${isDark ? "#0d1117" : "#ffffff"}; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">
+      <button onclick="window.print()" style="padding: 10px 20px; background: ${isDark ? "#f4f4f5" : "#18181b"}; color: ${isDark ? "#09090b" : "#ffffff"}; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">
         Print / Save to PDF
       </button>
     </div>
@@ -514,6 +514,7 @@ function ReportsPageContent() {
       <PageHeader
         title="Reports"
         subtitle="Generated investigation reports and exports"
+        breadcrumbs={[{ label: "Overview", href: "/" }, { label: "Reports" }]}
         badge={
           <Badge tone="neutral">{reports.length} reports</Badge>
         }

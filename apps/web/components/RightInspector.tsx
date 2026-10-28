@@ -35,34 +35,39 @@ export function RightInspector() {
       <aside
         className={`
           fixed inset-y-0 right-0 z-[var(--z-modal)]
-          bg-[var(--color-canvas)]
-          border-l border-[var(--color-border-default)]
-          flex flex-col transition-transform duration-200 ease-out
+          bg-[var(--workspace,#121215)]
+          border-l border-[var(--divider,#27272a)]
+          flex flex-col transition-transform duration-200 ease-out font-mono
           ${inspectorOpen ? "translate-x-0" : "translate-x-full"}
           ${isDrawer ? "w-full max-w-[90vw]" : "w-[var(--shell-inspector-width)]"}
         `}
         role="complementary"
         aria-label={`Inspector: ${inspectorMode}`}
         data-mode={inspectorMode}
+        data-context-dock
       >
         {/* Header */}
-        <header className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-inset)]/60 backdrop-blur-sm">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)]">
+        <header className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--divider,#27272a)] bg-[var(--panel-recessed,#0e0e11)]">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex h-7 w-7 items-center justify-center rounded-[2px] bg-zinc-800 border border-zinc-700 text-zinc-200 shrink-0">
               {getModeIcon(inspectorMode)}
             </div>
-            <div>
-              <h3 className="text-sm font-semibold text-[var(--color-fg-default)]">{getModeLabel(inspectorMode)}</h3>
-              <p className="text-[11px] text-[var(--color-fg-subtle)]">{getModeDescription(inspectorMode, inspectorData)}</p>
+            <div className="min-w-0">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary,#f4f4f5)] truncate m-0">
+                {getModeLabel(inspectorMode)}
+              </h3>
+              <p className="text-[10px] text-[var(--text-tertiary,#71717a)] truncate mt-0.5">
+                {getModeDescription(inspectorMode, inspectorData)}
+              </p>
             </div>
           </div>
           <Tooltip content="Close inspector" position="left">
             <button
               onClick={closeInspector}
-              className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-subtle)] transition-colors"
+              className="flex h-7 w-7 items-center justify-center rounded-[2px] text-[var(--text-tertiary,#71717a)] hover:text-[var(--text-primary,#f4f4f5)] hover:bg-[var(--panel,#18181b)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
               aria-label="Close inspector"
             >
-              <X className="h-4 w-4" />
+              <X className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
         </header>

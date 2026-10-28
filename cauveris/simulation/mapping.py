@@ -98,6 +98,10 @@ class InterventionPlan:
         return self.parameter_overrides.get("clock_skew_ms")
 
     @property
+    def db_pool_size(self) -> Optional[float]:
+        return self.parameter_overrides.get("db_pool_size")
+
+    @property
     def gpu_contention_ms(self) -> Optional[float]:
         """Kept for compatibility: GPU contention is a modelled batch cost."""
         return self.parameter_overrides.get("gpu_contention_ms")

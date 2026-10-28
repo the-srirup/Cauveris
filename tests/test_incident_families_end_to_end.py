@@ -146,6 +146,20 @@ FAMILIES = {
             ),
         },
     },
+    "database": {
+        "incident_id": "CAU-7004",
+        "config": {**BASE_CONFIG, "database": {"max_connections": 10}},
+        "parameter": "db_pool_size",
+        "hypothesis": "h_connection_pool_exhaustion",
+        "files": lambda config: {
+            "config/database.yaml": _yaml_config(config),
+            "logs/postgres.log": (
+                "2026-09-20T10:29:58Z INFO pgpool: connection granted to client 9\n"
+                "2026-09-20T10:29:59Z ERROR pgpool: connection pool exhausted: "
+                "active connections 35 exceeded pool capacity 10 (remaining: 0)\n"
+            ),
+        },
+    },
 }
 
 

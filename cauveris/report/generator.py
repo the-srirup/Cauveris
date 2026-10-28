@@ -17,6 +17,8 @@ from cauveris.schemas.patch import PatchCandidate, VerificationReport
 from cauveris.simulation.runner import DigitalTwinFaultInjectors, CloudToRobotDigitalTwin
 from cauveris.config import get_settings
 import logging
+import hashlib
+from cauveris.patch.unified_diff import reverse_unified_diff
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,9 @@ class ReportGenerator:
         # shows is computed from this incident's own evidence rather than
         # from a default pipeline.
         self._model = self._resolve_model(incident)
+        self._verification_reports = verification_reports
+        self._incident_bundle = getattr(incident, "bundle_path", "")
+        self._incident_is_sample = bool(getattr(incident, "is_demonstration", False))
 
         # Index hypotheses by id so patches can be traced back to their causal claim
         self._hypotheses_by_id = {
@@ -82,7 +87,7 @@ class ReportGenerator:
         }
 
         # Create report directory
-        report_dir = Path(f"./report/{incident.id}")
+        report_dir = Path(self.settings.report_store_path) / incident.id
         report_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate the main incident report
@@ -101,6 +106,9 @@ class ReportGenerator:
             },
             "timeline": getattr(incident, "timeline_events", []),
             "temporal_analysis": getattr(incident, "temporal_analysis", None),
+            "artifact_inventory": getattr(incident, "artifact_inventory", []),
+            "capability_report": getattr(incident, "capability_report", None),
+            "discovered_repository": getattr(incident, "discovered_repository", None),
             "hypotheses": [self._hypothesis_to_dict(h) for h in hypotheses],
             "experiments": [self._experiment_to_dict(e) for e in experiments],
             "patch_candidates": [self._patch_to_dict(p) for p in patch_candidates],
@@ -127,16 +135,52 @@ class ReportGenerator:
             # (candidate_id = "patch-{experiment_id}") to build before/after evidence
             target_patch = verified_patches[0]
             experiment = self._experiment_for_patch(target_patch, experiments)
-            patch_package_dir = await self._generate_patch_package(
-                incident.id,
-                target_patch,
-                experiment,
-                report_dir,
+            from cauveris.patch.package_builder import PatchPackageBuilder
+            builder = PatchPackageBuilder(settings=self.settings)
+            pkg_res = await builder.build_package(
+                incident=incident,
+                patch=target_patch,
+                experiment=experiment,
+                hypotheses=hypotheses,
+                verification_reports=verification_reports,
+                system_model=self._model,
+                output_dir=report_dir,
             )
-            incident_report["patch_package_path"] = str(patch_package_dir)
+            incident_report["selected_repair_id"] = target_patch.candidate_id
+            incident_report["patch_package_path"] = str(pkg_res.package_dir)
+            incident_report["patch_package_zip_path"] = str(pkg_res.zip_path)
+            incident_report["patch_package_checksum_sha256"] = pkg_res.checksum_sha256
 
         logger.info(f"Report generated at {report_dir}")
         return incident_report
+
+    async def _generate_patch_package(
+        self,
+        incident_id: str,
+        patch: PatchCandidate,
+        experiment: Optional[Experiment],
+        report_dir: Path,
+    ) -> Path:
+        """
+        Generate a patch package directory with all required artifacts.
+        """
+        from cauveris.patch.package_builder import PatchPackageBuilder
+        builder = PatchPackageBuilder(settings=self.settings)
+        incident_obj = getattr(self, "_incident", None) or Incident(
+            id=incident_id,
+            title=f"Incident {incident_id}",
+            bundle_path=getattr(self, "_incident_bundle", ""),
+        )
+        pkg_res = await builder.build_package(
+            incident=incident_obj,
+            patch=patch,
+            experiment=experiment,
+            hypotheses=list(self._hypotheses_by_id.values()) if hasattr(self, "_hypotheses_by_id") else [],
+            verification_reports=getattr(self, "_verification_reports", []),
+            system_model=self._model,
+            output_dir=report_dir,
+        )
+        return pkg_res.package_dir
 
     def _report_status(
         self,
@@ -510,11 +554,11 @@ fi
 
 # Show the patch that would be reversed
 echo "Patch to be reverted:"
-git apply --reverse --check {patch.candidate_id}.patch || echo "Patch check failed"
+git apply --reverse --check patch.patch || echo "Patch check failed"
 
 # Apply the reverse patch
 echo "Applying reverse patch..."
-git apply --reverse {patch.candidate_id}.patch
+git apply --reverse patch.patch
 
 echo "Rollback complete. Please verify the system is back to its previous state."
 """
@@ -522,6 +566,89 @@ echo "Rollback complete. Please verify the system is back to its previous state.
             f.write(rollback_content)
         # Make it executable
         os.chmod(rollback_path, 0o755)
+
+        # The downloadable package is an audit artifact, not just a diff.  Keep
+        # every claim alongside the bytes that support it so a consumer can
+        # validate a download without access to Cauveris.
+        verification = next(
+            (v for v in getattr(self, "_verification_reports", [])
+             if getattr(v, "patch_candidate_id", None) == patch.candidate_id),
+            None,
+        )
+        diagnosis = {
+            "incident_id": incident_id,
+            "causal_claim": causal_claim,
+            "hypothesis_id": getattr(experiment, "hypothesis_id", None) if experiment else None,
+            "supporting_artifacts": getattr(
+                self._hypotheses_by_id.get(getattr(experiment, "hypothesis_id", "")),
+                "supporting_artifact_ids", [],
+            ) if experiment else [],
+        }
+        provenance = {
+            "incident_id": incident_id,
+            "bundle_path": str(getattr(self, "_incident_bundle", "")),
+            "pipeline": "uploaded-bytes -> extraction -> inventory -> readers -> normalization -> timeline -> mechanism -> hypothesis -> baseline -> intervention -> patch -> isolated-apply -> validation -> verification -> rollback",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "is_sample": bool(getattr(self, "_incident_is_sample", False)),
+        }
+        capability = {
+            "verification_level": "verified" if patch.verified else "diagnosed",
+            "checks": 9,
+            "supported_for_download": bool(patch.verified),
+            "affected_files": patch.affected_files,
+            "syntax_or_build_validation": patch.existing_test_state,
+        }
+        baseline = {
+            "experiment_id": getattr(experiment, "experiment_id", None) if experiment else None,
+            "failure_oracle": getattr(experiment, "failure_oracle", {}) if experiment else {},
+            "status": "reproduced" if getattr(patch, "regression_test_fails_before", False) else "not_reproduced",
+        }
+        post = {
+            "experiment_id": getattr(experiment, "experiment_id", None) if experiment else None,
+            "failure_oracle": getattr(experiment, "failure_oracle", {}) if experiment else {},
+            "status": "cleared" if getattr(patch, "original_failure_not_reproduced", False) else "not_cleared",
+        }
+        (package_dir / "patch.patch").write_text(patch.unified_diff, encoding="utf-8")
+        (package_dir / "rollback.patch").write_text(
+            reverse_unified_diff(patch.unified_diff), encoding="utf-8"
+        )
+        (package_dir / "diagnosis.json").write_text(json.dumps(diagnosis, indent=2), encoding="utf-8")
+        (package_dir / "diagnosis.md").write_text(
+            f"# Diagnosis for {incident_id}\n\n{causal_claim}\n", encoding="utf-8"
+        )
+        (package_dir / "provenance.json").write_text(json.dumps(provenance, indent=2), encoding="utf-8")
+        (package_dir / "capability-report.json").write_text(json.dumps(capability, indent=2), encoding="utf-8")
+        (package_dir / "baseline-results.json").write_text(json.dumps(baseline, indent=2, default=str), encoding="utf-8")
+        (package_dir / "post-intervention-results.json").write_text(json.dumps(post, indent=2, default=str), encoding="utf-8")
+        (package_dir / "verification-report.json").write_text(
+            json.dumps(self._verification_to_dict(verification) if verification else {}, indent=2, default=str),
+            encoding="utf-8",
+        )
+        (package_dir / "limitations.md").write_text(
+            "# Limitations\n\nResults are calibrated from the uploaded evidence and the isolated digital-twin replay. Real deployment rollout remains operator-controlled.\n",
+            encoding="utf-8",
+        )
+        (package_dir / "application-instructions.md").write_text(
+            "# Application\n\nRun `python apply_patch.py --check --target <workspace>` before `python apply_patch.py --target <workspace>`. Review `verification-report.json` and keep `rollback.patch` with the deployment record.\n",
+            encoding="utf-8",
+        )
+
+        manifest = {
+            "format": "cauveris-repair-package/v1",
+            "incident_id": incident_id,
+            "patch_candidate_id": patch.candidate_id,
+            "verification_level": capability["verification_level"],
+            "is_sample": provenance["is_sample"],
+            "files": sorted(p.name for p in package_dir.iterdir() if p.is_file()),
+            "checksums": "checksums.sha256",
+        }
+        (package_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        checksum_lines = []
+        for path in sorted(p for p in package_dir.iterdir() if p.is_file() and p.name != "checksums.sha256"):
+            checksum_lines.append(
+                f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"
+            )
+        (package_dir / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
 
         logger.info(f"Patch package generated at {package_dir}")
         return package_dir

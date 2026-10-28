@@ -7,10 +7,11 @@ const STORAGE_INCIDENT_KEY = "cauveris_active_incident_id";
 const STORAGE_JUDGE_KEY = "cauveris_judge_mode";
 const STORAGE_ENGINEER_KEY = "cauveris_engineer_mode";
 
-const DEFAULT_INCIDENT_ID = "CAU-0001";
+// No hardcoded default incident: user starts with selectedIncidentId = null
+const DEFAULT_INCIDENT_ID: string | null = null;
 
 interface StatePayload {
-  incidentId?: string;
+  incidentId?: string | null;
   judgeMode?: boolean;
   engineerMode?: boolean;
 }
@@ -18,7 +19,7 @@ interface StatePayload {
 let globalListeners: ((payload: StatePayload) => void)[] = [];
 
 export function useActiveIncident() {
-  const [incidentId, setIncidentIdState] = useState<string>(DEFAULT_INCIDENT_ID);
+  const [incidentId, setIncidentIdState] = useState<string | null>(DEFAULT_INCIDENT_ID);
   const [judgeMode, setJudgeModeState] = useState<boolean>(true);
   const [engineerMode, setEngineerModeState] = useState<boolean>(false);
   const [incident, setIncidentState] = useState<Incident | null>(null);
@@ -62,15 +63,24 @@ export function useActiveIncident() {
     };
   }, []);
 
-  const setIncidentId = (newId: string) => {
+  const setIncidentId = (newId: string | null) => {
     setIncidentIdState(newId);
     try {
-      localStorage.setItem(STORAGE_INCIDENT_KEY, newId);
+      if (newId) {
+        localStorage.setItem(STORAGE_INCIDENT_KEY, newId);
+      } else {
+        localStorage.removeItem(STORAGE_INCIDENT_KEY);
+      }
     } catch {}
     globalListeners.forEach(listener => listener({ incidentId: newId }));
   };
 
-  const loadIncident = useCallback(async (id: string) => {
+  const loadIncident = useCallback(async (id: string | null) => {
+    if (!id) {
+      setIncidentState(null);
+      setIncidentId(null);
+      return null;
+    }
     try {
       const data = await api.get(id);
       setIncidentState(data);
@@ -78,6 +88,7 @@ export function useActiveIncident() {
       return data;
     } catch {
       setIncidentState(null);
+      return null;
     }
   }, []);
 

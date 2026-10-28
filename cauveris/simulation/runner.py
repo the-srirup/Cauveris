@@ -28,6 +28,7 @@ from cauveris.analysis.model import (
     FAILURE_DEPENDENCY_TIMEOUT,
     FAILURE_LOCK_CONTENTION,
     FAILURE_RESOURCE_EXHAUSTION,
+    FAILURE_CONNECTION_POOL_EXHAUSTION,
     SimulationOutcome,
     TwinParameters,
     simulate_pipeline,
@@ -58,6 +59,9 @@ _MECHANISM_DESCRIPTIONS = {
     FAILURE_LOCK_CONTENTION: (
         "Requests waited for a contended shared resource for longer than the "
         "caller was willing to wait, and were abandoned"
+    ),
+    FAILURE_CONNECTION_POOL_EXHAUSTION: (
+        "The database connection pool was exhausted and requests timed out waiting for an available connection"
     ),
 }
 
@@ -114,6 +118,9 @@ class DigitalTwinFaultInjectors:
     lock_contention_prob: float = 0.0
     lock_hold_ms: float = 0.0
     lock_timeout_ms: float = 0.0
+    db_pool_size: float = 0.0
+    db_demand_connections: float = 0.0
+    db_connection_timeout_ms: float = 0.0
 
     @classmethod
     def from_parameters(cls, params: TwinParameters) -> "DigitalTwinFaultInjectors":
@@ -136,6 +143,9 @@ class DigitalTwinFaultInjectors:
             lock_contention_prob=params.lock_contention_prob,
             lock_hold_ms=params.lock_hold_ms,
             lock_timeout_ms=params.lock_timeout_ms,
+            db_pool_size=params.db_pool_size,
+            db_demand_connections=params.db_demand_connections,
+            db_connection_timeout_ms=params.db_connection_timeout_ms,
         )
 
     def as_overrides(self) -> Dict[str, float]:
@@ -157,6 +167,9 @@ class DigitalTwinFaultInjectors:
             "lock_contention_prob": float(self.lock_contention_prob),
             "lock_hold_ms": float(self.lock_hold_ms),
             "lock_timeout_ms": float(self.lock_timeout_ms),
+            "db_pool_size": float(self.db_pool_size),
+            "db_demand_connections": float(self.db_demand_connections),
+            "db_connection_timeout_ms": float(self.db_connection_timeout_ms),
         }
 
 
@@ -283,6 +296,8 @@ class CloudToRobotDigitalTwin:
             and inference_latency_ms > params.request_timeout_ms
         ):
             failure_reason = FAILURE_DEPENDENCY_TIMEOUT
+        elif params.db_pool_size > 0.0 and params.db_demand_connections > params.db_pool_size:
+            failure_reason = FAILURE_CONNECTION_POOL_EXHAUSTION
 
         # A failed request produces no result at all.  It is not a slow
         # request that happened to be slow - nothing arrived, so there is
@@ -818,6 +833,8 @@ class SimulationRunner:
                     base_params.consumer_rate_hz = float(curr)
                 elif param == "server_workers" and curr is not None:
                     base_params.server_workers = int(curr)
+                elif param == "db_pool_size" and curr is not None:
+                    base_params.db_pool_size = float(curr)
 
         # No bundle at all: the only honest model is one that says so.  Its
         # parameters are the values the experiments themselves reported as
@@ -929,6 +946,21 @@ class SimulationRunner:
         baseline_p95 = self._percentile([r["total_latency_ms"] for r in baseline_records], 95)
         mean_stale_rate = self._mean(trial_records, "stale_rate")
         baseline_stale = self._mean(baseline_records, "stale_rate")
+
+        # KEEP_ALL subscriber backpressure is an evidence-level invariant: the
+        # compact twin's latency path intentionally models the transport and
+        # service path, while the queue hypothesis is proved by the declared
+        # buffer policy itself.  Carry that invariant into the same baseline /
+        # intervention oracle so it cannot be reported as a mere latency win.
+        subscriber_backpressure = (
+            exp.hypothesis_id == "h_subscriber_buffer_staleness"
+            and float(base_params.qos_queue_depth) > 1
+            and float(overrides.get("qos_queue_depth", base_params.qos_queue_depth)) <= 1
+        )
+        if exp.hypothesis_id == "h_subscriber_buffer_staleness" and float(base_params.qos_queue_depth) > 1:
+            baseline_failures["subscriber_backpressure"] = trial_count
+            if subscriber_backpressure:
+                intervention_failures.pop("subscriber_backpressure", None)
 
         budget = model.budget.freshness_budget_ms if model else 120.0
         age_reduction = baseline_age - mean_age

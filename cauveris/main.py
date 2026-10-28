@@ -29,12 +29,12 @@ def _run_golden_incident() -> int:
     import asyncio
     import json
 
-    from cauveris.datasets.golden_incident import GoldenIncidentGenerator
+    from cauveris.api.sample_loader import load_explicit_sample
     from cauveris.state_machine.orchestrator import PipelineOrchestrator
     from cauveris.schemas.base import StatusLabel
 
     async def run() -> int:
-        incident = GoldenIncidentGenerator().generate()
+        incident = load_explicit_sample()
         orchestrator = PipelineOrchestrator()
         orchestrator.set_progress_callback(
             lambda summary: print(f"  [{summary.get('state', '?'):>9}] {summary.get('active_stage_id') or summary.get('state', '')}")

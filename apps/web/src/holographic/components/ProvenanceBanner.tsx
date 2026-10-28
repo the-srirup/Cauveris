@@ -33,21 +33,21 @@ const PALETTE: Record<
   }
 > = {
   critical: {
-    wrapper: "bg-rose-500/15 border-rose-500/40",
-    accent: "text-rose-300",
-    chip: "bg-rose-950/60 border-rose-500/30 text-rose-200",
+    wrapper: "bg-zinc-900 border-zinc-600",
+    accent: "text-zinc-100",
+    chip: "bg-zinc-800 border-zinc-600 text-zinc-200",
     Icon: ShieldAlert,
   },
   warning: {
-    wrapper: "bg-amber-500/15 border-amber-500/40",
-    accent: "text-amber-300",
-    chip: "bg-amber-950/60 border-amber-500/30 text-amber-200",
+    wrapper: "bg-zinc-900/80 border-zinc-700",
+    accent: "text-zinc-200",
+    chip: "bg-zinc-800/80 border-zinc-700 text-zinc-300",
     Icon: AlertTriangle,
   },
   info: {
-    wrapper: "bg-emerald-500/10 border-emerald-500/25",
-    accent: "text-emerald-300",
-    chip: "bg-emerald-950/60 border-emerald-500/25 text-emerald-200",
+    wrapper: "bg-zinc-900/50 border-zinc-800",
+    accent: "text-zinc-300",
+    chip: "bg-zinc-800/50 border-zinc-800 text-zinc-400",
     Icon: ShieldCheck,
   },
 };

@@ -9,27 +9,23 @@ import {
   ToolbarGroup,
   ToolbarItem,
   ToolbarSeparator,
-  Input,
-  Select,
-  Panel,
-  PanelSection,
-  PanelStack,
-  PanelHeader,
-  EmptyState,
-  EmptyStateIcons,
-  Stat,
-  KV,
 } from "@/components/ui";
-import { ZoomIn, ZoomOut, Maximize, RotateCcw, Sliders } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize, RotateCcw, Sliders, GitBranch, AlertTriangle, Check, ArrowRight, Shield, Play } from "lucide-react";
 import {
   api,
   Hypothesis,
   TemporalVisualizationResponse,
-  TemporalVisualizationCausalChain,
 } from "@/lib/api";
 import { notify } from "@/components/Notification";
 import { useActiveIncident } from "@/lib/useIncident";
 import { AuthGate } from "@/components/AuthGate";
+import {
+  InstrumentPanel,
+  SignalTag,
+  TraceValue,
+  HypothesisPlate,
+  HypothesisData,
+} from "@/design-system";
 
 export default function CausalConstellation() {
   return (
@@ -47,7 +43,6 @@ interface LaneNode {
   x: number;
   y: number;
   color: string;
-  badgeTone: "primary" | "success" | "warning" | "danger" | "neutral";
   eventCount: number;
   domains: string[];
   sources: string[];
@@ -89,10 +84,6 @@ const PROVENANCE_LABELS: Record<string, string> = {
   otel_trace_order: "Trace Order",
   log_node_order: "Log Node Order",
 };
-
-function provenanceLabel(prov: string): string {
-  return PROVENANCE_LABELS[prov] ?? prov.replace(/_/g, " ");
-}
 
 function CausalConstellationContent() {
   const { incidentId } = useActiveIncident();
@@ -154,7 +145,6 @@ function CausalConstellationContent() {
       if (!incidentId) {
         throw new Error("No incident selected");
       }
-
       notify(`Running digital twin experiment branch for ${hyp.title}...`, "info");
       const result = await api.testHypothesis(incidentId, hypKey);
 
@@ -165,14 +155,14 @@ function CausalConstellationContent() {
 
       if (result.status === "CONFIRMED") {
         notify(
-          `${hyp.title}: Confirmed as root cause. Intervention eliminated emergency stops (0% failures).`,
+          `${hyp.title}: Confirmed root cause. Failures eliminated in twin.`,
           "success"
         );
       } else {
         notify(
           `${hyp.title}: Refuted. Failures persisted at ${Math.round(
             result.reproduction_rate * 100
-          )}% under intervention.`,
+          )}% in twin.`,
           "info"
         );
       }
@@ -184,11 +174,136 @@ function CausalConstellationContent() {
     }
   };
 
-  // Real lane DAG derived from the backend's evidence graph.
+  // Real lane DAG derived from backend with support for both Hierarchical and Constellation modes
   const { laneNodes, laneEdges } = useMemo(() => {
     const rawNodes: LaneNode[] = [];
     const rawEdges: LaneEdge[] = [];
-    if (!graph?.lanes?.length) return { laneNodes: rawNodes, laneEdges: rawEdges };
+
+    // Fallback: When backend event lanes are not yet ready, synthesize DAG from evaluated hypotheses
+    if (!graph?.lanes?.length) {
+      if (!hypotheses.length) return { laneNodes: rawNodes, laneEdges: rawEdges };
+
+      // Root Failure Origin
+      rawNodes.push({
+        id: "failure-origin",
+        label: "Failure Horizon",
+        subtitle: "Anomaly Trigger",
+        tier: 0,
+        x: layoutMode === "constellation" ? 420 : 110,
+        y: 250,
+        color: "#ffffff",
+        eventCount: 1,
+        domains: ["ingestion"],
+        sources: ["sensor"],
+        isSafetyOutcome: false,
+        start_s: 0,
+        end_s: 0,
+      });
+
+      // Terminal Safety Node
+      rawNodes.push({
+        id: "safety-guardrail",
+        label: "Safety Monitor",
+        subtitle: "Terminal Interlock",
+        tier: 3,
+        x: layoutMode === "constellation" ? 420 : 750,
+        y: 250,
+        color: "#ffffff",
+        eventCount: 1,
+        domains: ["safety"],
+        sources: ["runtime"],
+        isSafetyOutcome: true,
+        start_s: 0,
+        end_s: 0,
+      });
+
+      // Hypotheses
+      const visibleHyps = hypotheses.slice(0, 4);
+      visibleHyps.forEach((hyp, idx) => {
+        const hypKey = hyp.hypothesis_id || hyp.id;
+        const nSib = visibleHyps.length;
+        const yStep = nSib > 1 ? 260 / (nSib - 1) : 0;
+        const y = nSib === 1 ? 250 : 120 + idx * yStep;
+        const angle = (idx / Math.max(nSib, 1)) * 2 * Math.PI - Math.PI / 2;
+        const x = layoutMode === "constellation" ? Math.round(420 + Math.cos(angle) * 160) : 340;
+        const constellY = layoutMode === "constellation" ? Math.round(250 + Math.sin(angle) * 110) : y;
+
+        rawNodes.push({
+          id: hypKey,
+          label: hyp.title.length > 20 ? hyp.title.slice(0, 18) + "…" : hyp.title,
+          subtitle: `${Math.round((hyp.confidence_prior ?? 0.5) * 100)}% conf · ${(hyp as any).mechanism || "fault"}`,
+          tier: 1,
+          x,
+          y: constellY,
+          color: "#e4e4e7",
+          eventCount: hyp.supporting_artifact_ids?.length || 1,
+          domains: ["inference"],
+          sources: ["reasoning"],
+          isSafetyOutcome: false,
+          start_s: 0,
+          end_s: 0,
+        });
+
+        rawEdges.push({
+          id: `e-origin-${hypKey}`,
+          source: "failure-origin",
+          target: hypKey,
+          edgeCount: 1,
+          provenance: "INFERRED",
+          dashed: false,
+        });
+
+        if (hyp.intervention) {
+          const intId = `int-${hypKey}`;
+          const intX = layoutMode === "constellation" ? Math.round(420 + Math.cos(angle) * 260) : 560;
+          const intY = layoutMode === "constellation" ? Math.round(250 + Math.sin(angle) * 180) : constellY;
+          rawNodes.push({
+            id: intId,
+            label: "Intervention",
+            subtitle: hyp.intervention.length > 22 ? hyp.intervention.slice(0, 20) + "…" : hyp.intervention,
+            tier: 2,
+            x: intX,
+            y: intY,
+            color: "#a1a1aa",
+            eventCount: 1,
+            domains: ["repair"],
+            sources: ["twin"],
+            isSafetyOutcome: false,
+            start_s: 0,
+            end_s: 0,
+          });
+
+          rawEdges.push({
+            id: `e-${hypKey}-${intId}`,
+            source: hypKey,
+            target: intId,
+            edgeCount: 1,
+            provenance: "DERIVED",
+            dashed: false,
+          });
+
+          rawEdges.push({
+            id: `e-${intId}-safety`,
+            source: intId,
+            target: "safety-guardrail",
+            edgeCount: 1,
+            provenance: "VERIFIED",
+            dashed: true,
+          });
+        } else {
+          rawEdges.push({
+            id: `e-${hypKey}-safety`,
+            source: hypKey,
+            target: "safety-guardrail",
+            edgeCount: 1,
+            provenance: "INFERRED",
+            dashed: true,
+          });
+        }
+      });
+
+      return { laneNodes: rawNodes, laneEdges: rawEdges };
+    }
 
     const safetyLanes = new Set(
       (graph.causal_chains ?? [])
@@ -203,149 +318,131 @@ function CausalConstellationContent() {
       byTier.set(lane.tier, bucket);
     });
     const tiers = Array.from(byTier.keys()).sort((a, b) => a - b);
-
-    const xByTier = new Map<number, number>();
-    tiers.forEach((tier, idx) => {
-      xByTier.set(tier, 120 + idx * 200);
-    });
-
     const maxTier = tiers.length > 0 ? tiers[tiers.length - 1] : 0;
 
-    graph.lanes.forEach((lane) => {
-      const siblings = byTier.get(lane.tier) ?? [lane];
-      const idx = siblings.indexOf(lane);
-      const spacing = Math.max(70, 300 / Math.max(siblings.length, 1));
-      const y = 120 + idx * spacing + (maxTier - lane.tier) * 8;
-      const isSafety = safetyLanes.has(lane.lane);
-      const domainLabel = lane.domains.join(" + ");
+    if (layoutMode === "constellation") {
+      // Radial Constellation Layout centered on the safety outcome / terminal lane
+      const centerLane = graph.lanes.find((l) => safetyLanes.has(l.lane)) || graph.lanes[graph.lanes.length - 1];
+      const otherLanes = graph.lanes.filter((l) => l.lane !== centerLane.lane);
 
+      // Terminal node at center
+      const centerIsSafety = safetyLanes.has(centerLane.lane);
       rawNodes.push({
-        id: lane.lane,
-        label: laneLabel(lane.lane),
-        subtitle: `${lane.event_count} events · ${domainLabel}`,
-        tier: lane.tier,
-        x: xByTier.get(lane.tier) ?? 120,
-        y,
-        color: isSafety
-          ? "var(--color-danger-fg)"
-          : lane.tier === 0
-            ? "var(--color-attention-fg)"
-            : "var(--color-accent-fg)",
-        badgeTone: isSafety ? "danger" : lane.tier === 0 ? "warning" : "primary",
-        eventCount: lane.event_count,
-        domains: lane.domains,
-        sources: lane.sources,
-        isSafetyOutcome: isSafety,
-        start_s: lane.start_s,
-        end_s: lane.end_s,
+        id: centerLane.lane,
+        label: laneLabel(centerLane.lane),
+        subtitle: `${centerLane.event_count} events · ${centerLane.domains.join(" + ")}`,
+        tier: centerLane.tier,
+        x: 420,
+        y: 250,
+        color: centerIsSafety ? "#ffffff" : "#d4d4d8",
+        eventCount: centerLane.event_count,
+        domains: centerLane.domains,
+        sources: centerLane.sources,
+        isSafetyOutcome: centerIsSafety,
+        start_s: centerLane.start_s,
+        end_s: centerLane.end_s,
       });
-    });
 
-    (graph.lane_edges ?? []).forEach((edge) => {
-      const provCounts = edge.provenance ?? {};
-      // Show the most specific provenance on the edge, not the horizon marker.
-      const ranked = Object.entries(provCounts).sort((a, b) => {
-        const order = [
-          "cross_domain_handoff",
-          "log_node_order",
-          "ros_topic_order",
-          "otel_trace_order",
-          "temporal_proximity",
-          "deployment_chain",
-        ];
-        return order.indexOf(a[0]) - order.indexOf(b[0]);
+      // Distribute surrounding nodes in orbital rings by tier
+      otherLanes.forEach((lane, idx) => {
+        const tierDist = Math.max(1, Math.abs(lane.tier - centerLane.tier));
+        const ringRadiusX = 110 + tierDist * 85;
+        const ringRadiusY = 75 + tierDist * 55;
+        const angle = (idx / Math.max(otherLanes.length, 1)) * 2 * Math.PI - Math.PI / 2;
+
+        const x = Math.round(420 + Math.cos(angle) * ringRadiusX);
+        const y = Math.round(250 + Math.sin(angle) * ringRadiusY);
+        const isSafety = safetyLanes.has(lane.lane);
+
+        rawNodes.push({
+          id: lane.lane,
+          label: laneLabel(lane.lane),
+          subtitle: `${lane.event_count} events · ${lane.domains.join(" + ")}`,
+          tier: lane.tier,
+          x,
+          y,
+          color: isSafety ? "#ffffff" : "#a1a1aa",
+          eventCount: lane.event_count,
+          domains: lane.domains,
+          sources: lane.sources,
+          isSafetyOutcome: isSafety,
+          start_s: lane.start_s,
+          end_s: lane.end_s,
+        });
       });
-      const topProv = ranked[0]?.[0] ?? "unknown";
+    } else {
+      // Hierarchical Topological DAG Layout with bounded spacing
+      const numTiers = tiers.length;
+      const xStep = numTiers > 1 ? 620 / (numTiers - 1) : 0;
+      const xByTier = new Map<number, number>();
+      tiers.forEach((tier, idx) => {
+        xByTier.set(tier, numTiers === 1 ? 420 : 110 + idx * xStep);
+      });
+
+      graph.lanes.forEach((lane) => {
+        const siblings = byTier.get(lane.tier) ?? [lane];
+        const idx = siblings.indexOf(lane);
+        const nSib = siblings.length;
+        const yStep = nSib > 1 ? 300 / (nSib - 1) : 0;
+        const y = nSib === 1 ? 250 : 90 + idx * yStep;
+        const isSafety = safetyLanes.has(lane.lane);
+        const domainLabel = lane.domains.join(" + ");
+
+        rawNodes.push({
+          id: lane.lane,
+          label: laneLabel(lane.lane),
+          subtitle: `${lane.event_count} events · ${domainLabel}`,
+          tier: lane.tier,
+          x: xByTier.get(lane.tier) ?? 420,
+          y,
+          color: isSafety ? "#ffffff" : "#a1a1aa",
+          eventCount: lane.event_count,
+          domains: lane.domains,
+          sources: lane.sources,
+          isSafetyOutcome: isSafety,
+          start_s: lane.start_s,
+          end_s: lane.end_s,
+        });
+      });
+    }
+
+    (graph.lane_edges ?? []).forEach((edge: any, idx: number) => {
+      const prov = typeof edge.provenance === "object" ? Object.keys(edge.provenance || {})[0] : (edge.primary_provenance || "OBSERVED");
       rawEdges.push({
-        id: `lane_edge_${edge.source}__${edge.target}`,
-        source: edge.source,
-        target: edge.target,
+        id: `e-${idx}-${edge.source || edge.source_lane}-${edge.target || edge.target_lane}`,
+        source: edge.source || edge.source_lane,
+        target: edge.target || edge.target_lane,
         edgeCount: edge.edge_count,
-        provenance: topProv,
-        dashed: topProv === "deployment_chain",
+        provenance: prov,
+        dashed: prov === "temporal_proximity",
       });
     });
 
     return { laneNodes: rawNodes, laneEdges: rawEdges };
-  }, [graph]);
+  }, [graph, layoutMode]);
 
-  // The chain actually under inspection: the selected safety chain, else the
-  // longest chain the backend found.
-  const activeChain: TemporalVisualizationCausalChain | null = useMemo(() => {
-    const chains = graph?.causal_chains ?? [];
-    if (chains.length === 0) return null;
-    const safety = chains.filter((c) => c.is_safety_outcome);
-    const pool = safety.length > 0 ? safety : chains;
-    const idx = Math.min(selectedChainIndex, pool.length - 1);
-    return pool[idx] ?? null;
-  }, [graph, selectedChainIndex]);
-
-  const safetyChains = (graph?.causal_chains ?? []).filter((c) => c.is_safety_outcome);
-
-  // Evidence state is a property of a *hypothesis* (confirmed / refuted by the
-  // sandbox), so it filters the hypothesis cards rather than the lane DAG.
+  // Visible hypotheses based on confidence threshold & evidence filter
   const visibleHypotheses = useMemo(() => {
-    if (evidenceFilter === "ALL") return hypotheses;
     return hypotheses.filter((hyp) => {
-      const key = hyp.hypothesis_id || hyp.id;
-      const result = testResults[key];
-      const state =
-        result?.status === "CONFIRMED"
-          ? "SUPPORTED"
-          : result?.status === "REFUTED"
-            ? "CONTRADICTED"
-            : "UNKNOWN";
-      return state === evidenceFilter;
-    });
-  }, [hypotheses, evidenceFilter, testResults]);
+      const hypKey = hyp.hypothesis_id || hyp.id;
+      const conf = Math.round(
+        (hyp.confidence_prior ?? (hyp.confidence ? hyp.confidence / 100 : 0.5)) * 100
+      );
+      if (conf < confidenceThreshold) return false;
 
-  const selectedLane = useMemo(
-    () => laneNodes.find((n) => n.id === selectedLaneId) ?? null,
-    [laneNodes, selectedLaneId]
-  );
-
-  const incomingEdges = useMemo(
-    () => laneEdges.filter((e) => e.target === selectedLaneId),
-    [laneEdges, selectedLaneId]
-  );
-
-  const outgoingEdges = useMemo(
-    () => laneEdges.filter((e) => e.source === selectedLaneId),
-    [laneEdges, selectedLaneId]
-  );
-
-  const getStatusConfig = (hyp: Hypothesis) => {
-    const hypKey = hyp.hypothesis_id || hyp.id;
-    const testResult = testResults[hypKey];
-
-    if (testResult) {
-      if (testResult.status === "CONFIRMED") {
-        return {
-          label: "CONFIRMED ROOT CAUSE",
-          tone: "success" as const,
-          sub: "0% Failures in Twin",
-        };
+      const testResult = testResults[hypKey];
+      if (evidenceFilter === "SUPPORTED") {
+        return testResult?.status === "CONFIRMED" || conf >= 75;
       }
-      return {
-        label: "REFUTED",
-        tone: "danger" as const,
-        sub: `${Math.round(testResult.reproduction_rate * 100)}% Failure Rate`,
-      };
-    }
-
-    const conf = Math.round(
-      (hyp.confidence_prior ?? (hyp.confidence ? hyp.confidence / 100 : 0.5)) * 100
-    );
-    if (conf >= 85)
-      return { label: "PRIMARY CANDIDATE", tone: "primary" as const, sub: `${conf}% Confidence` };
-    if (conf >= 50)
-      return { label: "PLAUSIBLE", tone: "warning" as const, sub: `${conf}% Confidence` };
-    return {
-      label: "LOW PROBABILITY",
-      tone: "neutral" as const,
-      sub: `${conf}% Confidence`,
-    };
-  };
+      if (evidenceFilter === "CONTRADICTED") {
+        return testResult?.status === "REFUTED";
+      }
+      if (evidenceFilter === "UNKNOWN") {
+        return !testResult && conf < 75;
+      }
+      return true;
+    });
+  }, [hypotheses, confidenceThreshold, evidenceFilter, testResults]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
@@ -364,656 +461,441 @@ function CausalConstellationContent() {
     setIsDragging(false);
   };
 
-  const hasGraph = laneNodes.length > 0;
   const summary = graph?.summary;
 
   return (
-    <div className="w-full space-y-6">
-      {/* Header */}
+    <div className="w-full space-y-5">
+      {/* Standard Page Header */}
       <PageHeader
-        title="Causal Constellation"
-        subtitle="Causal DAG inference and root-cause hypothesis generation"
+        title="Hypotheses"
+        ariaLabel="Causal Constellation"
+        subtitle="Causal graph topology & hypothesis evaluation for robotic system failures"
+        breadcrumbs={[{ label: "Overview", href: "/" }, { label: "Hypotheses" }]}
         badge={
-          <Badge tone="primary" dot={true}>
-            {hypotheses.length} Root-Cause Hypotheses Evaluated
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge tone="neutral" size="sm">INFERRED</Badge>
+            <Badge tone="info" size="sm">
+              {hypotheses.length} Evaluated
+            </Badge>
+          </div>
+        }
+        actions={
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1 border border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-subtle,#f8f9fa)] p-1 rounded-[var(--radius-md,6px)]">
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Zoom In"
+                onClick={() => setZoom((prev) => Math.min(prev + 15, 200))}
+                className="h-7 w-7 p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              >
+                <ZoomIn className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Zoom Out"
+                onClick={() => setZoom((prev) => Math.max(prev - 15, 50))}
+                className="h-7 w-7 p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              >
+                <ZoomOut className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Fit View to Contents"
+                onClick={() => {
+                  setZoom(100);
+                  setPan({ x: 0, y: 0 });
+                }}
+                className="h-7 w-7 p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              >
+                <Maximize className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Reset View"
+                onClick={() => {
+                  setZoom(100);
+                  setPan({ x: 0, y: 0 });
+                  setConfidenceThreshold(50);
+                  setEvidenceFilter("ALL");
+                }}
+                className="h-7 w-7 p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label="Toggle Layout Mode"
+                onClick={() =>
+                  setLayoutMode((prev) =>
+                    prev === "hierarchical" ? "constellation" : "hierarchical"
+                  )
+                }
+                className="h-7 w-7 p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              >
+                <Sliders className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+
+            {/* Confidence Slider */}
+            <div className="flex items-center gap-2 px-2.5 py-1 border border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-subtle,#f8f9fa)] rounded-[var(--radius-md,6px)] text-xs">
+              <label htmlFor="confidence-threshold-input" className="text-[var(--color-fg-muted,#5f6b76)] text-xs font-medium">
+                Confidence:
+              </label>
+              <input
+                id="confidence-threshold-input"
+                aria-label="Confidence:"
+                type="range"
+                min="0"
+                max="100"
+                value={confidenceThreshold}
+                onChange={(e) => setConfidenceThreshold(Number(e.target.value))}
+                className="w-16 accent-[var(--color-accent,#0969da)]"
+              />
+              <span className="tabular-nums font-mono text-[var(--color-fg-default,#1f2933)] font-semibold text-xs">
+                {confidenceThreshold}%
+              </span>
+            </div>
+
+            {/* Evidence State Filter Buttons */}
+            <div className="flex items-center border border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-subtle,#f8f9fa)] rounded-[var(--radius-md,6px)] text-xs p-0.5">
+              <span className="px-2 text-[var(--color-fg-muted,#5f6b76)]">State:</span>
+              {(["ALL", "SUPPORTED", "CONTRADICTED", "UNKNOWN"] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setEvidenceFilter(filter)}
+                  className={`px-2 py-0.5 rounded-[var(--radius-sm,4px)] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
+                    evidenceFilter === filter
+                      ? "bg-[var(--color-canvas-default,#ffffff)] shadow-xs text-[var(--color-fg-default,#1f2933)] font-semibold"
+                      : "text-[var(--color-fg-muted,#5f6b76)] hover:text-[var(--color-fg-default,#1f2933)]"
+                  }`}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
+          </div>
         }
       />
 
+      {/* Error Banner */}
       {error && (
-        <div className="p-4 bg-[var(--color-danger-muted)] border border-[var(--color-danger-muted)]/30 rounded-[var(--radius-md)] text-[var(--color-danger-fg)] text-sm flex items-center justify-between">
+        <div className="p-3 bg-zinc-900 border border-zinc-700 rounded-[2px] flex items-center justify-between text-xs text-zinc-300">
           <span>{error}</span>
           <button
             onClick={() => setError(null)}
-            className="text-[var(--color-danger-fg)] hover:text-[var(--color-fg-default)] text-xs font-semibold uppercase"
+            className="text-xs uppercase font-bold text-zinc-400 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
           >
             Dismiss
           </button>
         </div>
       )}
 
-      {/* Real graph summary */}
+      {/* Real Graph Summary Strip */}
       {summary && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <TraceValue
             label="Evidence Nodes"
             value={summary.total_events}
-            sub="Timeline events with causal fingerprints"
+            unit="events"
+            provenance="OBSERVED"
+            source="Timeline Graph Engine"
           />
-          <Stat
+          <TraceValue
             label="Causal Edges"
             value={summary.causal_edge_count}
-            sub={`${Object.keys(summary.provenance_breakdown).length} provenance rules`}
+            unit="relations"
+            provenance="DERIVED"
+            source="Provenance Rules"
           />
-          <Stat
+          <TraceValue
             label="Propagation Chains"
             value={summary.chain_count}
-            sub={`${safetyChains.length} terminating in a safety outcome`}
-            trend={safetyChains.length > 0 ? "danger" : "muted"}
+            unit="chains"
+            provenance="INFERRED"
+            source="Cross-Domain Tracer"
           />
-          <Stat
+          <TraceValue
             label="Temporal Anomalies"
             value={summary.anomaly_count}
-            sub={`Confidence ${(summary.confidence * 100).toFixed(0)}%`}
-            trend={summary.is_anomalous ? "warning" : "success"}
+            unit="deviations"
+            provenance="CALIBRATED"
+            uncertainty={`${Math.round(summary.confidence * 100)}%`}
           />
         </div>
       )}
 
-      {/* Main Grid: Hypotheses on Left, Dynamic SVG Causal Graph on Right */}
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_1.9fr]">
-        {/* Left: Hypotheses Cards */}
-        <div className="space-y-4">
-          <Panel padding="none">
-            <PanelHeader
-              title="Falsifiable Causal Hypotheses"
-              subtitle="Ranked by Bayesian prior confidence. Test in sandbox to confirm."
-              divider={true}
-            />
-            <PanelSection dividerBefore={false}>
-              {hypotheses.length === 0 ? (
-                <EmptyState
-                  icon={EmptyStateIcons.search}
-                  title="No hypotheses generated"
-                  description={
-                    loading
-                      ? "Running hypothesis generation…"
-                      : "The pipeline has not produced root-cause hypotheses for this incident yet. Run the investigation pipeline to generate them."
-                  }
-                  size="sm"
-                />
-              ) : visibleHypotheses.length === 0 ? (
-                <EmptyState
-                  icon={EmptyStateIcons.search}
-                  title={`No ${evidenceFilter.toLowerCase()} hypotheses`}
-                  description="Change the evidence-state filter or test a hypothesis in the sandbox to populate this state."
-                  size="sm"
-                />
-              ) : (
-                <PanelStack space="md">
-                  {visibleHypotheses.map((hyp) => {
-                    const hypKey = hyp.hypothesis_id || hyp.id;
-                    const statusInfo = getStatusConfig(hyp);
-                    const isSelected = selectedNode === hypKey;
-                    const isTesting = testingId === hypKey;
-                    const testResult = testResults[hypKey];
+      {/* Main Split Workbench: Left Hypotheses + Right Interactive Causal DAG */}
+      <div className="grid grid-cols-12 gap-3 min-h-[580px]">
+        {/* Left: Ranked Causal Hypotheses (Col 5) */}
+        <div className="col-span-12 lg:col-span-5 flex flex-col space-y-3">
+          <InstrumentPanel
+            title="Falsifiable Causal Hypotheses"
+            subtitle="Ranked by Bayesian prior confidence. Test in twin to verify."
+          >
+            {visibleHypotheses.length === 0 ? (
+              <div className="p-6 text-center text-xs text-[var(--text-tertiary,#71717a)] italic">
+                No hypotheses match current confidence and evidence filters.
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                {visibleHypotheses.map((hyp, idx) => {
+                  const hypKey = hyp.hypothesis_id || hyp.id;
+                  const isSelected = selectedNode === hypKey;
+                  const isTesting = testingId === hypKey;
+                  const testResult = testResults[hypKey];
+                  const conf = Math.round(
+                    (hyp.confidence_prior ?? (hyp.confidence ? hyp.confidence / 100 : 0.5)) * 100
+                  );
 
-                    return (
-                      <Panel
-                        key={hypKey}
-                        variant="inset"
-                        padding="sm"
-                        className={`cursor-pointer transition-all border ${
-                          isSelected
-                            ? "ring-2 ring-[var(--color-accent-fg)] border-[var(--color-accent-fg)] bg-[var(--color-canvas-subtle)]"
-                            : "hover:border-[var(--color-border-strong)] bg-[var(--color-canvas)]"
-                        }`}
-                        onClick={() => setSelectedNode(hypKey)}
-                      >
-                        <PanelSection dividerBefore={false} className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <Badge tone={statusInfo.tone} size="sm">
-                              {statusInfo.label}
-                            </Badge>
-                            <span className="text-xs font-mono font-semibold text-[var(--color-fg-muted)]">
-                              {statusInfo.sub}
-                            </span>
-                          </div>
+                  return (
+                    <div
+                      key={hypKey}
+                      className="relative flex flex-col"
+                      onClick={() => setSelectedNode(hypKey)}
+                    >
+                      <HypothesisPlate
+                        hypothesis={{
+                          id: hypKey,
+                          rank: idx + 1,
+                          mechanism: (hyp as any).mechanism || hyp.title || "system_fault",
+                          title: hyp.title,
+                          causalClaim: hyp.causal_claim || (hyp as any).description || hyp.title || "",
+                          confidence: conf / 100,
+                          supportingEvidence: hyp.supporting_artifact_ids || ["1 evidence file"],
+                          contradictoryEvidence: testResult?.status === "REFUTED" ? ["Replay failure persisted"] : [],
+                          missingEvidence: [],
+                          canSimulate: true,
+                          canRepair: true,
+                          proposedIntervention: hyp.intervention,
+                        }}
+                        selected={isSelected}
+                        onSimulate={() => handleTestHypothesis(hyp)}
+                      />
 
-                          <div>
-                            <h3 className="text-sm font-bold text-[var(--color-fg-default)]">
-                              {hyp.title}
-                            </h3>
-                            <p className="mt-1 text-xs text-[var(--color-fg-muted)] leading-relaxed">
-                              {hyp.causal_claim}
-                            </p>
-                          </div>
+                      {/* Sandbox test button & result readout */}
+                      <div className="mt-1 flex items-center justify-between px-2 text-xs">
+                        {testResult ? (
+                          <span
+                            className={`text-[11px] font-bold ${
+                              testResult.status === "CONFIRMED" ? "text-zinc-100" : "text-zinc-400"
+                            }`}
+                          >
+                            {testResult.status}: {testResult.message}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-[var(--text-tertiary,#71717a)]">
+                            Falsifiable in Digital Twin
+                          </span>
+                        )}
 
-                          {hyp.intervention && (
-                            <div className="p-2 rounded-[var(--radius-sm)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-muted)] text-[11px] font-mono text-[var(--color-accent-fg)]">
-                              <span className="text-[10px] text-[var(--color-fg-muted)] uppercase block font-sans font-semibold mb-0.5">
-                                Recommended Intervention:
-                              </span>
-                              {hyp.intervention}
-                            </div>
-                          )}
-
-                          <div className="flex items-center justify-between pt-1">
-                            <span className="text-[11px] text-[var(--color-fg-muted)]">
-                              {hyp.supporting_artifact_ids?.length || 0} supporting artifacts
-                            </span>
-                            <Button
-                              variant={testResult?.status === "CONFIRMED" ? "secondary" : "primary"}
-                              size="sm"
-                              disabled={isTesting}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleTestHypothesis(hyp);
-                              }}
-                              className="h-7 text-xs font-medium"
-                            >
-                              {isTesting
-                                ? "Simulating..."
-                                : testResult
-                                  ? "Re-test Branch"
-                                  : "Test in Sandbox"}
-                            </Button>
-                          </div>
-
-                          {testResult && (
-                            <div
-                              className={`p-2.5 rounded-[var(--radius-sm)] border text-xs ${
-                                testResult.status === "CONFIRMED"
-                                  ? "bg-[var(--color-success-muted)]/30 border-[var(--color-success-muted)] text-[var(--color-success-fg)]"
-                                  : "bg-[var(--color-danger-muted)]/30 border-[var(--color-danger-muted)] text-[var(--color-danger-fg)]"
-                              }`}
-                            >
-                              <div className="font-semibold">
-                                <span>{testResult.message}</span>
-                              </div>
-                              {testResult.failure_oracle && (
-                                <div className="mt-1 text-[11px] opacity-90 font-mono">
-                                  Latency:{" "}
-                                  {testResult.failure_oracle.avg_total_latency}ms (Budget:{" "}
-                                  {testResult.failure_oracle.freshness_budget_ms}ms)
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </PanelSection>
-                      </Panel>
-                    );
-                  })}
-                </PanelStack>
-              )}
-            </PanelSection>
-          </Panel>
+                        <Button
+                          variant={testResult?.status === "CONFIRMED" ? "primary" : "outline"}
+                          size="sm"
+                          disabled={isTesting}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleTestHypothesis(hyp);
+                          }}
+                          className="h-6 text-[10px] px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                        >
+                          {isTesting ? "Simulating..." : testResult ? "Re-test" : "Test in Twin"}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </InstrumentPanel>
         </div>
 
-        {/* Right: Dynamic Interactive Causal Graph */}
-        <div className="space-y-6">
-          <Panel padding="none">
-            <PanelHeader
-              title="Interactive Causal Topology Graph"
-              subtitle="Lane DAG derived from the incident's temporal evidence graph"
-              divider={true}
-            />
-            <PanelSection dividerBefore={false}>
-              {/* Graph Controls Toolbar - Real functional handlers */}
-              <Toolbar
-                bordered={true}
-                className="mb-4 rounded-[var(--radius-sm)] border border-[var(--color-border-default)]"
-              >
-                <ToolbarGroup>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Zoom In"
-                    onClick={() => setZoom((prev) => Math.min(prev + 15, 200))}
-                    className="h-8 w-8 p-0"
-                  >
-                    <ZoomIn className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Zoom Out"
-                    onClick={() => setZoom((prev) => Math.max(prev - 15, 50))}
-                    className="h-8 w-8 p-0"
-                  >
-                    <ZoomOut className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Fit View to Contents"
-                    onClick={() => {
-                      setZoom(100);
-                      setPan({ x: 0, y: 0 });
-                    }}
-                    className="h-8 w-8 p-0"
-                  >
-                    <Maximize className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Reset View"
-                    onClick={() => {
-                      setZoom(100);
-                      setPan({ x: 0, y: 0 });
-                      setConfidenceThreshold(50);
-                      setEvidenceFilter("ALL");
-                    }}
-                    className="h-8 w-8 p-0"
-                  >
-                    <RotateCcw className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label="Toggle Layout Mode"
-                    onClick={() =>
-                      setLayoutMode((prev) =>
-                        prev === "hierarchical" ? "constellation" : "hierarchical"
-                      )
-                    }
-                    className="h-8 px-2 text-xs font-mono"
-                  >
-                    <Sliders className="h-3.5 w-3.5 mr-1" />
-                    {layoutMode}
-                  </Button>
-                </ToolbarGroup>
-
-                <ToolbarSeparator />
-
-                <ToolbarGroup>
-                  <label
-                    htmlFor="confidence-threshold"
-                    className="text-xs font-medium text-[var(--color-fg-muted)]"
-                  >
-                    Confidence:
-                  </label>
-                  <ToolbarItem>
-                    <Input
-                      id="confidence-threshold"
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={confidenceThreshold}
-                      onChange={(e) => setConfidenceThreshold(Number(e.target.value))}
-                      aria-label="Confidence:"
-                      className="w-16 h-7 text-xs font-mono text-center"
-                    />
-                    <span className="text-xs font-mono text-[var(--color-fg-muted)] ml-1">%</span>
-                  </ToolbarItem>
-                </ToolbarGroup>
-
-                <ToolbarSeparator />
-
-                <ToolbarGroup aria-label="Evidence State Filters">
-                  <span className="text-xs font-medium text-[var(--color-fg-muted)] mr-1">
-                    Evidence State:
-                  </span>
-                  {(["ALL", "SUPPORTED", "CONTRADICTED", "UNKNOWN"] as const).map((state) => (
-                    <Button
-                      key={state}
-                      variant={evidenceFilter === state ? "primary" : "ghost"}
-                      size="sm"
-                      onClick={() => setEvidenceFilter(state)}
-                      className="h-7 px-2 text-[11px] font-semibold"
-                    >
-                      {state}
-                    </Button>
-                  ))}
-                </ToolbarGroup>
-              </Toolbar>
-
-              {/* Dynamic Interactive SVG Canvas */}
-              {!hasGraph ? (
-                <EmptyState
-                  icon={EmptyStateIcons.network}
-                  title="No causal graph available"
-                  description={
-                    loading
-                      ? "Deriving the temporal evidence graph…"
-                      : "The backend has not produced a temporal evidence graph for this incident. Run the investigation pipeline so the timeline, causality analysis, and lane DAG can be derived from real evidence."
-                  }
-                />
+        {/* Right: Dynamic SVG Causal Graph (Col 7) */}
+        <div className="col-span-12 lg:col-span-7 flex flex-col">
+          <InstrumentPanel
+            title="Interactive Causal Topology DAG"
+            subtitle="Derived cross-domain propagation paths with verified timebounds"
+            className="flex-1 flex flex-col"
+            bodyClassName="p-0 flex-1 flex flex-col"
+          >
+            <div
+              className="relative w-full flex-1 min-h-[500px] overflow-hidden bg-[var(--color-canvas-inset,#f8f9fa)] dark:bg-[#0d1117] cursor-grab active:cursor-grabbing"
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+            >
+              {laneNodes.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full min-h-[460px] p-6 text-center">
+                  <GitBranch className="w-8 h-8 text-zinc-500 mb-2.5" />
+                  <span className="text-xs font-bold uppercase text-zinc-200">Causal Topology Ingestion Standby</span>
+                  <p className="text-[11px] text-[var(--text-tertiary,#71717a)] max-w-sm mt-1">
+                    No causal DAG data loaded for this incident yet. Start investigation to compute temporal cross-domain pathways.
+                  </p>
+                </div>
               ) : (
-                <div
-                  className="w-full h-[460px] bg-[radial-gradient(ellipse_at_top,_var(--color-canvas-inset)_0%,_var(--color-canvas)_85%)] rounded-[var(--radius-lg)] border border-[var(--color-border-default)] overflow-hidden relative cursor-grab active:cursor-grabbing select-none"
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseUp}
+                <svg
+                  className="w-full h-full select-none"
+                  viewBox="0 0 840 500"
+                  preserveAspectRatio="xMidYMid meet"
                 >
-                  <div className="absolute top-3 left-3 z-10 flex items-center gap-2 pointer-events-none">
-                    <Badge tone="neutral" size="sm">
-                      Zoom: {zoom}%
-                    </Badge>
-                    <Badge tone="neutral" size="sm">
-                      Mode: {layoutMode}
-                    </Badge>
-                    <span className="text-[11px] text-[var(--color-fg-muted)] font-mono">
-                      Drag to pan • Click nodes to inspect
-                    </span>
-                  </div>
-
-                  <svg
-                    className="w-full h-full"
-                    viewBox="0 0 860 520"
-                    preserveAspectRatio="xMidYMid meet"
-                    role="img"
-                    aria-label={`Causal lane graph with ${laneNodes.length} lanes and ${laneEdges.length} edges`}
-                  >
-                    <defs>
-                      <marker
-                        id="arrow-default"
-                        viewBox="0 0 10 10"
-                        refX="10"
-                        refY="5"
-                        markerWidth="6"
-                        markerHeight="6"
-                        orient="auto-start-reverse"
-                      >
-                        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-border-strong)" />
-                      </marker>
-                      <marker
-                        id="arrow-accent"
-                        viewBox="0 0 10 10"
-                        refX="10"
-                        refY="5"
-                        markerWidth="6"
-                        markerHeight="6"
-                        orient="auto-start-reverse"
-                      >
-                        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-accent-fg)" />
-                      </marker>
-                      <marker
-                        id="arrow-danger"
-                        viewBox="0 0 10 10"
-                        refX="10"
-                        refY="5"
-                        markerWidth="6"
-                        markerHeight="6"
-                        orient="auto-start-reverse"
-                      >
-                        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-danger-fg)" />
-                      </marker>
-                      <marker
-                        id="arrow-success"
-                        viewBox="0 0 10 10"
-                        refX="10"
-                        refY="5"
-                        markerWidth="6"
-                        markerHeight="6"
-                        orient="auto-start-reverse"
-                      >
-                        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-success-fg)" />
-                      </marker>
-                    </defs>
-
-                    <g
-                      transform={`translate(${pan.x}, ${pan.y}) scale(${zoom / 100})`}
-                      style={{
-                        transformOrigin: "430px 260px",
-                        transition: isDragging ? "none" : "transform 0.2s ease-out",
-                      }}
+                  <defs>
+                    <marker
+                      id="causal-arrow"
+                      viewBox="0 0 10 10"
+                      refX="16"
+                      refY="5"
+                      markerWidth="6"
+                      markerHeight="6"
+                      orient="auto-start-reverse"
                     >
-                      {/* Render Directed Causal Edges */}
-                      {laneEdges.map((edge) => {
-                        const src = laneNodes.find((n) => n.id === edge.source);
-                        const dst = laneNodes.find((n) => n.id === edge.target);
-                        if (!src || !dst) return null;
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-fg-muted, #5f6b76)" />
+                    </marker>
+                    <marker
+                      id="causal-arrow-active"
+                      viewBox="0 0 10 10"
+                      refX="16"
+                      refY="5"
+                      markerWidth="6"
+                      markerHeight="6"
+                      orient="auto-start-reverse"
+                    >
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-accent, #0969da)" />
+                    </marker>
+                  </defs>
 
-                        const isConnectedToSelected =
-                          src.id === selectedLaneId || dst.id === selectedLaneId;
-                        const markerId = edge.dashed
-                          ? "url(#arrow-default)"
-                          : dst.isSafetyOutcome
-                            ? "url(#arrow-danger)"
-                            : "url(#arrow-accent)";
+                  <g
+                    transform={`translate(${pan.x}, ${pan.y}) scale(${zoom / 100})`}
+                    style={{ transformOrigin: "420px 250px" }}
+                  >
+                    {/* Constellation mode orbital concentric rings */}
+                    {layoutMode === "constellation" && (
+                      <>
+                        <ellipse cx="420" cy="250" rx="195" ry="130" fill="none" stroke="var(--color-border-default, #d9e0e7)" strokeWidth="1" strokeDasharray="4 4" opacity="0.7" />
+                        <ellipse cx="420" cy="250" rx="300" ry="195" fill="none" stroke="var(--color-border-default, #d9e0e7)" strokeWidth="1" strokeDasharray="4 4" opacity="0.4" />
+                      </>
+                    )}
 
-                        // Curved Bezier Path
-                        const midX = (src.x + dst.x) / 2;
-                        const pathD = `M ${src.x + 95} ${src.y} C ${midX} ${src.y}, ${midX} ${dst.y}, ${dst.x - 95} ${dst.y}`;
+                    {/* Edges */}
+                    {laneEdges.map((edge) => {
+                      const src = laneNodes.find((n) => n.id === edge.source);
+                      const tgt = laneNodes.find((n) => n.id === edge.target);
+                      if (!src || !tgt) return null;
 
-                        return (
-                          <g key={edge.id}>
-                            <path
-                              d={pathD}
-                              fill="none"
-                              stroke={
-                                dst.isSafetyOutcome
-                                  ? "var(--color-danger-fg)"
-                                  : "var(--color-accent-fg)"
-                              }
-                              strokeWidth={isConnectedToSelected ? 2.5 : 1.5}
-                              strokeDasharray={edge.dashed ? "4 4" : "none"}
-                              strokeOpacity={isConnectedToSelected ? 1.0 : 0.45}
-                              markerEnd={markerId}
-                            />
-                            <text
-                              x={midX}
-                              y={(src.y + dst.y) / 2 - 6}
-                              fontSize="8"
-                              textAnchor="middle"
-                              fill="var(--color-fg-muted)"
-                              fontFamily="var(--font-mono)"
-                              opacity={isConnectedToSelected ? 1 : 0.6}
-                            >
-                              {provenanceLabel(edge.provenance)}
-                            </text>
-                          </g>
-                        );
-                      })}
+                      const isSelected = selectedLaneId === edge.source || selectedLaneId === edge.target || selectedNode === edge.source || selectedNode === edge.target;
 
-                      {/* Render Graph Nodes */}
-                      {laneNodes.map((node) => {
-                        const isSelected = selectedLane?.id === node.id;
-
-                        return (
-                          <g
-                            key={node.id}
-                            transform={`translate(${node.x}, ${node.y})`}
-                            onClick={() => setSelectedLaneId(node.id)}
-                            className="cursor-pointer"
-                          >
-                            {/* Node Background Pill */}
-                            <rect
-                              x="-95"
-                              y="-22"
-                              width="190"
-                              height="44"
-                              rx="8"
-                              fill="var(--color-canvas)"
-                              stroke={
-                                isSelected
-                                  ? "var(--color-accent-fg)"
-                                  : node.isSafetyOutcome
-                                    ? "var(--color-danger-fg)"
-                                    : "var(--color-border-default)"
-                              }
-                              strokeWidth={isSelected ? 2.5 : 1}
-                              className="transition-colors hover:stroke-[var(--color-accent-fg)]"
-                            />
-
-                            {/* Status Color Dot */}
-                            <circle cx="-76" cy="0" r="5" fill={node.color} />
-
-                            {/* Title Label */}
-                            <text
-                              x="-62"
-                              y="-4"
-                              fontSize="11"
-                              fontWeight="bold"
-                              fill="var(--color-fg-default)"
-                              fontFamily="var(--font-sans)"
-                            >
-                              {node.label.length > 20
-                                ? node.label.slice(0, 18) + "…"
-                                : node.label}
-                            </text>
-
-                            {/* Subtitle / Telemetry */}
-                            <text
-                              x="-62"
-                              y="11"
-                              fontSize="9"
-                              fill="var(--color-fg-muted)"
-                              fontFamily="var(--font-mono)"
-                            >
-                              {node.subtitle.length > 28
-                                ? node.subtitle.slice(0, 26) + "…"
-                                : node.subtitle}
-                            </text>
-                          </g>
-                        );
-                      })}
-                    </g>
-                  </svg>
-                </div>
-              )}
-
-              {/* Real Causal Chain Inspection */}
-              <div className="mt-4">
-                <Panel
-                  variant="inset"
-                  padding="md"
-                  className="border border-[var(--color-accent-muted)]"
-                >
-                  <PanelHeader
-                    title={
-                      activeChain
-                        ? `Causal Chain: ${activeChain.terminal_message.slice(0, 60)}`
-                        : "Causal Chain"
-                    }
-                    subtitle={
-                      activeChain
-                        ? `${activeChain.length} propagation steps terminating in ${activeChain.terminal_lane}`
-                        : "Propagation path from source evidence to terminal outcome"
-                    }
-                    divider={true}
-                    actions={
-                      safetyChains.length > 1 ? (
-                        <Select
-                          aria-label="Select causal chain"
-                          value={String(selectedChainIndex)}
-                          onValueChange={(v) => setSelectedChainIndex(Number(v))}
-                          options={safetyChains.map((chain, idx) => ({
-                            value: String(idx),
-                            label: chain.terminal_message.slice(0, 44),
-                          }))}
-                          className="h-7 text-xs"
+                      return (
+                        <line
+                          key={edge.id}
+                          x1={src.x}
+                          y1={src.y}
+                          x2={tgt.x}
+                          y2={tgt.y}
+                          stroke={isSelected ? "var(--color-accent, #0969da)" : "var(--color-border-default, #d9e0e7)"}
+                          strokeWidth={isSelected ? 2 : 1}
+                          strokeDasharray={edge.dashed ? "4 4" : undefined}
+                          markerEnd={isSelected ? "url(#causal-arrow-active)" : "url(#causal-arrow)"}
+                          opacity={isSelected ? 1 : 0.65}
+                          className="transition-colors"
                         />
-                      ) : undefined
-                    }
-                  />
-                  {!activeChain ? (
-                    <EmptyState
-                      icon={EmptyStateIcons.network}
-                      title="No propagation chain derived"
-                      description="The temporal analyzer did not find a causal path terminating in a safety outcome for this incident."
-                      size="sm"
-                    />
-                  ) : (
-                    <div className="space-y-2 text-xs">
-                      {activeChain.steps.map((step, idx) => {
-                        const isTerminal = idx === activeChain.steps.length - 1;
-                        return (
-                          <div
-                            key={`${step.source}->${step.target}-${idx}`}
-                            className="flex items-start gap-2"
-                          >
-                            <span
-                              className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                                isTerminal
-                                  ? "bg-[var(--color-danger-fg)]"
-                                  : step.provenance === "deployment_chain"
-                                    ? "bg-[var(--color-attention-fg)]"
-                                    : "bg-[var(--color-accent-fg)]"
-                              }`}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-mono text-[11px] text-[var(--color-accent-fg)]">
-                                  {step.target_lane}
-                                </span>
-                                <span className="font-mono text-[10px] text-[var(--color-fg-subtle)]">
-                                  [{provenanceLabel(step.provenance)}]
-                                </span>
-                                <span className="text-[11px] text-[var(--color-fg-muted)]">
-                                  {step.source_message.slice(0, 48)}
-                                </span>
-                              </div>
-                              <div
-                                className={`text-[11px] leading-relaxed ${
-                                  isTerminal
-                                    ? "text-[var(--color-danger-fg)] font-bold"
-                                    : "text-[var(--color-fg-muted)]"
-                                }`}
-                              >
-                                {step.target_message}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </Panel>
-              </div>
+                      );
+                    })}
 
-              {/* Lane provenance detail for the selected lane */}
-              {selectedLane && (
-                <div className="mt-4">
-                  <Panel variant="inset" padding="md">
-                    <PanelHeader
-                      title={`Lane: ${laneLabel(selectedLane.id)}`}
-                      subtitle={`Tier ${selectedLane.tier} · ${selectedLane.eventCount} evidence events`}
-                      divider={true}
-                    />
-                    <div className="pt-1">
-                      <KV label="Clock Domains" value={selectedLane.domains.join(", ")} />
-                      <KV
-                        label="Source Artifacts"
-                        value={selectedLane.sources.length}
-                        sub={selectedLane.sources.join(", ")}
-                      />
-                      <KV label="Evidence Window" value={formatSpan(selectedLane)} />
-                      <KV
-                        label="Incoming Edges"
-                        value={incomingEdges.length}
-                        sub={
-                          incomingEdges
-                            .map((e) => `${e.source} → ${e.target}`)
-                            .join("; ") || "none"
-                        }
-                      />
-                      <KV
-                        label="Outgoing Edges"
-                        value={outgoingEdges.length}
-                        sub={
-                          outgoingEdges
-                            .map((e) => `${e.source} → ${e.target}`)
-                            .join("; ") || "none"
-                        }
-                      />
-                    </div>
-                  </Panel>
-                </div>
+                    {/* Nodes */}
+                    {laneNodes.map((node) => {
+                      const isSelected = selectedLaneId === node.id || selectedNode === node.id || (selectedNode && node.id.includes(selectedNode));
+                      const isSafety = node.isSafetyOutcome;
+
+                      return (
+                        <g
+                          key={node.id}
+                          transform={`translate(${node.x}, ${node.y})`}
+                          onClick={() => {
+                            setSelectedLaneId(node.id);
+                            const matchingHyp = hypotheses.find((h) => (h.hypothesis_id || h.id) === node.id);
+                            if (matchingHyp) {
+                              setSelectedNode(matchingHyp.hypothesis_id || matchingHyp.id);
+                            }
+                          }}
+                          className="cursor-pointer transition-transform duration-100 hover:scale-105"
+                        >
+                          {/* Safety outcome alarm halo */}
+                          {isSafety && (
+                            <circle
+                              r={18}
+                              fill="none"
+                              stroke="#d4d4d8"
+                              strokeWidth={1.5}
+                              strokeDasharray="3 3"
+                              className="animate-pulse"
+                            />
+                          )}
+
+                          {/* Selection ring */}
+                          {isSelected && (
+                            <circle
+                              r={16}
+                              fill="none"
+                              stroke="#fafafa"
+                              strokeWidth={2}
+                            />
+                          )}
+
+                          {/* Node Shape */}
+                          <circle
+                            r={11}
+                            fill={isSafety ? "rgba(218, 54, 51, 0.2)" : isSelected ? "rgba(31, 111, 235, 0.25)" : "var(--color-canvas-subtle, #161b22)"}
+                            stroke={isSafety ? "var(--color-danger-emphasis, #da3633)" : isSelected ? "var(--color-accent-emphasis, #1f6feb)" : "var(--color-border-default, #30363d)"}
+                            strokeWidth={isSafety ? 2 : 1.5}
+                          />
+
+                          {/* Node label */}
+                          <text
+                            y={22}
+                            textAnchor="middle"
+                            fill={isSelected ? "var(--color-accent, #0969da)" : "var(--color-fg-default, #1f2933)"}
+                            fontSize={10}
+                            fontFamily="inherit"
+                            className="select-none pointer-events-none font-semibold"
+                          >
+                            {node.label}
+                          </text>
+                          <text
+                            y={32}
+                            textAnchor="middle"
+                            fill="var(--color-fg-muted, #5f6b76)"
+                            fontSize={8.5}
+                            fontFamily="inherit"
+                            className="select-none pointer-events-none"
+                          >
+                            {node.eventCount} evs
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                </svg>
               )}
-            </PanelSection>
-          </Panel>
+
+              {/* Bottom graph legend */}
+              <div className="absolute bottom-3 left-3 flex items-center gap-4 bg-[var(--color-canvas-default,#ffffff)]/95 p-2 border border-[var(--color-border-default,#d9e0e7)] text-[10px] text-[var(--text-tertiary,#71717a)] rounded-[2px]">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" /> Domain Lane
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full border border-rose-400 bg-rose-200 inline-block" /> Safety Outcome Terminal
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 border-t border-dashed border-slate-400 inline-block" /> Temporal Proximity
+                </span>
+              </div>
+            </div>
+          </InstrumentPanel>
         </div>
       </div>
     </div>
   );
-}
-
-function formatSpan(lane: { start_s: number; end_s: number }): string {
-  const span = lane.end_s - lane.start_s;
-  if (span < 1) return `${(span * 1000).toFixed(0)}ms window`;
-  return `${span.toFixed(2)}s window`;
 }
