@@ -76,6 +76,9 @@ class LiveHarness:
         except urllib.error.HTTPError as exc:
             payload = exc.read()
             status = exc.code
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            payload = str(exc).encode("utf-8")
+            status = 503
         self.trace.append({
             "method": method,
             "path": path,
@@ -178,11 +181,17 @@ def run(keep: bool = False) -> Path | None:
     try:
         deadline = time.time() + 30
         while time.time() < deadline:
+            if server.poll() is not None:
+                output = server.stdout.read() if server.stdout else ""
+                print(f"Backend failed to start (exit code {server.returncode}):\n{output}", file=sys.stderr)
+                raise AssertionError(f"backend process exited prematurely with code {server.returncode}:\n{output}")
             status, _ = harness.request("GET", "/health")
             if status == 200:
                 break
             time.sleep(0.25)
         else:
+            output = server.stdout.read() if server.stdout else ""
+            print(f"Backend failed to become healthy within 30s:\n{output}", file=sys.stderr)
             raise AssertionError("backend did not become healthy")
         harness.authenticate()
 
@@ -203,11 +212,17 @@ def run(keep: bool = False) -> Path | None:
                 harness = LiveHarness(run_root, port)
                 deadline = time.time() + 30
                 while time.time() < deadline:
+                    if server.poll() is not None:
+                        output = server.stdout.read() if server.stdout else ""
+                        print(f"Backend failed to start after restart (exit code {server.returncode}):\n{output}", file=sys.stderr)
+                        raise AssertionError(f"backend process exited prematurely with code {server.returncode}:\n{output}")
                     status, _ = harness.request("GET", "/health")
                     if status == 200:
                         break
                     time.sleep(0.25)
                 else:
+                    output = server.stdout.read() if server.stdout else ""
+                    print(f"Backend failed to become healthy within 30s after restart:\n{output}", file=sys.stderr)
                     raise AssertionError("backend did not become healthy after restart")
                 harness.authenticate()
             source = run_root / f"{package.name}.zip"
@@ -263,6 +278,8 @@ def run(keep: bool = False) -> Path | None:
         output = server.stdout.read() if server.stdout else ""
         (run_root / "backend.log").write_text(output or "", encoding="utf-8")
         print(f"E2E evidence retained at {run_root}", file=sys.stderr)
+        if output:
+            print(f"Backend log:\n{output}", file=sys.stderr)
         raise
     finally:
         if server.poll() is None:

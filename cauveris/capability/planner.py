@@ -121,7 +121,13 @@ class CapabilityPlanner:
 
         for art in inventory_entries:
             p = bundle_path / art.relative_path
-            if art.detected_type in ("log", "text/plain") or "log" in art.relative_path.lower():
+            rel_lower = art.relative_path.lower()
+            is_log_candidate = (
+                art.detected_type in ("log", "text/plain", "jsonl", "ndjson")
+                or any(kw in rel_lower for kw in ("log", "event", "record", "trace", "journal", "packet"))
+                or rel_lower.endswith((".log", ".txt", ".ndjson", ".jsonl"))
+            )
+            if is_log_candidate:
                 try:
                     logs_text_parts.append(p.read_text(encoding="utf-8", errors="ignore")[:50000])
                 except Exception:
