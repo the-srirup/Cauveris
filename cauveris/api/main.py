@@ -155,7 +155,7 @@ async def startup_event():
         db_path=settings.auth_db_path,
     )
     auth_store = get_auth_store()
-    if auth_store and settings.demo_auth and settings.runtime_mode != "production":
+    if auth_store and (settings.demo_auth or settings.demo_mode) and settings.runtime_mode != "production":
         try:
             demo_org = await auth_store.get_org("org_demo")
             if not demo_org:

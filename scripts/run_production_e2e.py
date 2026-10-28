@@ -157,6 +157,7 @@ def run(keep: bool = False) -> Path | None:
     env = os.environ.copy()
     env.update({
         "CAUVERIS_DEMO_MODE": "true",
+        "CAUVERIS_DEMO_AUTH": "true",
         "CAUVERIS_EVIDENCE_STORE": str(evidence),
         "CAUVERIS_REPORT_STORE": str(reports),
         "CAUVERIS_JOB_QUEUE_BACKEND": "memory",
