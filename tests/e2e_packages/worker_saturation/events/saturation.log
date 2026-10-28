@@ -1,0 +1,3 @@
+2026-10-20T15:45:00Z INFO pool: request served in 48 ms
+2026-10-20T15:45:01Z ERROR pool: worker pool saturated; all 1 workers busy; requests queued behind the dependency
+2026-10-20T15:45:02Z ERROR pool: upstream request timed out after 500 ms; client deadline was 120 ms; work discarded

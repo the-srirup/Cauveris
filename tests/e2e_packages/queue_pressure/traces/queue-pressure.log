@@ -1,0 +1,2 @@
+2026-10-20T13:00:00Z INFO subscriber: consumer running at 10 Hz
+2026-10-20T13:00:01Z ERROR subscriber: queue overflow; 47 frames dropped; oldest retained frame is stale

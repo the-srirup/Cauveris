@@ -127,6 +127,7 @@ cython_debug
 # Logs and process outputs
 *.log
 *.out
+!tests/e2e_packages/**/*.log
 logs/*
 !logs/.gitkeep
 

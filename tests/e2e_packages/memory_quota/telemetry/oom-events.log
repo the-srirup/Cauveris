@@ -1,0 +1,2 @@
+2026-10-20T10:29:58Z INFO inference: request served in 42 ms
+2026-10-20T10:29:59Z ERROR inference: OOMKilled; memory limit 512 MiB exceeded; peak working set 1400 MiB
