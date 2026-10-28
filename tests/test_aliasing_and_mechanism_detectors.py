@@ -7,19 +7,9 @@ Verifies:
 - Adversarial tests where similar words do not trigger wrong mechanisms
 """
 
-import pytest
-from pathlib import Path
-from cauveris.analysis.evidence_aliaser import EvidenceAliaser, CANONICAL_SIGNALS
+from cauveris.analysis.evidence_aliaser import EvidenceAliaser
 from cauveris.analysis.mechanism_detectors import (
     MechanismDetectorRegistry,
-    ResourceExhaustionDetector,
-    DependencyTimeoutDetector,
-    LockContentionDetector,
-    QueueOverflowDetector,
-    TransportLossJitterDetector,
-    WorkerSaturationDetector,
-    ClockSkewDetector,
-    ArrivalOverloadDetector,
 )
 
 

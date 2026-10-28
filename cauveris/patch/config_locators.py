@@ -17,13 +17,12 @@ Does not use blind regex replacement for structured formats.
 
 from __future__ import annotations
 
-import io
 import json
 import logging
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import tomllib

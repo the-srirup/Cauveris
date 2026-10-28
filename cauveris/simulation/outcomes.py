@@ -88,7 +88,6 @@ def evaluate_simulation_outcomes(
 
     # 1. Invariant Thresholds
     freshness_budget = 120.0
-    control_deadline = 100.0
     stale_rate_threshold = 0.02
     deadline_miss_threshold = 0.02
 
@@ -98,7 +97,7 @@ def evaluate_simulation_outcomes(
             freshness_budget = f_inv.value
         d_inv = invariant_set.get_invariant("control_deadline")
         if d_inv and d_inv.value is not None:
-            control_deadline = d_inv.value
+            pass
 
     # Extract metrics
     stale_rate = float(metrics.get("stale_rate", 0.0))

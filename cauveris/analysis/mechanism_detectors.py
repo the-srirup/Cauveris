@@ -28,7 +28,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 

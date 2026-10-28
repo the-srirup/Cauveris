@@ -56,7 +56,6 @@ from cauveris.auth import (
     TokenType,
     LoginRequest,
     RegisterRequest,
-    PublicUserResponse,
     RefreshRequest,
     APIKeyCreateRequest,
     TokenResponse,
@@ -7003,7 +7002,7 @@ async def get_victory_replay(
 
     from cauveris.invariants import InvariantRegistry, InvariantAuthority
     from cauveris.simulation.outcomes import evaluate_simulation_outcomes
-    from cauveris.analysis.latency_decomposition import decompose_and_evaluate_latency, LatencyComponent
+    from cauveris.analysis.latency_decomposition import decompose_and_evaluate_latency
     from cauveris.verifier.atomic_checks import (
         evaluate_verification_level,
         VerificationLevel,

@@ -28,12 +28,10 @@ from cauveris.state_machine.orchestrator import (
     PipelineOrchestrator,
     PipelineContext,
     WorkflowStatus,
-    PipelineState,
 )
 from cauveris.datasets.golden_incident import GoldenIncidentGenerator
 from cauveris.schemas.patch import PatchCandidate, VerificationReport
-from cauveris.patch.package_builder import PatchPackageBuilder
-from cauveris.auth import get_auth_store, User, Organization, TokenType, TokenManager
+from cauveris.auth import get_auth_store, User, Organization, TokenManager
 from cauveris.config import get_settings
 
 
@@ -266,7 +264,7 @@ async def test_package_readiness_conflicts(setup_incident, test_user):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         # Mock orchestrator is running
         orch.current_state = "RUNNING"
-        res_running = await client.get(
+        await client.get(
             f"/api/v1/incidents/{incident_id}/download-patch-package",
             headers={"Authorization": f"Bearer {token}"},
         )

@@ -1,4 +1,3 @@
-import pytest
 from cauveris.analysis.latency_decomposition import (
     RepairStrategyType,
     decompose_and_evaluate_latency,

@@ -1,4 +1,3 @@
-import pytest
 from cauveris.analysis.model_inputs import (
     ModelInputBuilder,
     ModelInputKind,

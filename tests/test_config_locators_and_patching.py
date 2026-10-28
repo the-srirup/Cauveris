@@ -13,16 +13,8 @@ No blind regex replacement.
 """
 
 from pathlib import Path
-import pytest
 from cauveris.patch.config_locators import (
     ConfigLocatorRegistry,
-    YAMLConfigPlugin,
-    JSONConfigPlugin,
-    TOMLConfigPlugin,
-    INIConfigPlugin,
-    EnvFileConfigPlugin,
-    XMLConfigPlugin,
-    JavaPropertiesConfigPlugin,
 )
 
 

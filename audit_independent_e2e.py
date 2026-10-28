@@ -125,7 +125,7 @@ def parse_unified_diff(diff_text: str) -> list[tuple[str, bytes]]:
     while i < len(lines):
         line = lines[i]
         if line.startswith("--- "):
-            old = line[4:].rstrip("\n").split("\t")[0]
+            line[4:].rstrip("\n").split("\t")[0]
             if i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
                 new = lines[i + 1][4:].rstrip("\n").split("\t")[0]
                 path = new[2:] if new.startswith("a/") else new
@@ -196,16 +196,16 @@ def audit_package(package: Path, port: int, report_dir: Path) -> dict:
     name = package.name
     print(f"\n=== {name} ===")
     manifest = (package / "manifest.yaml").read_text(encoding="utf-8")
-    expected_id = next(l.split(":", 1)[1].strip() for l in manifest.splitlines()
-                       if l.strip().startswith("incident_id:"))
-    expected_mech = next(l.split(":", 1)[1].strip() for l in manifest.splitlines()
-                         if "expected_mechanism:" in l)
-    expected_key = next(l.split(":", 1)[1].strip() for l in manifest.splitlines()
-                        if "expected_key:" in l)
+    expected_id = next(line.split(":", 1)[1].strip() for line in manifest.splitlines()
+                       if line.strip().startswith("incident_id:"))
+    expected_mech = next(line.split(":", 1)[1].strip() for line in manifest.splitlines()
+                         if "expected_mechanism:" in line)
+    expected_key = next(line.split(":", 1)[1].strip() for line in manifest.splitlines()
+                        if "expected_key:" in line)
     expected_hyp = ""
-    for l in manifest.splitlines():
-        if "expected_hypothesis:" in l:
-            expected_hyp = l.split(":", 1)[1].strip()
+    for line in manifest.splitlines():
+        if "expected_hypothesis:" in line:
+            expected_hyp = line.split(":", 1)[1].strip()
 
     client = Client(port)
     # Demo mode is OFF for this run, so the seeded demo user does not exist.
@@ -284,7 +284,7 @@ def audit_package(package: Path, port: int, report_dir: Path) -> dict:
     elist = exps.get("experiments", [])
     (report_dir / f"{name}-experiments.json").write_text(
         json.dumps(elist, indent=2), encoding="utf-8")
-    baselines = [e for e in elist if "baseline" in str(e.get("branch_name", "")).lower()
+    [e for e in elist if "baseline" in str(e.get("branch_name", "")).lower()
                  or "baseline" in str(e.get("experiment_id", "")).lower()]
     # The pipeline models the baseline INSIDE each experiment's failure oracle
     # (failure_oracle.baseline) rather than as a separate experiment row.
@@ -376,7 +376,7 @@ def audit_package(package: Path, port: int, report_dir: Path) -> dict:
                    "bundle differs from uploaded original" if actually_changed else ""))
 
     # diff must reflect actual old->new for that file
-    diff_files = parse_unified_diff(diff_text)
+    parse_unified_diff(diff_text)
     diff_ok = False
     diff_detail = ""
     if target_rel and target_path and target_path.is_file():
@@ -459,7 +459,7 @@ def audit_package(package: Path, port: int, report_dir: Path) -> dict:
         applied_detail += f" | apply: {out2.strip()[-200:]}"
         checks.append(("patch applies to a FRESH copy via package installer",
                        applied_ok, applied_detail))
-        applied_pkg = {k: v for k, v in after_tree.items() if k in package_files}
+        {k: v for k, v in after_tree.items() if k in package_files}
         changed_pkg = sorted(k for k in package_files if after_tree.get(k) != before_tree.get(k))
         checks.append(("a package file is really modified on disk", bool(changed_pkg),
                        f"changed={changed_pkg}"))
@@ -520,8 +520,8 @@ def audit_package(package: Path, port: int, report_dir: Path) -> dict:
             o = orig_bytes.decode("utf-8", "replace")
             n = produced.decode("utf-8", "replace")
             leaf = expected_key.split(".")[-1]
-            o_leaf = [l.strip() for l in o.splitlines() if leaf in l]
-            n_leaf = [l.strip() for l in n.splitlines() if leaf in l]
+            o_leaf = [line.strip() for line in o.splitlines() if leaf in line]
+            n_leaf = [line.strip() for line in n.splitlines() if leaf in line]
             key_ok = (o != n) and bool(o_leaf) and bool(n_leaf) and o_leaf != n_leaf
             key_detail = f"expected_key={expected_key} before={o_leaf} after={n_leaf}"
     checks.append(("patch modifies the expected control parameter", key_ok, key_detail))

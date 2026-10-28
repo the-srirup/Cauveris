@@ -1,4 +1,3 @@
-import pytest
 from cauveris.invariants import (
     InvariantAuthority,
     InvariantRegistry,

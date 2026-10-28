@@ -22,9 +22,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from cauveris.analysis.evidence_aliaser import EvidenceAliaser, EvidenceMatch
-from cauveris.analysis.mechanism_detectors import MechanismDetectionResult, MechanismDetectorRegistry
-from cauveris.discovery.repo_discovery import DiscoveredRepository, RepositoryDiscovery
+from cauveris.analysis.evidence_aliaser import EvidenceAliaser
+from cauveris.analysis.mechanism_detectors import MechanismDetectorRegistry
 from cauveris.inventory.artifact_inventory import ArtifactEntry, ArtifactInventory
 from cauveris.patch.config_locators import ConfigLocatorRegistry
 

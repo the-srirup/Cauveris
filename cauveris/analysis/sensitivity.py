@@ -5,7 +5,7 @@ Bounded sensitivity analysis for model verification.
 from __future__ import annotations
 
 import logging
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from .model_inputs import (
@@ -28,11 +28,11 @@ def run_bounded_sensitivity_analysis(
     """
     Evaluates whether the repair remains robust across credible ranges of
     unsupported, assumed, or defaulted parameters.
-    
+
     evaluate_intervention_fn: takes param overrides dict -> returns (repaired: bool, metric_value: float)
     """
     reports: Dict[str, SensitivityAnalysisReport] = {}
-    
+
     # Determine parameters requiring sensitivity analysis
     if target_param_ids is None:
         target_param_ids = [
@@ -50,7 +50,7 @@ def run_bounded_sensitivity_analysis(
         policy = DEFAULT_PARAMETER_POLICIES.get(pid)
         if not policy:
             continue
-        
+
         credible_range = policy.get("credible_range")
         if not credible_range:
             continue
@@ -81,7 +81,7 @@ def run_bounded_sensitivity_analysis(
         variance = float(np.var(metrics)) if len(metrics) > 1 else 0.0
         has_reversal = reversals > 0
         sens_level = policy.get("sensitivity", SensitivityLevel.MEDIUM)
-        
+
         # If critical unknown/default input reverses repair success -> BLOCK verification
         blocks_verification = has_reversal and sens_level == SensitivityLevel.CRITICAL
         confidence_penalty = 0.4 if has_reversal else (0.1 if variance > 10.0 else 0.0)

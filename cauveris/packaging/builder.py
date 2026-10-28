@@ -18,26 +18,24 @@ The public entry point is :meth:`PackageBuilder.build`.
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import logging
-import os
 import shutil
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from cauveris.analysis.system_model import SystemModel
 from cauveris.config import get_settings
-from cauveris.packaging.manifest import build_manifest, BuiltManifest
+from cauveris.packaging.manifest import build_manifest
 from cauveris.packaging.models import (
-    MANIFEST_FORMAT,
     PackageError,
     PackageStatus,
     VerificationLevel,
+    compute_check_count,
     level_from_status_string,
 )
 from cauveris.packaging.storage import PackageStore
@@ -47,7 +45,7 @@ from cauveris.patch.unified_diff import reverse_unified_diff, apply_unified_diff
 from cauveris.schemas.experiment import Experiment
 from cauveris.schemas.hypothesis import Hypothesis
 from cauveris.schemas.incident import Incident
-from cauveris.schemas.patch import ConfigEdit, PatchCandidate, VerificationReport
+from cauveris.schemas.patch import PatchCandidate, VerificationReport
 
 logger = logging.getLogger(__name__)
 
@@ -490,11 +488,11 @@ class PackageBuilder:
         lines = [
             f"# Fix for Incident {incident_id}",
             "",
-            f"## Summary",
+            "## Summary",
             f"Patch candidate `{repair_id}` addresses root cause:",
             f"{causal_claim}",
             "",
-            f"## Changes",
+            "## Changes",
             f"- **Files changed**: {len(patch.affected_files)}",
             f"- **Lines changed**: {patch.lines_changed}",
             f"- **Parameters changed**: {config_params}",
@@ -547,9 +545,9 @@ class PackageBuilder:
             f"echo \"Reverting patch {repair_id} for incident {incident_id}...\"\n"
             f'if [ -f "rollback.patch" ]; then\n'
             f"    patch -p0 -R < rollback.patch || patch -p1 -R < rollback.patch\n"
-            f"elif [ -f "fix.patch" ]; then\n"
+            f'elif [ -f "fix.patch" ]; then\n'
             f"    patch -p0 -R < fix.patch || patch -p1 -R < fix.patch\n"
-            f"elif [ -f "apply_patch.py" ]; then\n"
+            f'elif [ -f "apply_patch.py" ]; then\n'
             f"    python apply_patch.py --rollback\n"
             f"else\n"
             f'    echo "Error: No rollback patch or script found" >&2\n'

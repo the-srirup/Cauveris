@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 
 logger = logging.getLogger(__name__)
 

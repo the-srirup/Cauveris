@@ -10,10 +10,8 @@ onto the canonical ladder.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from cauveris.packaging.models import (
@@ -21,7 +19,6 @@ from cauveris.packaging.models import (
     VerificationLevel,
     compute_check_count,
     compute_verification_level,
-    level_from_status_string,
 )
 from cauveris.schemas.patch import PatchCandidate, VerificationReport
 

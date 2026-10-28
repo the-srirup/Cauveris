@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
-from cauveris.invariants.units import are_units_compatible, normalize_value
+from cauveris.invariants.units import normalize_value
 
 
 class ModelInputKind(str, Enum):

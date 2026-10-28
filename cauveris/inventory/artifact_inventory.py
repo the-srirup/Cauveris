@@ -5,14 +5,19 @@ Does not execute any files during inspection.
 
 from __future__ import annotations
 
+import configparser
 import csv
 import hashlib
 import io
 import json
 import logging
+import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+import yaml
+from cauveris.security import scan_for_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +29,6 @@ except ImportError:
         import tomli as tomllib  # type: ignore[no-redef]
     except ImportError:
         tomllib = None  # type: ignore[assignment]
-
-import configparser
-import xml.etree.ElementTree as ET
-import yaml
-from cauveris.security import scan_for_secrets
 
 
 @dataclass
@@ -429,7 +429,7 @@ class ArtifactInventory:
                     record_count = sum(1 for _ in f)
                 parse_status = "parsed"
                 contributes_to_diag = True
-            except Exception as e:
+            except Exception:
                 parse_status = "failed"
         elif detected_type.startswith("source/"):
             parser_selected = "source_reader"

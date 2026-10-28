@@ -7,7 +7,6 @@ Validates that:
 3. Outcome semantics strictly differentiate mission vs safety.
 """
 
-import pytest
 from cauveris.analysis.model import (
     FAILURE_CONNECTION_POOL_EXHAUSTION,
     FAILURE_DEPENDENCY_TIMEOUT,
@@ -16,16 +15,12 @@ from cauveris.analysis.model import (
     TwinParameters,
     simulate_pipeline,
 )
-from cauveris.analysis.parameter_registry import FailureMechanism
 from cauveris.invariants import InvariantAuthority, InvariantRegistry
 from cauveris.simulation.outcomes import (
-    MissionOutcome,
     OverallOutcome,
     SafetyOutcome,
     evaluate_simulation_outcomes,
 )
-from cauveris.simulation.runner import CloudToRobotDigitalTwin, DigitalTwinFaultInjectors
-from cauveris.simulation.runs import BaselineRun, InterventionRun, compare_runs
 
 
 def test_mechanism_1_perception_freshness():
@@ -65,7 +60,7 @@ def test_mechanism_2_dependency_timeout():
     """Mechanism 2: Client Dependency Timeout."""
     reg = InvariantRegistry("INC-MECH-02")
     reg.register_candidate("request_timeout", 300.0, "ms", InvariantAuthority.RUNTIME_CONFIG)
-    inv_set = reg.build_invariant_set()
+    reg.build_invariant_set()
 
     # Baseline: slow inference / dependency exceeding 300ms timeout
     base_params = TwinParameters(
@@ -90,7 +85,7 @@ def test_mechanism_3_lock_contention():
     """Mechanism 3: Contended Lock Timeout."""
     reg = InvariantRegistry("INC-MECH-03")
     reg.register_candidate("max_lock_wait", 50.0, "ms", InvariantAuthority.RUNTIME_CONFIG)
-    inv_set = reg.build_invariant_set()
+    reg.build_invariant_set()
 
     # Baseline: lock hold is 80ms, but timeout is 50ms with 100% contention
     base_params = TwinParameters(
@@ -115,7 +110,7 @@ def test_mechanism_4_resource_exhaustion():
     """Mechanism 4: Process Memory Limit OOM Kill."""
     reg = InvariantRegistry("INC-MECH-04")
     reg.register_candidate("memory_limit", 512.0, "MB", InvariantAuthority.RUNTIME_CONFIG)
-    inv_set = reg.build_invariant_set()
+    reg.build_invariant_set()
 
     # Baseline: demand 768MB > limit 512MB -> pressure 1.5 > 1.0 -> OOM Kill
     base_params = TwinParameters(
@@ -138,7 +133,7 @@ def test_mechanism_5_connection_pool_exhaustion():
     """Mechanism 5: Database Connection Pool Exhaustion."""
     reg = InvariantRegistry("INC-MECH-05")
     reg.register_candidate("worker_capacity", 10.0, "workers", InvariantAuthority.RUNTIME_CONFIG)
-    inv_set = reg.build_invariant_set()
+    reg.build_invariant_set()
 
     # Baseline: demand 15 connections > pool size 10
     base_params = TwinParameters(
@@ -161,7 +156,7 @@ def test_mechanism_6_queue_and_worker_saturation():
     """Mechanism 6: Queue Overflow & Worker Saturation."""
     reg = InvariantRegistry("INC-MECH-06")
     reg.register_candidate("queue_capacity", 2.0, "items", InvariantAuthority.RUNTIME_CONFIG)
-    inv_set = reg.build_invariant_set()
+    reg.build_invariant_set()
 
     # Baseline: high arrival rate with 1 worker and tiny buffer -> high backlog / saturation
     base_params = TwinParameters(

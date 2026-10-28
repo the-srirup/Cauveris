@@ -1,4 +1,3 @@
-import pytest
 from cauveris.simulation.outcomes import (
     MissionOutcome,
     OverallOutcome,

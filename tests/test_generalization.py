@@ -15,7 +15,6 @@ Tests unfamiliar bundles across multiple mechanisms.
 """
 
 from pathlib import Path
-import pytest
 from cauveris.analysis.mechanism_detectors import MechanismDetectorRegistry
 from cauveris.analysis.evidence_aliaser import EvidenceAliaser
 

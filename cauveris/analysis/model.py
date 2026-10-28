@@ -340,7 +340,7 @@ def simulate_pipeline(
     lock_timeout_s = max(0.0, params.lock_timeout_ms) / 1000.0
     db_pool_size = max(0.0, params.db_pool_size)
     db_demand_connections = max(0.0, params.db_demand_connections)
-    db_conn_timeout_s = max(0.0, params.db_connection_timeout_ms) / 1000.0
+    max(0.0, params.db_connection_timeout_ms) / 1000.0
 
     total_end_s = warmup_s + duration_s
     measure_from_s = warmup_s

@@ -17,7 +17,7 @@ import logging
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Set
 
 from cauveris.packaging.models import MANIFEST_FORMAT
 
@@ -241,7 +241,7 @@ def validate_package_archive(zip_bytes: bytes) -> ValidationReport:
         if manifest.get(marker) is True:
             report.failed(
                 "sample_package",
-                f"Package is marked as a sample/demonstration, not a real build",
+                "Package is marked as a sample/demonstration, not a real build",
                 "manifest.json",
             )
 

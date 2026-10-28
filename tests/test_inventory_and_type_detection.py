@@ -5,11 +5,8 @@ Ensures no uploaded files are executed during detection and all files appear in 
 
 import json
 from pathlib import Path
-import pytest
-import yaml
 
 from cauveris.inventory.artifact_inventory import (
-    ArtifactEntry,
     ArtifactInventory,
     ContentTypeDetector,
 )

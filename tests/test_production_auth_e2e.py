@@ -15,12 +15,11 @@ Validates:
 
 import pytest
 import sqlite3
-import os
 import uuid
 from httpx import AsyncClient, ASGITransport
 
 from cauveris.api.main import app
-from cauveris.auth import get_auth_store, init_auth_store, SQLiteAuthStore
+from cauveris.auth import init_auth_store
 from cauveris.config import get_settings, Settings
 from cauveris.schemas.incident import Incident
 

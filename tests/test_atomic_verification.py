@@ -1,4 +1,3 @@
-import pytest
 from cauveris.verifier.atomic_checks import (
     AtomicCheckRecord,
     CheckStatus,

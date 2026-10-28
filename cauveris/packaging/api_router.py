@@ -31,7 +31,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -48,16 +47,13 @@ from cauveris.api.deps import get_current_user
 from cauveris.auth import get_auth_store, AuditLogEntry
 from cauveris.packaging import PackageBuilder, PackageStore
 from cauveris.packaging.models import (
-    PACKAGE_ERRORS,
     PackageError,
     PackageStatus,
     RepairPackageRecord,
-    VerificationLevel,
-    compute_verification_level,
 )
 from cauveris.packaging.validation import validate_package_archive
 from cauveris.state_machine.orchestrator import WorkflowStatus, pipeline_contexts, pipeline_tasks
-from cauveris.schemas.patch import PatchCandidate, VerificationReport
+from cauveris.schemas.patch import PatchCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -794,7 +790,7 @@ def _check_pipeline_state(
 ) -> None:
     """Check the pipeline's current state and raise 409/500 if appropriate."""
     ctx = pipeline_contexts.get(incident_id)
-    orch = pipeline_tasks.get(incident_id)
+    pipeline_tasks.get(incident_id)
 
     if ctx and getattr(ctx, "workflow_status", None) == WorkflowStatus.PACKAGE_BUILDING:
         raise HTTPException(

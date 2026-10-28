@@ -372,7 +372,7 @@ class Settings:
 
     def validate_production_security(self) -> None:
         """Validate production security invariants.
-        
+
         Strictly forbids running with insecure demo authentication, insecure demo mode,
         or default development secrets in production runtime mode.
         """
