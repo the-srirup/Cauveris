@@ -1021,7 +1021,6 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
     from cauveris.ingestion.controller import IngestionController
     import json
     from pathlib import Path
-    from cauveris.schemas.incident import Incident
 
     # Hypothesis/Experiment/PatchCandidate/VerificationReport are already
     # module-level imports (lines above); re-importing them here shadowed the
@@ -1076,7 +1075,7 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
         except RuntimeError:
             # No running loop (worker process / script context) — direct.
             incident = asyncio.run(coro)
-    except Exception as exc:
+    except Exception:
         # Never convert a failed read into a synthetic incident. Callers must
         # receive the backend error and keep the UI in an honest error state.
         logger.exception("Failed to load incident %s from evidence store", incident_id)
