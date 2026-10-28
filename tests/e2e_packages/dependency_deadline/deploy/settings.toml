@@ -1,0 +1,12 @@
+[dynamic_batching]
+batching_window_ms = 220
+max_batch_size = 8
+
+[server]
+worker_count = 1
+service_base_ms = 10
+service_per_item_ms = 5
+request_timeout_ms = 120
+
+[safety]
+detection_freshness_budget_ms = 400

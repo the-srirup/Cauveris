@@ -1,0 +1,9 @@
+qos:
+  queue_depth: 8
+  history: KEEP_ALL
+consumer:
+  consumer_rate_hz: 10
+producer:
+  arrival_rate_hz: 30
+safety:
+  detection_freshness_budget_ms: 400

@@ -1,0 +1,9 @@
+network:
+  link_latency_ms: 180
+  link_jitter_ms: 65
+  packet_loss_rate: 0.08
+safety:
+  detection_freshness_budget_ms: 150
+dynamic_batching:
+  batching_window_ms: 20
+  max_batch_size: 4

@@ -339,7 +339,7 @@ class ReportGenerator:
             "details": report.details,
         }
 
-    async def _generate_patch_package(
+    async def _generate_legacy_patch_package(
         self,
         incident_id: str,
         patch: PatchCandidate,

@@ -1,0 +1,13 @@
+incident_id: E2E-MEMORY-4821
+title: Inference worker memory envelope exhaustion
+description: A compact unfamiliar bundle with a real OOM kill and patchable quota.
+system_name: atlas-memory-worker
+required_evidence:
+  - config/worker.yaml
+  - telemetry/oom-events.log
+  - telemetry/heap.csv
+e2e:
+  family: memory_or_resource_exhaustion
+  expected_mechanism: resource_exhaustion
+  expected_hypothesis: h_memory_exhaustion
+  expected_key: resources.memory_limit_mb

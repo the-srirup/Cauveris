@@ -52,7 +52,7 @@ from cauveris.packaging.models import (
     RepairPackageRecord,
 )
 from cauveris.packaging.validation import validate_package_archive
-from cauveris.state_machine.orchestrator import WorkflowStatus, pipeline_contexts, pipeline_tasks
+from cauveris.state_machine.orchestrator import WorkflowStatus
 from cauveris.schemas.patch import PatchCandidate
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,22 @@ def _safe_name(value: str) -> str:
     text = str(value).strip().replace("/", "_").replace("\\", "_")
     text = re.sub(r"[^A-Za-z0-9._-]", "_", text)
     return text[:128] or "unknown"
+
+
+def _get_pipeline_context(incident_id: str) -> Any:
+    try:
+        from cauveris.api.main import pipeline_contexts
+        return pipeline_contexts.get(incident_id)
+    except Exception:
+        return None
+
+
+def _get_pipeline_task(incident_id: str) -> Any:
+    try:
+        from cauveris.api.main import pipeline_tasks
+        return pipeline_tasks.get(incident_id)
+    except Exception:
+        return None
 
 
 def _ensure_incident(request: Request, incident_id: str) -> Any:
@@ -289,7 +305,7 @@ async def request_repair_package(
         )
 
     # Resolve candidates.
-    ctx = pipeline_contexts.get(incident_id)
+    ctx = _get_pipeline_context(incident_id)
     candidates: List[PatchCandidate] = (
         getattr(ctx, "patch_candidates", None) if ctx else None
     ) or getattr(incident, "patch_candidates", []) or []
@@ -341,7 +357,7 @@ async def request_repair_package(
         )
 
     # Check pipeline state.
-    orch = pipeline_tasks.get(incident_id)
+    orch = _get_pipeline_task(incident_id)
     if orch and orch.is_running():
         raise HTTPException(
             status_code=409,
@@ -495,7 +511,7 @@ async def get_repair_package(
             detail={"error": "incident_not_found", "incident_id": incident_id},
         )
 
-    _check_access(request, incident, user_id, org_id, user, "repair_package.get", incident_id)
+    await _check_access(request, incident, user_id, org_id, user, "repair_package.get", incident_id)
 
     store = PackageStore()
     record = store.get_latest(incident_id, repair_id)
@@ -535,7 +551,7 @@ def _record_to_response(rec: RepairPackageRecord) -> Dict[str, Any]:
     }
 
 
-def _check_access(
+async def _check_access(
     request: Request,
     incident: Any,
     user_id: str,
@@ -552,12 +568,12 @@ def _check_access(
 
     if not is_admin:
         if owner_org and owner_org != org_id:
-            _deny(auth_store, user, org_id, action, incident_id, owner_user,
-                  request, "Cross-organization incident access denied")
+            await _deny(auth_store, user, org_id, action, incident_id, owner_user,
+                        request, "Cross-organization incident access denied")
             raise HTTPException(status_code=403, detail={"error": "access_denied", "incident_id": incident_id})
         if owner_user and owner_user != user_id and not user.has_permission("patch:read"):
-            _deny(auth_store, user, org_id, action, incident_id, owner_user,
-                  request, "Not authorized to access repair package")
+            await _deny(auth_store, user, org_id, action, incident_id, owner_user,
+                        request, "Not authorized to access repair package")
             raise HTTPException(status_code=403, detail={"error": "access_denied", "incident_id": incident_id})
 
 
@@ -617,7 +633,7 @@ async def download_repair_package(
             detail={"error": "incident_not_found", "incident_id": incident_id},
         )
 
-    _check_access(request, incident, user_id, org_id, user, "patch.download", incident_id)
+    await _check_access(request, incident, user_id, org_id, user, "patch.download", incident_id)
 
     # Check pipeline state for 409/500.
     _check_pipeline_state(request, incident_id, auth_store, user, user_id, org_id, repair_id)
@@ -789,8 +805,7 @@ def _check_pipeline_state(
     repair_id: str,
 ) -> None:
     """Check the pipeline's current state and raise 409/500 if appropriate."""
-    ctx = pipeline_contexts.get(incident_id)
-    pipeline_tasks.get(incident_id)
+    ctx = _get_pipeline_context(incident_id)
 
     if ctx and getattr(ctx, "workflow_status", None) == WorkflowStatus.PACKAGE_BUILDING:
         raise HTTPException(

@@ -1,0 +1,5 @@
+QUEUE_DEPTH = 32
+CONSUMER_RATE_HZ = 2
+
+def queue_policy():
+    return QUEUE_DEPTH, CONSUMER_RATE_HZ

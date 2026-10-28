@@ -1,0 +1,12 @@
+incident_id: E2E-QUEUE-2637
+title: Subscriber queue overflow and backpressure
+description: A separate queue topology with a bounded consumer buffer and measured backlog.
+system_name: delta-camera-subscriber
+required_evidence:
+  - config/consumer.yaml
+  - traces/queue-pressure.log
+e2e:
+  family: queue_overflow_or_consumer_backpressure
+  expected_mechanism: subscriber_backpressure
+  expected_hypothesis: h_subscriber_buffer_staleness
+  expected_key: qos.queue_depth

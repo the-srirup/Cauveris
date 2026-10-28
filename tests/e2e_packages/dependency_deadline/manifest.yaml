@@ -1,0 +1,12 @@
+incident_id: E2E-TIMEOUT-7394
+title: Upstream dependency deadline cancellation
+description: An unfamiliar TOML deployment with a reproducible dependency timeout.
+system_name: borealis-api-gateway
+required_evidence:
+  - deploy/settings.toml
+  - records/upstream.ndjson
+e2e:
+  family: dependency_timeout
+  expected_mechanism: dependency_timeout
+  expected_hypothesis: h_dependency_timeout
+  expected_key: server.request_timeout_ms

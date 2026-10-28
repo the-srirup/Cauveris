@@ -116,7 +116,8 @@ class YAMLConfigPlugin(ConfigLocatorPlugin):
         text = file_path.read_text(encoding="utf-8")
         from cauveris.analysis.parameters import replace_yaml_scalar
         res = replace_yaml_scalar(text, key_path, new_value)
-        return res[0] if isinstance(res, tuple) else res
+        val = res[0] if isinstance(res, tuple) else res
+        return val if val is not None else text
 
     def _flatten(self, d: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
         items: Dict[str, Any] = {}
@@ -167,7 +168,8 @@ class JSONConfigPlugin(ConfigLocatorPlugin):
         text = file_path.read_text(encoding="utf-8")
         from cauveris.analysis.parameters import replace_json_scalar
         res = replace_json_scalar(text, key_path, new_value)
-        return res[0] if isinstance(res, tuple) else res
+        val = res[0] if isinstance(res, tuple) else res
+        return val if val is not None else text
 
     def _flatten(self, d: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
         items: Dict[str, Any] = {}
@@ -283,7 +285,8 @@ class INIConfigPlugin(ConfigLocatorPlugin):
         text = file_path.read_text(encoding="utf-8")
         from cauveris.analysis.parameters import replace_sectioned_scalar
         res = replace_sectioned_scalar(text, key_path, new_value)
-        return res[0] if isinstance(res, tuple) else res
+        val = res[0] if isinstance(res, tuple) else res
+        return val if val is not None else text
 
 
 class EnvFileConfigPlugin(ConfigLocatorPlugin):

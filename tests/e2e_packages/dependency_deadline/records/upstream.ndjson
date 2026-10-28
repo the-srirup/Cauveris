@@ -1,0 +1,2 @@
+{"ts":"2026-10-20T11:01:58Z","level":"info","message":"request served in 42 ms"}
+{"ts":"2026-10-20T11:01:59Z","level":"error","message":"upstream request timed out after 500 ms; client deadline was 120 ms; work discarded"}

@@ -38,7 +38,7 @@ def run_bounded_sensitivity_analysis(
         target_param_ids = [
             pid for pid, inp in input_set.inputs.items()
             if inp.sensitivity in (SensitivityLevel.MEDIUM, SensitivityLevel.HIGH, SensitivityLevel.CRITICAL)
-            and inp.kind in (ModelInputKind.EXPLICIT_DEFAULT, ModelInputKind.INFERRED, ModelInputKind.ASSUMED)
+            and inp.kind in (ModelInputKind.EXPLICIT_DEFAULT, ModelInputKind.INFERRED)
         ]
 
     base_overrides = {

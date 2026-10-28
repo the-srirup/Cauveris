@@ -1,0 +1,12 @@
+incident_id: E2E-LOCK-6158
+title: Storage lock acquisition timeout
+description: A distinct INI bundle where a shared lock outlives the acquire deadline.
+system_name: cinder-storage-agent
+required_evidence:
+  - config/agent.ini
+  - journal/lock-events.txt
+e2e:
+  family: lock_contention
+  expected_mechanism: lock_contention
+  expected_hypothesis: h_lock_contention
+  expected_key: storage.lock_timeout_ms

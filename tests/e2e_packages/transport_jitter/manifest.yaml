@@ -1,0 +1,13 @@
+incident_id: E2E-TRANSPORT-8842
+title: Transport loss and excessive link jitter
+description: A network-focused bundle with real link observations and a patchable path setting.
+system_name: echo-telemetry-link
+required_evidence:
+  - deploy/link.yaml
+  - observations/packet-log.txt
+  - observations/network-latency.csv
+e2e:
+  family: transport_loss_or_excessive_jitter
+  expected_mechanism: transport_latency
+  expected_hypothesis: h_transport_latency
+  expected_key: network.link_latency_ms

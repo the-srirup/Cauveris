@@ -1,0 +1,12 @@
+incident_id: E2E-WORKERS-9416
+title: Inference worker-pool saturation
+description: A distinct service bundle whose arrival rate outruns its worker pool.
+system_name: foxtrot-inference-pool
+required_evidence:
+  - config/pool.yaml
+  - events/saturation.log
+e2e:
+  family: worker_pool_or_service_saturation
+  expected_mechanism: dependency_timeout
+  expected_hypothesis: h_dependency_timeout
+  expected_key: server.worker_count

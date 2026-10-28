@@ -145,12 +145,9 @@ class PackageStore:
         if prior:
             build_number = max(p.get("build_number", 0) for p in prior) + 1
 
-        # Mark any prior READY/STAGING-VERIFIED record STALE.
+        # Mark any prior READY record STALE.
         for entry in prior:
-            if entry.get("status") in (
-                PackageStatus.READY.value,
-                PackageStatus.STAGING_VERIFIED.value,
-            ):
+            if entry.get("status") == PackageStatus.READY.value:
                 entry["status"] = PackageStatus.STALE.value
 
         record = RepairPackageRecord(
