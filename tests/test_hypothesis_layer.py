@@ -318,7 +318,7 @@ class _StubGateway(ModelGateway):
         self.provider = provider
         self.prompts: List[str] = []
 
-    async def generate(self, prompt, schema=None, temperature=0.7, max_tokens=None):
+    async def generate(self, prompt, schema=None, temperature=0.7, max_tokens=None, **kwargs):
         self.prompts.append(prompt)
         return ModelResponse(
             content="The batching window was widened to 200 ms in v42.",

@@ -8,8 +8,21 @@ export interface SystemStatusData {
   backendLatencyMs?: number;
   worker: "online" | "busy" | "idle" | "offline";
   storage: "healthy" | "warning" | "error";
-  nebiusProvider: "live" | "fallback" | "offline";
+  nebiusProvider:
+    | "live"
+    | "fallback"
+    | "offline"
+    | "NEBIUS_NVIDIA_ACTIVE"
+    | "NEBIUS_NVIDIA_DEGRADED"
+    | "LOCAL_DETERMINISTIC_ONLY"
+    | "PROVIDER_UNAVAILABLE"
+    | "CONFIGURATION_INVALID"
+    | "RATE_LIMITED"
+    | string;
   nebiusModel?: string;
+  circuitBreakerState?: "CLOSED" | "OPEN" | "HALF_OPEN" | string;
+  lastCallLatencyMs?: number;
+  dailyBudgetUsed?: number;
   activeJobsCount?: number;
 }
 
@@ -24,24 +37,58 @@ export function SystemPulse({
   className = "",
   ...props
 }: SystemPulseProps) {
+  const isGreen = (state: string) =>
+    state === "online" ||
+    state === "healthy" ||
+    state === "live" ||
+    state === "idle" ||
+    state === "NEBIUS_NVIDIA_ACTIVE";
+
+  const isAmber = (state: string) =>
+    state === "degraded" ||
+    state === "warning" ||
+    state === "fallback" ||
+    state === "busy" ||
+    state === "LOCAL_DETERMINISTIC_ONLY" ||
+    state === "NEBIUS_NVIDIA_DEGRADED";
+
   const getTone = (state: string) => {
-    if (state === "online" || state === "healthy" || state === "live" || state === "idle") {
+    if (isGreen(state)) {
       return "text-emerald-800 bg-emerald-50/60 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-300 dark:border-emerald-800";
     }
-    if (state === "degraded" || state === "warning" || state === "fallback" || state === "busy") {
+    if (isAmber(state)) {
       return "text-amber-800 bg-amber-50/60 border-amber-200 dark:bg-amber-950/20 dark:text-amber-300 dark:border-amber-800";
     }
     return "text-rose-800 bg-rose-50/60 border-rose-200 dark:bg-rose-950/20 dark:text-rose-300 dark:border-rose-800";
   };
 
   const getDot = (state: string) => {
-    if (state === "online" || state === "healthy" || state === "live" || state === "idle") {
+    if (isGreen(state)) {
       return "bg-emerald-500";
     }
-    if (state === "degraded" || state === "warning" || state === "fallback" || state === "busy") {
+    if (isAmber(state)) {
       return "bg-amber-500";
     }
     return "bg-rose-500";
+  };
+
+  const formatModelLabel = (providerState: string) => {
+    if (providerState === "NEBIUS_NVIDIA_ACTIVE" || providerState === "live") {
+      return "Nebius NVIDIA";
+    }
+    if (providerState === "LOCAL_DETERMINISTIC_ONLY" || providerState === "fallback") {
+      return "Deterministic";
+    }
+    if (providerState === "CONFIGURATION_INVALID") {
+      return "Config Invalid";
+    }
+    if (providerState === "PROVIDER_UNAVAILABLE") {
+      return "Provider Down";
+    }
+    if (providerState === "RATE_LIMITED") {
+      return "Rate Limited";
+    }
+    return providerState;
   };
 
   if (compact) {
@@ -53,16 +100,29 @@ export function SystemPulse({
       >
         <span className="flex items-center gap-1.5">
           <span className={`w-2 h-2 rounded-full ${getDot(status.backend)}`} />
-          <span className="font-medium">API: {status.backend} {status.backendLatencyMs ? `(${status.backendLatencyMs}ms)` : ""}</span>
+          <span className="font-medium">
+            API: {status.backend} {status.backendLatencyMs ? `(${status.backendLatencyMs}ms)` : ""}
+          </span>
         </span>
         <span className="text-[var(--color-border-default,#d9e0e7)]">|</span>
         <span className="flex items-center gap-1.5">
           <span className={`w-2 h-2 rounded-full ${getDot(status.nebiusProvider)}`} />
-          <span className="font-medium">LLM: {status.nebiusProvider}</span>
+          <span className="font-medium" title={status.nebiusModel || "NVIDIA Nemotron"}>
+            LLM: {formatModelLabel(status.nebiusProvider)}
+          </span>
         </span>
       </div>
     );
   }
+
+  const modelTooltip = [
+    status.nebiusModel ? `Model: ${status.nebiusModel}` : "Model: nvidia/Llama-3.1-Nemotron-70B-Instruct-HF",
+    `State: ${status.nebiusProvider}`,
+    status.circuitBreakerState ? `Circuit: ${status.circuitBreakerState}` : null,
+    status.dailyBudgetUsed !== undefined ? `Daily Cost: $${status.dailyBudgetUsed.toFixed(4)}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   return (
     <div
@@ -100,14 +160,18 @@ export function SystemPulse({
       </div>
 
       {/* Model Gateway */}
-      <div className={`p-2.5 border rounded-[var(--radius-md,6px)] flex items-center justify-between ${getTone(status.nebiusProvider)}`}>
+      <div
+        className={`p-2.5 border rounded-[var(--radius-md,6px)] flex items-center justify-between cursor-help ${getTone(status.nebiusProvider)}`}
+        title={modelTooltip}
+      >
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 shrink-0" />
           <span className="font-semibold text-xs">MODEL GATEWAY</span>
         </div>
-        <span className="text-xs font-mono font-medium truncate max-w-[85px]" title={status.nebiusModel || status.nebiusProvider}>
-          {status.nebiusProvider}
-        </span>
+        <div className="flex items-center gap-1.5 font-mono text-xs font-medium truncate max-w-[110px]">
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getDot(status.nebiusProvider)}`} />
+          <span className="truncate">{formatModelLabel(status.nebiusProvider)}</span>
+        </div>
       </div>
 
       {/* Active Jobs */}

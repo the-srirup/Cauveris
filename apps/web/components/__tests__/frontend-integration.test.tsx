@@ -36,7 +36,7 @@ describe("Frontend Real-Backend Integration Contracts", () => {
 
     // Should display welcome screen with 3 clear entry paths
     expect(await screen.findByText(/Welcome to Cauveris Reality Debugger/i)).toBeInTheDocument();
-    expect(screen.getByText(/Upload Incident Package/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Upload Incident Package/i).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/Create Incident Workspace/i)).toBeInTheDocument();
     expect(screen.getByText(/Load Sample Incident/i)).toBeInTheDocument();
   });
@@ -90,7 +90,7 @@ describe("Frontend Real-Backend Integration Contracts", () => {
     fireEvent.click(loadSampleBtn);
 
     await waitFor(() => {
-      expect(screen.getByText(/Golden Benchmark \[CAU-0001\]/i)).toBeInTheDocument();
+      expect(screen.getByText(/Golden Benchmark Incident/i)).toBeInTheDocument();
     });
   });
 
@@ -100,6 +100,8 @@ describe("Frontend Real-Backend Integration Contracts", () => {
 
     render(<MissionControl />);
 
-    expect(await screen.findByText(/UNAVAILABLE/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/UNAVAILABLE/i)).toBeInTheDocument();
+    });
   });
 });

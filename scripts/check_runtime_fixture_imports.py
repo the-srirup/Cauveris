@@ -9,7 +9,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "cauveris"
-FORBIDDEN = ("mocks", "fixtures", "__tests__", "golden_incident", "sample_results")
+FORBIDDEN = (
+    "mocks",
+    "mock",
+    "fixtures",
+    "fixture",
+    "__tests__",
+    "golden_incident",
+    "sample_results",
+    "precomputed_reports",
+    "precomputed_patch_packages",
+    "tests.",
+    "pytest",
+)
 EXPLICIT_SAMPLE_LOADER = RUNTIME / "api" / "sample_loader.py"
 
 

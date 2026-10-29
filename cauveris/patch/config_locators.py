@@ -447,6 +447,41 @@ class XMLConfigPlugin(ConfigLocatorPlugin):
             return pattern.sub(rf"\g<1>{new_value}\g<3>", text, count=1)
 
 
+class SourceCodeConfigPlugin(ConfigLocatorPlugin):
+    """Handles source code (.py, .ts, .js, .go, .rs, .cpp, .java) targeted scalar replacements."""
+
+    @property
+    def format_name(self) -> str:
+        return "source"
+
+    def can_handle(self, file_path: Path, content_sample: str) -> bool:
+        return file_path.suffix.lower() in (
+            ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".cpp", ".c", ".h", ".java"
+        )
+
+    def locate_parameter(self, file_path: Path, parameter_needles: List[str]) -> Optional[Tuple[str, Any]]:
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            from cauveris.analysis.parameters import _SOURCE_ASSIGNMENT_RE
+            lowered_needles = [n.lower() for n in parameter_needles]
+            for match in _SOURCE_ASSIGNMENT_RE.finditer(content):
+                name = match.group("name")
+                val = float(match.group("value"))
+                if any(n in name.lower() for n in lowered_needles):
+                    return name, val
+        except Exception:
+            pass
+        return None
+
+    def edit_parameter(self, file_path: Path, key_path: str, new_value: Any) -> str:
+        text = file_path.read_text(encoding="utf-8")
+        from cauveris.analysis.parameters import replace_source_scalar
+        res = replace_source_scalar(text, key_path, new_value)
+        if res is None:
+            raise ValueError(f"Scalar assignment '{key_path}' not found in source file {file_path}")
+        return res[0]
+
+
 class ConfigLocatorRegistry:
     """Registry of structure-aware configuration locator and patching plugins."""
 
@@ -459,6 +494,7 @@ class ConfigLocatorRegistry:
             EnvFileConfigPlugin(),
             JavaPropertiesConfigPlugin(),
             XMLConfigPlugin(),
+            SourceCodeConfigPlugin(),
         ]
 
     def select_plugin(self, file_path: Path) -> Optional[ConfigLocatorPlugin]:

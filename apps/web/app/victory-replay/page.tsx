@@ -608,7 +608,7 @@ function VictoryReplayContent() {
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-mono text-[var(--color-danger-fg)] font-bold flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-[var(--color-danger-fg)]" />
-                        INCIDENT {incidentId || "CAU-0001"} — UNPATCHED
+                        INCIDENT {incidentId || "UNAVAILABLE"} — UNPATCHED
                       </span>
                       <Badge tone="danger">
                         {before?.reproduction_count ?? 0}/{before?.trial_count ?? 0} Emergency Stops

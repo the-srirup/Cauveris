@@ -1,7 +1,7 @@
 # Cauveris Makefile
 # Note: If 'make' is not available, use the equivalent uv and npm commands documented in README.md
 
-.PHONY: setup dev test lint typecheck golden-incident demo clean
+.PHONY: setup dev test lint typecheck golden-incident demo clean live-demo live-demo-check live-demo-stop
 
 # ===== Dependency Installation =====
 
@@ -60,3 +60,14 @@ clean: #### Remove generated files and caches
 	rm -rf apps/web/node_modules
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name ".ipynb_checkpoints" -exec rm -rf {} +
+
+# ===== Live Demonstration =====
+
+live-demo: #### Start the complete stack in honest production-demo mode for live recording
+	@python scripts/start_live_demo.py
+
+live-demo-check: #### Verify production-demo health, readiness, storage, and models
+	@python scripts/live_demo_check.py
+
+live-demo-stop: #### Stop background servers started for live demo
+	@python scripts/stop_live_demo.py

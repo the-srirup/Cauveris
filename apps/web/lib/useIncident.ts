@@ -64,7 +64,12 @@ export function useActiveIncident() {
   }, []);
 
   const setIncidentId = (newId: string | null) => {
-    setIncidentIdState(newId);
+    setIncidentIdState((prevId) => {
+      if (prevId !== newId) {
+        setIncidentState(null);
+      }
+      return newId;
+    });
     try {
       if (newId) {
         localStorage.setItem(STORAGE_INCIDENT_KEY, newId);
@@ -78,13 +83,24 @@ export function useActiveIncident() {
   const loadIncident = useCallback(async (id: string | null) => {
     if (!id) {
       setIncidentState(null);
-      setIncidentId(null);
+      setIncidentIdState(null);
+      try {
+        localStorage.removeItem(STORAGE_INCIDENT_KEY);
+      } catch {}
+      globalListeners.forEach(listener => listener({ incidentId: null }));
       return null;
     }
+    // Clear stale incident before loading new ID
+    setIncidentState(null);
+    setIncidentIdState(id);
+    try {
+      localStorage.setItem(STORAGE_INCIDENT_KEY, id);
+    } catch {}
+    globalListeners.forEach(listener => listener({ incidentId: id }));
+
     try {
       const data = await api.get(id);
       setIncidentState(data);
-      setIncidentId(id);
       return data;
     } catch {
       setIncidentState(null);

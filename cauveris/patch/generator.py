@@ -283,14 +283,18 @@ def parse_diff(diff_text):
 
 
 def find_file(base_dir, relative_path):
-    """Find a file at its exact path, or by name anywhere under the root."""
-    candidate = base_dir / relative_path
-    if candidate.exists():
-        return candidate
-    filename = Path(relative_path).name
-    matches = sorted(base_dir.rglob(filename))
-    if matches:
-        return matches[0]
+    """Find a file at its exact path with strict root containment.
+
+    Eliminates recursive fallback search (rglob) to prevent arbitrary host target matching.
+    """
+    base = Path(base_dir).resolve()
+    target = (base / relative_path).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        return None
+    if target.is_file():
+        return target
     return None
 
 
@@ -606,6 +610,22 @@ if __name__ == "__main__":
 '''
 
 
+def find_file(base_dir: Union[Path, str], relative_path: Union[Path, str]) -> Optional[Path]:
+    """Find a file at its exact path with strict root containment.
+
+    Eliminates recursive fallback search (rglob) to prevent arbitrary host target matching.
+    """
+    base = Path(base_dir).resolve()
+    target = (base / relative_path).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        return None
+    if target.is_file():
+        return target
+    return None
+
+
 def _file_format(rel: str) -> str:
     """The syntax of a file, so an applier knows how to read its values."""
     suffix = Path(rel).suffix.lower()
@@ -832,7 +852,7 @@ class PatchGenerator:
             )
             return None
 
-        diff, changed_files, lines_changed, applied_edits = self._build_diff(edits, bundle)
+        diff, changed_files, lines_changed, applied_edits, file_checksums, applies_cleanly = self._build_diff(edits, bundle)
         if not diff.strip():
             logger.info(
                 f"[{experiment.experiment_id}] The change produced no difference; "
@@ -840,11 +860,25 @@ class PatchGenerator:
             )
             return None
 
+        primary_target = changed_files[0] if changed_files else None
+        target_before_hash = file_checksums.get(primary_target, {}).get("before") if primary_target else None
+        target_after_hash = file_checksums.get(primary_target, {}).get("after") if primary_target else None
+
         patch = PatchCandidate(
             candidate_id=f"patch-{experiment.experiment_id}",
+            incident_id=str(self._incident.id) if self._incident else getattr(experiment, "incident_id", None),
+            hypothesis_id=getattr(experiment, "hypothesis_id", None),
+            target_file=primary_target,
+            rationale=f"Addresses hypothesis {experiment.hypothesis_id}: {experiment.intervention}",
+            before_hash=target_before_hash,
+            after_hash=target_after_hash,
+            file_checksums=file_checksums,
+            is_selected=False,
             affected_files=changed_files,
             lines_changed=lines_changed,
             unified_diff=diff,
+            applied_cleanly=applies_cleanly,
+            applies_cleanly=applies_cleanly,
             config_edits=[
                 ConfigEdit(
                     file=rel,
@@ -923,7 +957,7 @@ class PatchGenerator:
 
     def _build_diff(
         self, edits: List[Tuple[str, str, str, Any, Any]], bundle: Path
-    ) -> Tuple[str, List[str], int, List[Tuple[str, str, str, Any, Any]]]:
+    ) -> Tuple[str, List[str], int, List[Tuple[str, str, str, Any, Any]], Dict[str, Dict[str, str]], bool]:
         """
         Build the unified diff from the real bundle files.
 
@@ -931,10 +965,10 @@ class PatchGenerator:
         original bytes.
 
         Returns:
-            The diff, the files it touches, how many lines it changes, and
-            the edits that were actually applied - an edit the file does not
-            hold is dropped rather than advertised.
+            The diff, the files it touches, how many lines it changes, the edits applied,
+            file before/after checksums, and whether the diff applies cleanly.
         """
+        import hashlib
         by_file: Dict[str, List[Tuple[str, str, str, Any, Any]]] = {}
         for edit in edits:
             by_file.setdefault(edit[0], []).append(edit)
@@ -943,6 +977,8 @@ class PatchGenerator:
         changed_files: List[str] = []
         lines_changed = 0
         applied_edits: List[Tuple[str, str, str, Any, Any]] = []
+        file_checksums: Dict[str, Dict[str, str]] = {}
+        all_clean = True
 
         for rel in sorted(by_file):
             path = bundle / rel
@@ -971,11 +1007,30 @@ class PatchGenerator:
             chunk = make_unified_diff(original, text, rel)
             if not chunk.strip():
                 continue
+
+            before_hash = hashlib.sha256(original.encode("utf-8")).hexdigest()
+            after_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            file_checksums[rel] = {"before": before_hash, "after": after_hash}
+
+            from cauveris.patch.unified_diff import parse_unified_diff, apply_patch_to_file
+            try:
+                parsed_patches = parse_unified_diff(chunk)
+                if parsed_patches:
+                    applied_test = apply_patch_to_file(original, parsed_patches[0])
+                    if applied_test != text:
+                        all_clean = False
+                else:
+                    all_clean = False
+            except Exception:
+                all_clean = False
+
             chunks.append(chunk)
             changed_files.append(rel)
             lines_changed += self._count_changed_lines(chunk)
 
-        return "".join(chunks), changed_files, lines_changed, applied_edits
+        full_diff = "".join(chunks)
+        cleanly = bool(full_diff and all_clean)
+        return full_diff, changed_files, lines_changed, applied_edits, file_checksums, cleanly
 
     def _edit_file(
         self, text: str, rel: str, key: str, target: Any

@@ -141,7 +141,15 @@ _9_CHECKS = (
 
 def compute_check_count(patch: PatchCandidate) -> int:
     """How many of the nine atomic checks the candidate passed."""
-    return sum(1 for name in _9_CHECKS if bool(getattr(patch, name, False)))
+    count = 0
+    for name in _9_CHECKS:
+        if name == "applies_cleanly":
+            val = getattr(patch, "applies_cleanly", False) or getattr(patch, "applied_cleanly", False)
+        else:
+            val = getattr(patch, name, False)
+        if bool(val):
+            count += 1
+    return count
 
 
 def compute_verification_level(
@@ -170,10 +178,22 @@ def compute_verification_level(
     """
     source = report if report is not None else patch
 
+    # If the source already carries an explicit canonical verification level and is verified
+    decl = getattr(source, "verification_level", None)
+    if decl and getattr(source, "verified", False):
+        decl_level = level_from_status_string(decl)
+        if decl_level != VerificationLevel.GENERATED:
+            if staged and decl_level in (VerificationLevel.TEST_VERIFIED, VerificationLevel.STAGING_VERIFIED):
+                return VerificationLevel.STAGING_VERIFIED
+            return decl_level
+
     # If we have a report, prefer its booleans; they are the verifier's verdict.
     passes = []
     for name in _9_CHECKS:
-        val = getattr(source, name, None)
+        if name == "applies_cleanly":
+            val = getattr(source, "applies_cleanly", None) or getattr(source, "applied_cleanly", None)
+        else:
+            val = getattr(source, name, None)
         if val is None:
             # PatchCandidate field missing entirely: treat as not passed.
             val = False
@@ -237,6 +257,25 @@ def level_from_status_string(value: Any) -> VerificationLevel:
 
 
 # ---------------------------------------------------------------------------
+# Canonical structured error codes
+# ---------------------------------------------------------------------------
+
+PACKAGE_NO_REPAIR_CANDIDATE = "PACKAGE_NO_REPAIR_CANDIDATE"
+PACKAGE_CANDIDATE_STALE = "PACKAGE_CANDIDATE_STALE"
+PACKAGE_CANDIDATE_UNVERIFIED = "PACKAGE_CANDIDATE_UNVERIFIED"
+PACKAGE_CANDIDATE_MISMATCH = "PACKAGE_CANDIDATE_MISMATCH"
+PACKAGE_PATCH_EMPTY = "PACKAGE_PATCH_EMPTY"
+PACKAGE_NOT_FOUND = "PACKAGE_NOT_FOUND"
+PACKAGE_NOT_READY = "PACKAGE_NOT_READY"
+PACKAGE_GENERATION_FAILED = "PACKAGE_GENERATION_FAILED"
+PACKAGE_STALE = "PACKAGE_STALE"
+PACKAGE_MULTIPLE_CANDIDATES = "PACKAGE_MULTIPLE_CANDIDATES"
+PACKAGE_UNAUTHORIZED = "PACKAGE_UNAUTHORIZED"
+PACKAGE_STORAGE_UNAVAILABLE = "PACKAGE_STORAGE_UNAVAILABLE"
+PACKAGE_VALIDATION_FAILED = "PACKAGE_VALIDATION_FAILED"
+
+
+# ---------------------------------------------------------------------------
 # Persisted package record
 # ---------------------------------------------------------------------------
 
@@ -259,6 +298,9 @@ class PackageGenerationRequest:
     repair_id: str
     user_id: str
     org_id: str
+    verification_run_id: Optional[str] = None
+    report_id: Optional[str] = None
+    workspace_id: Optional[str] = None
 
 
 @dataclass
@@ -271,19 +313,26 @@ class RepairPackageRecord:
     """
 
     incident_id: str
-    repair_id: str
-    build_number: int
+    repair_candidate_id: str = ""
+    build_number: int = 1
     status: PackageStatus = PackageStatus.NOT_REQUESTED
     package_id: str = ""
-    zip_path: Optional[str] = None
-    checksum_sha256: str = ""
-    size_bytes: int = 0
+    storage_locator: Optional[str] = None
+    package_sha256: str = ""
+    size: int = 0
+    content_type: str = "application/zip"
+    safe_filename: str = ""
     manifest: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     ready_at: Optional[str] = None
     built_by_user_id: str = ""
     built_by_org_id: str = ""
-    error: Optional[str] = None
+    failure_code: Optional[str] = None
+    failure_message: Optional[str] = None
+    source_tree_hash: str = ""
+    policy_version: str = "1.0"
+    generator_version: str = "1.0"
     version: int = 1  # schema version for forward compatibility
     # The source patch candidate, serialized for provenance and re-verification.
     candidate_snapshot: Dict[str, Any] = field(default_factory=dict)
@@ -295,16 +344,79 @@ class RepairPackageRecord:
     verification_reason: str = ""
     # Cross-reference: which bundle the patch was generated against.
     source_bundle_id: str = ""
+    verification_run_id: Optional[str] = None
+    report_id: Optional[str] = None
+    workspace_id: Optional[str] = None
+
+    # Backward-compatibility property aliases
+    @property
+    def repair_id(self) -> str:
+        return self.repair_candidate_id
+
+    @repair_id.setter
+    def repair_id(self, val: str) -> None:
+        self.repair_candidate_id = val
+
+    @property
+    def zip_path(self) -> Optional[str]:
+        return self.storage_locator
+
+    @zip_path.setter
+    def zip_path(self, val: Optional[str]) -> None:
+        self.storage_locator = val
+
+    @property
+    def checksum_sha256(self) -> str:
+        return self.package_sha256
+
+    @checksum_sha256.setter
+    def checksum_sha256(self, val: str) -> None:
+        self.package_sha256 = val
+
+    @property
+    def size_bytes(self) -> int:
+        return self.size
+
+    @size_bytes.setter
+    def size_bytes(self, val: int) -> None:
+        self.size = val
+
+    @property
+    def error(self) -> Optional[str]:
+        return self.failure_message
+
+    @error.setter
+    def error(self, val: Optional[str]) -> None:
+        self.failure_message = val
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["repair_id"] = self.repair_candidate_id
+        d["zip_path"] = self.storage_locator
+        d["checksum_sha256"] = self.package_sha256
+        d["size_bytes"] = self.size
+        d["error"] = self.failure_message
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RepairPackageRecord":
         kwargs: Dict[str, Any] = {}
+        # Map aliases before populating fields
+        normalized = dict(data)
+        if normalized.get("repair_id") and not normalized.get("repair_candidate_id"):
+            normalized["repair_candidate_id"] = normalized["repair_id"]
+        if normalized.get("zip_path") and not normalized.get("storage_locator"):
+            normalized["storage_locator"] = normalized["zip_path"]
+        if normalized.get("checksum_sha256") and not normalized.get("package_sha256"):
+            normalized["package_sha256"] = normalized["checksum_sha256"]
+        if normalized.get("size_bytes") and not normalized.get("size"):
+            normalized["size"] = normalized["size_bytes"]
+        if normalized.get("error") and not normalized.get("failure_message"):
+            normalized["failure_message"] = normalized["error"]
+
         for f in cls.__dataclass_fields__:
-            if f in data:
-                raw = data[f]
+            if f in normalized:
+                raw = normalized[f]
                 if f == "status" and isinstance(raw, str):
                     try:
                         raw = PackageStatus(raw)
@@ -316,7 +428,11 @@ class RepairPackageRecord:
     @property
     def is_downloadable(self) -> bool:
         """Whether the package is in a state that permits download."""
-        return self.status == PackageStatus.READY and bool(self.zip_path) and bool(self.checksum_sha256)
+        return (
+            self.status == PackageStatus.READY
+            and bool(self.storage_locator)
+            and bool(self.package_sha256)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -329,12 +445,27 @@ class PackageError(Exception):
 
     def __init__(self, error_code: str, detail: str = ""):
         self.error_code = error_code
+        self.code = error_code
         self.detail = detail
         super().__init__(f"{error_code}: {detail}")
 
 
 #: Canonical error codes returned by the packaging API.
 PACKAGE_ERRORS: Dict[str, str] = {
+    PACKAGE_NO_REPAIR_CANDIDATE: "No repair candidate specified or available for packaging",
+    PACKAGE_CANDIDATE_STALE: "The repair candidate is stale and must be regenerated",
+    PACKAGE_CANDIDATE_UNVERIFIED: "The repair candidate did not pass verification",
+    PACKAGE_CANDIDATE_MISMATCH: "The repair candidate does not belong to this incident or workspace",
+    PACKAGE_PATCH_EMPTY: "The repair candidate contains an empty patch",
+    PACKAGE_NOT_FOUND: "The requested repair package was not found",
+    PACKAGE_NOT_READY: "No ready repair package is available for download",
+    PACKAGE_GENERATION_FAILED: "Repair package generation failed",
+    PACKAGE_STALE: "A newer repair package exists for this incident",
+    PACKAGE_MULTIPLE_CANDIDATES: "Multiple repair candidates exist; specify an explicit candidate ID",
+    PACKAGE_UNAUTHORIZED: "The authenticated principal may not access this repair package",
+    PACKAGE_STORAGE_UNAVAILABLE: "Package storage backend is unavailable",
+    PACKAGE_VALIDATION_FAILED: "Package archive failed post-seal validation",
+    # Legacy aliases
     "incident_not_found": "The incident id does not refer to a known incident",
     "access_denied": "The authenticated principal may not access this incident",
     "repair_candidate_not_found": "The requested repair_id was not found for this incident",

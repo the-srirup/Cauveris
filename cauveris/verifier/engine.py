@@ -165,6 +165,23 @@ class VerificationEngine:
         model: Optional[SystemModel],
     ) -> VerificationReport:
         """Run the whole checklist against one candidate."""
+        # Strict incident-scoped candidate check: reject cross-incident verification
+        if getattr(patch, "incident_id", None) and self._incident:
+            if str(patch.incident_id) != str(self._incident.id):
+                logger.warning(
+                    f"Cross-incident verification rejected: patch candidate '{patch.candidate_id}' "
+                    f"belongs to incident '{patch.incident_id}', cannot be verified against '{self._incident.id}'"
+                )
+                empty = _empty_results(
+                    f"Candidate '{patch.candidate_id}' belongs to incident '{patch.incident_id}', "
+                    f"cannot be verified against incident '{self._incident.id}'."
+                )
+                empty["rejection_reason"] = f"Cross-incident verification rejected: candidate belongs to {patch.incident_id}, not {self._incident.id}"
+                patch.verified = False
+                patch.verification_level = "UNVERIFIED"
+                patch.rejection_reason = empty["rejection_reason"]
+                return self._report(patch, empty)
+
         try:
             workspace = self.workspace_dir / f"{patch.candidate_id}_{uuid.uuid4().hex[:8]}"
             if workspace.exists():
@@ -253,6 +270,7 @@ class VerificationEngine:
         """Build the report from the checklist's outcome."""
         return VerificationReport(
             patch_candidate_id=patch.candidate_id,
+            incident_id=getattr(patch, "incident_id", None) or (getattr(self._incident, "id", None) if self._incident else None),
             applies_cleanly=results["applies_cleanly"],
             regression_test_fails_before=results["regression_test_fails_before"],
             regression_test_passes_after=results["regression_test_passes_after"],

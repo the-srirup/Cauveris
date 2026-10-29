@@ -40,14 +40,22 @@ class ArtifactEntry:
     checksum_sha256: str
     detected_type: str  # content-based format/MIME: json, jsonl, yaml, toml, ini, xml, csv, log, source, trace, metric, compressed, binary
     mime_type: str
+    artifact_id: str = ""
+    incident_id: Optional[str] = None
+    extension_suggested_type: str = ""
+    classification: str = "text"  # "text" | "binary"
     encoding: Optional[str] = "utf-8"
     parser_selected: Optional[str] = None
-    parse_status: str = "unparsed"  # "parsed", "failed", "unsupported", "skipped_binary"
+    parser_version: str = "1.0.0"
+    parse_status: str = "SUPPORTED"  # SUPPORTED, PARTIALLY_SUPPORTED, UNSUPPORTED, MALFORMED, BINARY, ENCRYPTED, REJECTED, UNKNOWN
     record_count: Optional[int] = None
     warnings: List[str] = field(default_factory=list)
+    safe_errors: List[str] = field(default_factory=list)
     sensitivity_flags: List[str] = field(default_factory=list)
     contributes_to_diagnosis: bool = False
+    repair_relevance: str = "none"  # "high", "medium", "low", "none"
     is_editable: bool = False
+    limitations: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -286,8 +294,9 @@ class ContentTypeDetector:
 class ArtifactInventory:
     """Inventories all files in an incident bundle safely."""
 
-    def __init__(self, bundle_root: Path):
+    def __init__(self, bundle_root: Path, incident_id: Optional[str] = None):
         self.bundle_root = Path(bundle_root)
+        self.incident_id = incident_id
 
     def scan(self) -> List[ArtifactEntry]:
         """Scans the bundle root and returns an inventory of all discovered artifacts."""
@@ -446,18 +455,53 @@ class ArtifactInventory:
             parse_status = "parsed"
             contributes_to_diag = ("config" in rel_path.lower() or "log" in rel_path.lower())
 
+        # Determine canonical parse_status
+        if detected_type.startswith("binary") or detected_type.startswith("compressed"):
+            canonical_status = "BINARY"
+        elif parse_status == "failed":
+            canonical_status = "MALFORMED"
+        elif parse_status == "unsupported":
+            canonical_status = "UNSUPPORTED"
+        elif warnings:
+            canonical_status = "PARTIALLY_SUPPORTED"
+        elif parse_status == "parsed":
+            canonical_status = "SUPPORTED"
+        else:
+            canonical_status = "UNKNOWN"
+
+        artifact_id = f"art_{hashlib.sha256(rel_path.encode()).hexdigest()[:12]}"
+        classification = "binary" if canonical_status == "BINARY" else "text"
+        ext_suggested = file_path.suffix.lower()
+
+        repair_relevance = "none"
+        if is_editable:
+            if any(k in rel_path.lower() for k in ("config", "setting", "param", "worker.yaml", "limits")):
+                repair_relevance = "high"
+            else:
+                repair_relevance = "medium"
+        elif contributes_to_diag:
+            repair_relevance = "low"
+
         return ArtifactEntry(
             relative_path=rel_path,
             size_bytes=size,
             checksum_sha256=checksum,
             detected_type=detected_type,
             mime_type=mime_type,
+            artifact_id=artifact_id,
+            incident_id=getattr(self, "incident_id", None),
+            extension_suggested_type=ext_suggested,
+            classification=classification,
             encoding=encoding,
             parser_selected=parser_selected,
-            parse_status=parse_status,
+            parser_version="1.0.0",
+            parse_status=canonical_status,
             record_count=record_count,
             warnings=warnings,
+            safe_errors=[w for w in warnings if "failed" in w.lower()],
             sensitivity_flags=sensitivity_flags,
             contributes_to_diagnosis=contributes_to_diag,
+            repair_relevance=repair_relevance,
             is_editable=is_editable,
+            limitations=[f"Non-editable format {detected_type}"] if not is_editable else [],
         )

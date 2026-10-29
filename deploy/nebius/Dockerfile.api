@@ -1,0 +1,75 @@
+# syntax=docker/dockerfile:1
+# Multi-stage production Dockerfile for Cauveris API service
+# Targets Nebius Cloud VMs and Managed Kubernetes (MK8s)
+
+# Stage 1: Build & Dependency Resolution
+FROM python:3.11-slim-bookworm AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for rapid, deterministic packaging
+RUN pip install --no-cache-dir uv
+
+WORKDIR /build
+
+COPY pyproject.toml ./
+RUN uv pip compile pyproject.toml -o requirements.txt --system || pip freeze > requirements.txt
+
+# Stage 2: Production Runtime
+FROM python:3.11-slim-bookworm AS runner
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/app/.venv/bin:$PATH" \
+    PORT=8000 \
+    HOST=0.0.0.0 \
+    WORKERS=2 \
+    CAUVERIS_STORAGE_PATH=/data/storage \
+    CAUVERIS_REPORT_STORE_PATH=/data/reports \
+    CAUVERIS_EVIDENCE_STORE_PATH=/data/evidence
+
+# Create non-root system user and group (UID 10001)
+RUN groupadd -g 10001 cauveris && \
+    useradd -u 10001 -g cauveris -d /app -s /bin/bash -m cauveris
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install python dependencies
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir .
+
+# Copy application source code
+COPY cauveris ./cauveris
+COPY data ./data
+
+# Setup directories with non-root ownership
+RUN mkdir -p /data/storage /data/reports /data/evidence /tmp && \
+    chown -R cauveris:cauveris /app /data /tmp
+
+USER 10001:10001
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://127.0.0.1:${PORT}/api/v1/ready || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+CMD ["sh", "-c", "uvicorn cauveris.api.main:app --host ${HOST} --port ${PORT} --workers ${WORKERS}"]

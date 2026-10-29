@@ -133,12 +133,16 @@ class PackageStore:
         checks_snapshot: Optional[Dict[str, bool]] = None,
         verification_level: str = VerificationLevel.GENERATED.value,
         source_bundle_id: str = "",
+        verification_run_id: Optional[str] = None,
+        report_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        source_tree_hash: str = "",
     ) -> RepairPackageRecord:
         """Allocate a new build_number for (incident, repair) and a QUEUED record."""
         key = self._key(incident_id, repair_id)
         existing = self._index["packages"].get(key, {})
 
-        # Determine the next build number.  We never reuse a build number:
+        # Determine the next build number. We never reuse a build number:
         # each build produces a new archive, and the old one is marked STALE.
         prior = existing.get("history", [])
         build_number = 1
@@ -150,19 +154,31 @@ class PackageStore:
             if entry.get("status") == PackageStatus.READY.value:
                 entry["status"] = PackageStatus.STALE.value
 
+        safe_inc = self._safe(incident_id)
+        safe_rep = self._safe(repair_id)
+        package_id = f"pkg_{safe_inc}_{safe_rep}_{build_number}"
+        safe_filename = f"cauveris-repair-{safe_inc[:12]}-{safe_rep[:12]}.zip"
+        now_iso = datetime.now(timezone.utc).isoformat()
+
         record = RepairPackageRecord(
             incident_id=incident_id,
-            repair_id=repair_id,
+            repair_candidate_id=repair_id,
             build_number=build_number,
             status=PackageStatus.QUEUED,
-            package_id=f"pkg_{incident_id}_{repair_id}_{build_number}",
+            package_id=package_id,
+            safe_filename=safe_filename,
             built_by_user_id=user_id,
             built_by_org_id=org_id,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=now_iso,
+            updated_at=now_iso,
             candidate_snapshot=candidate_snapshot or {},
             checks_snapshot=checks_snapshot or {},
             verification_level=verification_level,
             source_bundle_id=source_bundle_id,
+            source_tree_hash=source_tree_hash,
+            verification_run_id=verification_run_id,
+            report_id=report_id,
+            workspace_id=workspace_id,
         )
 
         if key not in self._index["packages"]:
@@ -218,16 +234,22 @@ class PackageStore:
                     entry["ready_at"] = datetime.now(timezone.utc).isoformat()
                     if error is not None:
                         entry["error"] = error
+                        entry["failure_message"] = error
                 else:
                     entry["status"] = status.value
                     if error is not None:
                         entry["error"] = error
+                        entry["failure_message"] = error
                 if zip_path is not None:
                     entry["zip_path"] = zip_path
+                    entry["storage_locator"] = zip_path
                 if checksum is not None:
                     entry["checksum_sha256"] = checksum
+                    entry["package_sha256"] = checksum
                 if size_bytes is not None:
                     entry["size_bytes"] = size_bytes
+                    entry["size"] = size_bytes
+                bucket["latest"] = dict(entry)
                 self._save_index()
                 return RepairPackageRecord.from_dict(entry)
         return None
@@ -248,6 +270,25 @@ class PackageStore:
         return True
 
     # ------------------------------------------------------------- lookups
+
+    def get_by_package_id(self, package_id: str) -> Optional[RepairPackageRecord]:
+        """Look up a package across all incidents by its unique package_id."""
+        for bucket in self._index.get("packages", {}).values():
+            for entry in bucket.get("history", []):
+                if entry.get("package_id") == package_id:
+                    return RepairPackageRecord.from_dict(entry)
+        return None
+
+    def list_for_incident(self, incident_id: str) -> List[RepairPackageRecord]:
+        """List all packages across all repair candidates for an incident."""
+        incident_key = self._safe(incident_id)
+        records: List[RepairPackageRecord] = []
+        for key, bucket in self._index.get("packages", {}).items():
+            if not key.startswith(f"{incident_key}::"):
+                continue
+            for entry in bucket.get("history", []):
+                records.append(RepairPackageRecord.from_dict(entry))
+        return records
 
     def get_latest(
         self, incident_id: str, repair_id: str

@@ -27,7 +27,20 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_
 
 export type IncidentStatus = "RECEIVED" | "VALIDATED" | "REJECTED" | "PROCESSING" | "COMPLETED" | "FAILED" | "IDLE" | "RUNNING" | "SUCCESS" | "DEGRADED" | "CANCELLED" | string;
 
-export type StageStatus = "PENDING" | "RUNNING" | "SUCCESS" | "DEGRADED" | "FAILED" | "SKIPPED" | "CANCELLED";
+export type StageStatus =
+  | "NOT_STARTED"
+  | "QUEUED"
+  | "RUNNING"
+  | "SUCCESS"
+  | "PARTIAL"
+  | "UNSUPPORTED"
+  | "BLOCKED"
+  | "FAILED"
+  | "CANCELLED"
+  | "STALE"
+  | "PENDING"
+  | "DEGRADED"
+  | "SKIPPED";
 
 // Re-export error types and functions for consumers
 export {
@@ -54,12 +67,19 @@ import { authenticatedFetch, useAuthStore, FetchRequestInit } from './auth';
 
 export interface PipelineStageInfo {
   id: string;
+  stage_id?: string;
   name: string;
   description: string;
   required: boolean;
   depends_on: string[];
   status: StageStatus;
   error?: string | null;
+  error_code?: string | null;
+  warnings?: string[];
+  retryability?: boolean;
+  attempt_count?: number;
+  input_references?: string[];
+  output_references?: string[];
   details?: Record<string, any>;
   duration_ms?: number | null;
   started_at?: string | null;
@@ -71,6 +91,17 @@ export interface PipelineEventsResponse {
   progress: number;
   active_stage_id?: string | null;
   stages?: PipelineStageInfo[];
+  sequence_id?: number;
+  latest_sequence_id?: number;
+  events?: Array<{
+    sequence_id: number;
+    incident_id: string;
+    job_id?: string | null;
+    event_type: string;
+    stage_id?: string | null;
+    payload: Record<string, any>;
+    created_at: string;
+  }>;
   error?: string | null;
   is_demonstration?: boolean;
   started_at?: string | null;
@@ -192,16 +223,26 @@ export interface TemporalAnalysis {
 export interface Hypothesis {
   id: string;
   hypothesis_id?: string;
+  incident_id?: string;
   title: string;
   description: string;
   causal_claim?: string;
   confidence: number;
   confidence_prior?: number;
+  confidence_rationale?: string;
+  provider_execution_id?: string;
+  falsification_criteria?: string;
+  falsifying_observation?: string;
+  expected_observation?: string;
+  speculative?: boolean;
   status: string;
   intervention?: string;
   evidence_count?: number;
   supporting_artifact_ids?: string[];
+  supporting_evidence_ids?: string[];
   contradicting_artifact_ids?: string[];
+  contradicting_evidence_ids?: string[];
+  evidence_links?: Array<{ artifact_id: string; line_start?: number; line_end?: number; span?: string }>;
   missing_evidence?: string[];
   reproduction_rate?: number;
   test_result?: string;
@@ -904,6 +945,59 @@ class ApiClient {
     });
   }
 
+  // Upload incident package ZIP (single-step canonical upload)
+  async uploadPackage(file: File, title?: string): Promise<{
+    message: string;
+    incident_id: string;
+    job_id?: string;
+    title: string;
+    package_sha256: string;
+    filename: string;
+    size: number;
+    evidence_count: number;
+    artifact_inventory_count: number;
+    capability_report?: any;
+  }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (title) {
+      formData.append('title', title);
+    }
+
+    const { accessToken } = useAuthStore.getState();
+    const headers: Record<string, string> = {};
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+
+    const response = await fetch(`${this.baseUrl}/incidents/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail;
+        } else if (Array.isArray(errorData.detail)) {
+          errorMessage = errorData.detail.map((d: any) => (d && typeof d === 'object' ? d.msg || d.message : String(d))).join(', ');
+        } else if (errorData.detail && typeof errorData.detail === 'object') {
+          errorMessage = errorData.detail.msg || errorData.detail.message || JSON.stringify(errorData.detail);
+        } else if (typeof errorData.error === 'string') {
+          errorMessage = errorData.error;
+        }
+      } catch {
+        // Ignore json parse errors
+      }
+      throw new Error(errorMessage);
+    }
+
+    return response.json();
+  }
+
   // Upload incident file
   async uploadFile(incidentId: string, file: File): Promise<{ message: string; filename: string; size: number; evidence_count: number }> {
     const formData = new FormData();
@@ -963,8 +1057,9 @@ class ApiClient {
   }
 
   // Status checking - debounced for polling
-  async getEvents(incidentId: string): Promise<PipelineEventsResponse> {
-    return this.requestDebounced<PipelineEventsResponse>(`/incidents/${incidentId}/events`);
+  async getEvents(incidentId: string, afterSequenceId?: number): Promise<PipelineEventsResponse> {
+    const query = afterSequenceId !== undefined ? `?after_sequence_id=${afterSequenceId}` : '';
+    return this.requestDebounced<PipelineEventsResponse>(`/incidents/${incidentId}/events${query}`);
   }
 
   // Orchestration status center endpoint - debounced for polling
@@ -1074,6 +1169,44 @@ class ApiClient {
       throw new Error(`Failed to download patch package: ${response.status} ${structuredMessage}`);
     }
 
+    return response.blob();
+  }
+
+  // List repair packages for an incident
+  async listRepairPackages(incidentId: string) {
+    return this.request<{ incident_id: string; packages: any[] }>(`/incidents/${incidentId}/repair-packages`);
+  }
+
+  // Request a repair package build
+  async requestRepairPackage(incidentId: string, repairId?: string) {
+    const query = repairId ? `?repair_id=${encodeURIComponent(repairId)}` : '';
+    return this.request<any>(`/incidents/${incidentId}/repair-packages${query}`, { method: "POST" });
+  }
+
+  // Download a specific repair package
+  async downloadRepairPackage(incidentId: string, packageOrRepairId: string): Promise<Blob> {
+    const { accessToken } = useAuthStore.getState();
+    const headers: Record<string, string> = {};
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+    const response = await fetch(`${this.baseUrl}/incidents/${incidentId}/repair-packages/${encodeURIComponent(packageOrRepairId)}/download`, { headers });
+    if (!response.ok) {
+      const errorText = await response.text();
+      let structuredMessage = errorText;
+      try {
+        const parsed = JSON.parse(errorText);
+        if (parsed.message) structuredMessage = parsed.message;
+        else if (parsed.detail && typeof parsed.detail === 'object' && parsed.detail.message) {
+          structuredMessage = parsed.detail.message;
+        } else if (parsed.detail && typeof parsed.detail === 'string') {
+          structuredMessage = parsed.detail;
+        }
+      } catch {
+        // use raw text
+      }
+      throw new Error(`Failed to download repair package: ${response.status} ${structuredMessage}`);
+    }
     return response.blob();
   }
 

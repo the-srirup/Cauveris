@@ -1,0 +1,9 @@
+dynamic_batching:
+  batching_window_ms: 100
+  max_batch_size: 8
+resources:
+  memory_limit_mb: 512
+server:
+  worker_count: 2
+safety:
+  detection_freshness_budget_ms: 400

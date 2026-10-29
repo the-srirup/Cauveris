@@ -47,6 +47,7 @@ class ModelGateway(ABC):
         schema: Optional[type[BaseModel]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        **kwargs: Any,
     ) -> ModelResponse:
         """
         Generate a response from the model.

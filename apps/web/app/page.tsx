@@ -96,7 +96,10 @@ function MissionControlContent() {
   const [backendOnline, setBackendOnline] = useState<boolean>(true);
   const [backendLatency, setBackendLatency] = useState<number | null>(null);
   const [modelProviderOnline, setModelProviderOnline] = useState<boolean>(true);
-  const [modelProviderName, setModelProviderName] = useState<string>("Local Fixtures");
+  const [modelProviderName, setModelProviderName] = useState<string>("LOCAL_DETERMINISTIC_ONLY");
+  const [modelId, setModelId] = useState<string>("nvidia/Llama-3.1-Nemotron-70B-Instruct-HF");
+  const [circuitBreakerState, setCircuitBreakerState] = useState<string>("CLOSED");
+  const [dailyBudgetUsed, setDailyBudgetUsed] = useState<number>(0.0);
   const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
 
   // Pipeline progression state
@@ -153,14 +156,24 @@ function MissionControlContent() {
     }
 
     try {
-      const modelRes: ModelProviderHealthResponse = await api.modelHealth();
+      const modelRes: any = await api.modelHealth();
       setModelProviderOnline(modelRes?.status === "healthy");
-      if (modelRes?.provider) {
-        setModelProviderName(modelRes.provider);
+      const providerState =
+        modelRes?.provider_state ||
+        (modelRes?.nebius_configured ? "NEBIUS_NVIDIA_ACTIVE" : "LOCAL_DETERMINISTIC_ONLY");
+      setModelProviderName(providerState);
+      if (modelRes?.model_id || modelRes?.exact_model_id) {
+        setModelId(modelRes.model_id || modelRes.exact_model_id);
+      }
+      if (modelRes?.circuit_breaker?.circuit_state) {
+        setCircuitBreakerState(modelRes.circuit_breaker.circuit_state);
+      }
+      if (typeof modelRes?.circuit_breaker?.daily_budget_used === "number") {
+        setDailyBudgetUsed(modelRes.circuit_breaker.daily_budget_used);
       }
     } catch {
       setModelProviderOnline(true);
-      setModelProviderName("Local Fixtures (Offline Safe)");
+      setModelProviderName("LOCAL_DETERMINISTIC_ONLY");
     }
 
     if (backendError) {
@@ -212,7 +225,7 @@ function MissionControlContent() {
       try {
         const inc = await api.get(id);
         setIncidentData(inc);
-        setIsDemonstration(Boolean(inc.is_demonstration || id === "CAU-0001"));
+        setIsDemonstration(Boolean(inc.is_demonstration));
 
         try {
           const events = await api.getEvents(id);
@@ -376,7 +389,10 @@ function MissionControlContent() {
     setActionableError(null);
     try {
       const res = await api.create(true);
-      const newId = res.incident_id || "CAU-0001";
+      if (!res.incident_id) {
+        throw new Error("Backend did not return an incident ID");
+      }
+      const newId = res.incident_id;
       setIncidentId(newId);
       setIsDemonstration(true);
       await loadIncidentsList();
@@ -488,26 +504,23 @@ function MissionControlContent() {
     setUploadManifest({ name: file.name, size: file.size });
     try {
       notify(`Uploading incident package: ${file.name}...`, "info");
-      const createRes = await api.create(false, {
-        title: file.name.replace(/\.[^/.]+$/, ""),
-        description: "Uploaded incident bundle",
-      });
-      const newId = createRes.incident_id;
-      const uploadRes = await api.uploadFile(newId, file);
+      const uploadRes = await api.uploadPackage(file);
+      const newId = uploadRes.incident_id;
       setIncidentId(newId);
       setIsDemonstration(false);
       await loadIncidentsList();
       await loadIncidentDetails(newId);
       notify(`Package ingested: ${uploadRes.evidence_count} artifacts indexed for ${newId}`, "success");
     } catch (err: any) {
+      setUploadManifest(null);
       setActionableError({
-        title: "Incident Package Upload Failed",
-        message: err.message || "Archive extraction or validation rejected package.",
+        title: "Upload Failed",
+        message: "Upload failed. The backend did not accept this package.",
         type: "upload",
         actionLabel: "Try Again",
         onAction: () => handleTriggerUpload(),
       });
-      notify("Upload failed: " + (err.message || "Unknown error"), "error");
+      notify("Upload failed. The backend did not accept this package.", "error");
     } finally {
       setLoading(false);
     }
@@ -678,7 +691,7 @@ function MissionControlContent() {
               leadingIcon={<Upload className="h-3.5 w-3.5" />}
               className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
             >
-              Upload Bundle
+              Upload incident package
             </Button>
 
             <Button
@@ -758,8 +771,10 @@ function MissionControlContent() {
           backendLatencyMs: backendLatency || undefined,
           worker: isPipelineActive ? "busy" : "idle",
           storage: "healthy",
-          nebiusProvider: modelProviderName.toLowerCase().includes("nebius") ? "live" : "fallback",
-          nebiusModel: modelProviderName,
+          nebiusProvider: modelProviderName,
+          nebiusModel: modelId,
+          circuitBreakerState: circuitBreakerState,
+          dailyBudgetUsed: dailyBudgetUsed,
           activeJobsCount: isPipelineActive ? 1 : 0,
         }}
       />
@@ -844,7 +859,7 @@ function MissionControlContent() {
                 leadingIcon={<Upload className="w-3.5 h-3.5" />}
                 className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
               >
-                Upload Incident Package
+                Upload incident package
               </Button>
               <Button
                 variant="outline"
@@ -880,8 +895,8 @@ function MissionControlContent() {
       {incidentId && (
         <div className="space-y-4">
           <InstrumentPanel
-            title={incidentData?.title || (isDemonstration ? "Golden Benchmark [CAU-0001]" : `Incident ${incidentId}`)}
-            subtitle={isDemonstration ? "Golden Benchmark [CAU-0001] • Deterministic Verification Target" : `Target System: ${incidentData?.system_name || "embedded-autonomous"}`}
+            title={incidentData?.title || (isDemonstration ? "Sample Demonstration Benchmark" : `Incident ${incidentId}`)}
+            subtitle={isDemonstration ? "Explicit Sample Benchmark • Demonstration Target" : `Target System: ${incidentData?.system_name || "UNAVAILABLE"}`}
           >
             <div className="flex items-center justify-between text-xs font-mono text-[var(--text-secondary,#a1a1aa)]">
               <span>Active Target: <span className="text-[var(--text-primary,#f4f4f5)] font-bold">{incidentId}</span></span>

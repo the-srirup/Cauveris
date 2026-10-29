@@ -15,16 +15,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from cauveris.invariants.units import normalize_value
+from cauveris.analysis.provenance import ProvenanceClass
 
-
-class ModelInputKind(str, Enum):
-    OBSERVED = "OBSERVED"
-    DECLARED = "DECLARED"
-    DERIVED = "DERIVED"
-    CALIBRATED = "CALIBRATED"
-    INFERRED = "INFERRED"
-    EXPLICIT_DEFAULT = "EXPLICIT_DEFAULT"
-    UNAVAILABLE = "UNAVAILABLE"
+ModelInputKind = ProvenanceClass
 
 
 class SensitivityLevel(str, Enum):
@@ -200,6 +193,7 @@ class ModelInput(BaseModel):
     kind: ModelInputKind = ModelInputKind.EXPLICIT_DEFAULT
     source_artifact_id: Optional[str] = None
     source_locator: Optional[str] = None
+    extraction_rule: Optional[str] = None
     evidence_backed: bool = False
     confidence: float = 1.0
     uncertainty: Optional[float] = None
@@ -209,6 +203,32 @@ class ModelInput(BaseModel):
     policy_version: str = MODEL_POLICY_VERSION
     default_reason: Optional[str] = None
     valid_scope: Optional[str] = None
+    calculation_rationale: Optional[str] = None
+
+    @property
+    def display_value(self) -> str:
+        """Formatted representation ensuring missing values display UNAVAILABLE."""
+        if self.value is None or self.kind == ModelInputKind.UNAVAILABLE:
+            return "UNAVAILABLE"
+        if isinstance(self.value, float) and self.value.is_integer():
+            return f"{int(self.value)} {self.unit}".strip()
+        return f"{self.value:.2f} {self.unit}".strip()
+
+    def to_provenance_record(self) -> Any:
+        from cauveris.analysis.provenance import create_provenance_record
+        return create_provenance_record(
+            parameter_id=self.parameter_id,
+            value=self.value,
+            unit=self.unit,
+            provenance=self.kind,
+            name=self.name,
+            source_artifact=self.source_artifact_id,
+            source_locator=self.source_locator,
+            calculation_rationale=self.calculation_rationale or self.default_reason,
+            confidence=self.confidence,
+            uncertainty=self.uncertainty,
+            assumptions=self.assumptions,
+        )
 
 
 class SensitivityTrial(BaseModel):
@@ -272,10 +292,17 @@ class ModelInputBuilder:
         source_locator: str,
         confidence: float = 1.0,
         uncertainty: Optional[float] = None,
+        calculation_rationale: Optional[str] = None,
+        extraction_rule: Optional[str] = None,
     ) -> None:
         """Register an evidence-backed parameter input."""
+        if parameter_id not in DEFAULT_PARAMETER_POLICIES:
+            raise ValueError(
+                f"Untracked parameter '{parameter_id}' rejected by validation. "
+                f"All parameters must be registered in DEFAULT_PARAMETER_POLICIES."
+            )
         norm_val, norm_unit = normalize_value(value, unit)
-        policy = DEFAULT_PARAMETER_POLICIES.get(parameter_id, {})
+        policy = DEFAULT_PARAMETER_POLICIES[parameter_id]
         sens = policy.get("sensitivity", SensitivityLevel.MEDIUM)
         ver_eff = policy.get("verification_effect", "")
         name = policy.get("name", parameter_id.replace("_", " ").capitalize())
@@ -288,6 +315,7 @@ class ModelInputBuilder:
             kind=kind,
             source_artifact_id=source_artifact_id,
             source_locator=source_locator,
+            extraction_rule=extraction_rule,
             evidence_backed=True,
             confidence=confidence,
             uncertainty=uncertainty,
@@ -295,11 +323,17 @@ class ModelInputBuilder:
             verification_effect=ver_eff,
             policy_version=MODEL_POLICY_VERSION,
             valid_scope=policy.get("valid_scope"),
+            calculation_rationale=calculation_rationale,
         )
 
     def mark_unavailable(self, parameter_id: str, reason: str = "Not present in evidence artifacts") -> None:
         """Explicitly record a missing parameter as UNAVAILABLE without silent substitution."""
-        policy = DEFAULT_PARAMETER_POLICIES.get(parameter_id, {})
+        if parameter_id not in DEFAULT_PARAMETER_POLICIES:
+            raise ValueError(
+                f"Untracked parameter '{parameter_id}' rejected by validation. "
+                f"All parameters must be registered in DEFAULT_PARAMETER_POLICIES."
+            )
+        policy = DEFAULT_PARAMETER_POLICIES[parameter_id]
         self._inputs[parameter_id] = ModelInput(
             parameter_id=parameter_id,
             name=policy.get("name", parameter_id),
@@ -313,6 +347,7 @@ class ModelInputBuilder:
             assumptions=[f"Marked UNAVAILABLE: {reason}"],
             policy_version=MODEL_POLICY_VERSION,
             valid_scope=policy.get("valid_scope"),
+            calculation_rationale=f"Marked UNAVAILABLE: {reason}",
         )
 
     def fill_unspecified_with_policy_defaults(self) -> None:

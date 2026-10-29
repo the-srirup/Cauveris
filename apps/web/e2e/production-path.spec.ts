@@ -22,8 +22,8 @@ function makeZip(): string {
 
 async function signIn(page: any): Promise<void> {
   await page.goto("/login");
-  await page.getByLabel("Email").fill("demo@cauveris.local");
-  await page.getByLabel("Password").fill("demo123456");
+  await page.getByLabel("Email").fill("operator@cauveris.ai");
+  await page.getByLabel("Password").fill("Operator123456!");
   await page.getByRole("button", { name: /sign in/i }).click();
   await expect(page).toHaveURL(/\/$/);
 }
@@ -34,7 +34,7 @@ test("real upload observes stages and exposes the verified repair", async ({ pag
   const zip = makeZip();
   try {
     await signIn(page);
-    await page.getByRole("button", { name: "Upload Bundle" }).click();
+    await page.getByRole("button", { name: "Upload incident package" }).click();
     await page.locator('input[type="file"]').setInputFiles(zip);
     await expect(page.getByText(/Incident uploaded/i)).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "Start Investigation" }).click();

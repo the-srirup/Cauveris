@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import List, Optional, Type
+from typing import Any, List, Optional, Type
 
 from pydantic import BaseModel
 
@@ -81,6 +81,7 @@ class FallbackModelGateway(ModelGateway):
         schema: Optional[Type[BaseModel]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        **kwargs: Any,
     ) -> ModelResponse:
         """
         Ask each provider in turn; return the first usable answer.
@@ -101,6 +102,7 @@ class FallbackModelGateway(ModelGateway):
                     schema=schema,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    **kwargs,
                 )
             except Exception as exc:
                 elapsed = round((time.perf_counter() - started) * 1000.0, 2)

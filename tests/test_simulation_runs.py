@@ -82,3 +82,92 @@ def test_valid_comparison_computes_delta_and_conclusion():
     assert cmp.delta["avg_latency_ms"] == -165.0
     assert cmp.delta["stale_rate"] == -0.8
     assert "SUCCESS_REPAIRED" in cmp.conclusion
+
+
+def test_comparison_rejects_mismatched_input_set():
+    base = BaselineRun(
+        baseline_run_id="base_01",
+        incident_id="INC-01",
+        hypothesis_id="hyp_01",
+        mechanism_id="control_deadline_missed",
+        model_id="twin_v2",
+        invariant_set_id="invset_A",
+        model_input_set_id="inputs_A",
+        named_reproduced_failure="Perception staleness",
+        failed_invariants=["perception_freshness"],
+    )
+    interv = InterventionRun(
+        intervention_run_id="interv_01",
+        incident_id="INC-01",
+        candidate_id="patch_01",
+        baseline_run_id="base_01",
+        hypothesis_id="hyp_01",
+        mechanism_id="control_deadline_missed",
+        model_id="twin_v2",
+        invariant_set_id="invset_A",
+        model_input_set_id="inputs_B",  # MISMATCH
+    )
+    with pytest.raises(ValueError, match="Model input set mismatch"):
+        compare_runs(base, interv, "patch_01")
+
+
+def test_comparison_rejects_mismatched_seed():
+    base = BaselineRun(
+        baseline_run_id="base_01",
+        incident_id="INC-01",
+        hypothesis_id="hyp_01",
+        mechanism_id="control_deadline_missed",
+        model_id="twin_v2",
+        invariant_set_id="invset_A",
+        model_input_set_id="inputs_A",
+        random_seed=42,
+        named_reproduced_failure="Perception staleness",
+        failed_invariants=["perception_freshness"],
+    )
+    interv = InterventionRun(
+        intervention_run_id="interv_01",
+        incident_id="INC-01",
+        candidate_id="patch_01",
+        baseline_run_id="base_01",
+        hypothesis_id="hyp_01",
+        mechanism_id="control_deadline_missed",
+        model_id="twin_v2",
+        invariant_set_id="invset_A",
+        model_input_set_id="inputs_A",
+        random_seed=999,  # MISMATCH
+    )
+    with pytest.raises(ValueError, match="Random seed mismatch"):
+        compare_runs(base, interv, "patch_01")
+
+
+def test_comparison_detects_regressions():
+    base = BaselineRun(
+        baseline_run_id="base_01",
+        incident_id="INC-01",
+        hypothesis_id="hyp_01",
+        mechanism_id="control_deadline_missed",
+        model_id="twin_v2",
+        invariant_set_id="invset_A",
+        model_input_set_id="inputs_A",
+        named_reproduced_failure="Perception staleness",
+        failed_invariants=["perception_freshness"],
+    )
+    interv = InterventionRun(
+        intervention_run_id="interv_01",
+        incident_id="INC-01",
+        candidate_id="patch_01",
+        baseline_run_id="base_01",
+        hypothesis_id="hyp_01",
+        mechanism_id="control_deadline_missed",
+        model_id="twin_v2",
+        invariant_set_id="invset_A",
+        model_input_set_id="inputs_A",
+        invariant_results={"perception_freshness": True},
+        regression_results={
+            "regressions_detected": True,
+            "details": ["Safety stop violated: vehicle speed exceeds stopping distance limit"],
+        },
+    )
+    cmp = compare_runs(base, interv, "patch_01")
+    assert "FAILED_REGRESSIONS" in cmp.conclusion
+    assert len(cmp.regressions) > 0

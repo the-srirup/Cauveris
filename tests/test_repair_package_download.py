@@ -52,17 +52,28 @@ async def setup_incident(test_user):
         candidate_id="CANDIDATE-001",
         hypothesis_id="HYP-001",
         description="Reduce batching window from 200ms to 100ms",
-        affected_files=["config/pipeline.yaml"],
+        affected_files=["config/inference.yaml"],
         lines_changed=2,
         unified_diff=(
-            "--- a/config/pipeline.yaml\n"
-            "+++ b/config/pipeline.yaml\n"
-            "@@ -10,3 +10,3 @@\n"
-            "-  batching_window_ms: 200.0\n"
-            "+  batching_window_ms: 100.0\n"
+            "--- a/config/inference.yaml\n"
+            "+++ b/config/inference.yaml\n"
+            "@@ -5,3 +5,3 @@\n"
+            "   max_batch_size: 8\n"
+            "-  batching_window_ms: 200  # Increased from 100 in v42\n"
+            "+  batching_window_ms: 100  # Increased from 100 in v42\n"
+            "   timeout_ms: 500\n"
         ),
         verified=True,
         verification_level="FORMALLY_VERIFIED",
+        applies_cleanly=True,
+        regression_test_fails_before=True,
+        regression_test_passes_after=True,
+        original_failure_not_reproduced=True,
+        existing_tests_pass=True,
+        safety_invariants_pass=True,
+        performance_within_budget=True,
+        forbidden_change_scan_passes=True,
+        rollback_test_passes=True,
     )
     unverified_patch = PatchCandidate(
         candidate_id="CANDIDATE-UNVERIFIED",
@@ -77,8 +88,15 @@ async def setup_incident(test_user):
     ver_report = VerificationReport(
         patch_candidate_id="CANDIDATE-001",
         verified=True,
-        regression_test_passed=True,
-        original_failure_eliminated=True,
+        applies_cleanly=True,
+        regression_test_fails_before=True,
+        regression_test_passes_after=True,
+        original_failure_not_reproduced=True,
+        existing_tests_pass=True,
+        safety_invariants_pass=True,
+        performance_within_budget=True,
+        forbidden_change_scan_passes=True,
+        rollback_test_passes=True,
     )
 
     ctx = PipelineContext(
@@ -359,6 +377,41 @@ async def test_streamed_archive_contents_and_checksums(setup_incident, test_user
         assert len(logs) >= 1
         assert logs[-1].decision == "allow"
         assert "CANDIDATE-001" in logs[-1].reason
+
+
+@pytest.mark.asyncio
+async def test_download_aliases_and_independent_validation(setup_incident, test_user):
+    """Verify download route aliases (/package, /patch-package/download) and independent zip validation."""
+    transport = ASGITransport(app=app)
+    incident_id = setup_incident["incident_id"]
+    token = test_user["access_token"]
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for route in (
+            f"/api/v1/incidents/{incident_id}/package",
+            f"/api/v1/incidents/{incident_id}/patch-package/download",
+        ):
+            res = await client.get(
+                route,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert res.status_code == 200, f"Route {route} failed with {res.status_code}"
+            assert res.headers["content-type"] == "application/zip"
+            assert "Content-Disposition" in res.headers
+            assert "attachment;" in res.headers["Content-Disposition"]
+            assert len(res.content) > 0
+
+            # Verify genuine uncorrupted ZIP bytes
+            zf = zipfile.ZipFile(io.BytesIO(res.content))
+            assert zf.testzip() is None
+            names = zf.namelist()
+            assert "manifest.json" in names
+            assert "patch.patch" in names or "fix.patch" in names
+            assert "rollback.patch" in names
+
+            # Checksum header matches
+            checksum_header = res.headers.get("X-Checksum-SHA256")
+            assert checksum_header == hashlib.sha256(res.content).hexdigest()
 
 
 @pytest.mark.asyncio

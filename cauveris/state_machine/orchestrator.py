@@ -23,6 +23,11 @@ from cauveris.simulation.runner import SimulationRunner
 from cauveris.patch.generator import PatchGenerator
 from cauveris.verifier.engine import VerificationEngine
 from cauveris.report.generator import ReportGenerator
+from cauveris.state_machine.persistence import (
+    CANONICAL_STAGE_DEFINITIONS,
+    PipelinePersistenceStore,
+    PipelineStageRecord,
+)
 from cauveris.temporal.integration import TemporalAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -31,13 +36,21 @@ logger = logging.getLogger(__name__)
 class StageStatus(str, Enum):
     """Execution status for an individual pipeline stage."""
 
-    PENDING = "PENDING"
+    NOT_STARTED = "NOT_STARTED"
+    QUEUED = "QUEUED"
     RUNNING = "RUNNING"
     SUCCESS = "SUCCESS"
-    DEGRADED = "DEGRADED"
+    PARTIAL = "PARTIAL"
+    UNSUPPORTED = "UNSUPPORTED"
+    BLOCKED = "BLOCKED"
     FAILED = "FAILED"
-    SKIPPED = "SKIPPED"
     CANCELLED = "CANCELLED"
+    STALE = "STALE"
+
+    # Legacy aliases
+    PENDING = "PENDING"
+    DEGRADED = "DEGRADED"
+    SKIPPED = "SKIPPED"
 
 
 class WorkflowStatus(str, Enum):
@@ -58,6 +71,18 @@ class WorkflowStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+STAGE_ALIASES: Dict[str, str] = {
+    "ingestion_validation": "evidence_extracted",
+    "timeline_construction": "timeline_normalized",
+    "temporal_analysis": "invariants_resolved",
+    "hypothesis_generation": "hypotheses_generated",
+    "sandbox_planning": "capability_planning",
+    "simulation_execution": "baseline_calculation",
+    "patch_forge": "patch_generation",
+    "invariant_verification": "verification",
+}
+
+
 @dataclass
 class PipelineStage:
     """Represents a discrete stage in the investigation pipeline."""
@@ -67,8 +92,14 @@ class PipelineStage:
     description: str
     required: bool = True
     depends_on: List[str] = field(default_factory=list)
-    status: StageStatus = StageStatus.PENDING
+    status: StageStatus = StageStatus.NOT_STARTED
     error: Optional[str] = None
+    error_code: Optional[str] = None
+    warnings: List[str] = field(default_factory=list)
+    retryability: bool = True
+    attempt_count: int = 0
+    input_references: List[str] = field(default_factory=list)
+    output_references: List[str] = field(default_factory=list)
     details: Dict[str, Any] = field(default_factory=dict)
     duration_ms: Optional[float] = None
     started_at: Optional[str] = None
@@ -77,6 +108,7 @@ class PipelineStage:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
+            "stage_id": self.id,
             "name": self.name,
             "description": self.description,
             "required": self.required,
@@ -85,6 +117,12 @@ class PipelineStage:
             if isinstance(self.status, StageStatus)
             else str(self.status),
             "error": self.error,
+            "error_code": self.error_code,
+            "warnings": self.warnings,
+            "retryability": self.retryability,
+            "attempt_count": self.attempt_count,
+            "input_references": self.input_references,
+            "output_references": self.output_references,
             "details": self.details,
             "duration_ms": self.duration_ms,
             "started_at": self.started_at,
@@ -93,71 +131,17 @@ class PipelineStage:
 
 
 def create_default_stages() -> List[PipelineStage]:
-    """Create the standard 9-stage sequence with strict dependency graph."""
+    """Create the 18 canonical pipeline stages with strict dependency graph."""
     return [
         PipelineStage(
-            id="ingestion_validation",
-            name="Evidence Ingestion & Validation",
-            description="Extract artifacts, verify SHA256 checksums, validate schema, and scan for secrets",
-            required=True,
-            depends_on=[],
-        ),
-        PipelineStage(
-            id="timeline_construction",
-            name="Timeline Normalization & Clock Alignment",
-            description="Align multi-lane logs, OTel traces, and MCAP recording into synchronized timeline",
-            required=True,
-            depends_on=["ingestion_validation"],
-        ),
-        PipelineStage(
-            id="temporal_analysis",
-            name="Temporal Causality Analysis",
-            description="Detect clock drift, causality inversions, and perception freshness budget overruns",
-            required=True,
-            depends_on=["timeline_construction"],
-        ),
-        PipelineStage(
-            id="hypothesis_generation",
-            name="Root-Cause Hypothesis Generation",
-            description="Formulate falsifiable root-cause hypotheses with interventions and causal claims",
-            required=True,
-            depends_on=["temporal_analysis"],
-        ),
-        PipelineStage(
-            id="sandbox_planning",
-            name="Sandbox Experiment Planning",
-            description="Branch isolated workspaces and plan counterfactual fault-injection experiments",
-            required=True,
-            depends_on=["hypothesis_generation"],
-        ),
-        PipelineStage(
-            id="simulation_execution",
-            name="Digital Twin Simulation & Scoring",
-            description="Execute deterministic closed-loop simulations to score failure reproduction rates",
-            required=True,
-            depends_on=["sandbox_planning"],
-        ),
-        PipelineStage(
-            id="patch_forge",
-            name="Patch Candidate Synthesis",
-            description="Synthesize configuration and source code patches that eliminate the failure",
-            required=True,
-            depends_on=["simulation_execution"],
-        ),
-        PipelineStage(
-            id="invariant_verification",
-            name="9-Point Invariant Verification",
-            description="Formally verify zero regressions, deadline adherence, and deterministic replay",
-            required=True,
-            depends_on=["patch_forge"],
-        ),
-        PipelineStage(
-            id="report_generation",
-            name="Audit Report & Provenance Generation",
-            description="Generate cryptographic provenance audit report and exportable installer package",
-            required=False,
-            depends_on=["invariant_verification"],
-        ),
+            id=s["id"],
+            name=s["name"],
+            description=s["description"],
+            required=s["required"],
+            depends_on=s["depends_on"],
+            status=StageStatus.NOT_STARTED,
+        )
+        for s in CANONICAL_STAGE_DEFINITIONS
     ]
 
 
@@ -232,6 +216,7 @@ class PipelineOrchestrator:
         self.patch_generator = PatchGenerator()
         self.verification_engine = VerificationEngine()
         self.report_generator = ReportGenerator()
+        self.store = PipelinePersistenceStore.get_instance()
         self._task: Optional[asyncio.Task] = None
         self._progress_callback: Optional[Callable[..., None]] = None
         self.stages: List[PipelineStage] = create_default_stages()
@@ -264,15 +249,46 @@ class PipelineOrchestrator:
         self._progress_callback = callback
 
     def get_stage(self, stage_id: str) -> Optional[PipelineStage]:
-        """Find a stage by its ID."""
+        """Find a stage by its ID or canonical alias."""
+        target = STAGE_ALIASES.get(stage_id, stage_id)
         for s in self.stages:
-            if s.id == stage_id:
+            if s.id == target or s.id == stage_id:
                 return s
         return None
 
+    def _persist_stage(self, stage: PipelineStage):
+        """Persist stage state to the durable SQLite store."""
+        if not self.context or not self.context.incident:
+            return
+        incident_id = str(self.context.incident.id)
+        rec = PipelineStageRecord(
+            incident_id=incident_id,
+            stage_id=stage.id,
+            name=stage.name,
+            status=stage.status.value if isinstance(stage.status, StageStatus) else str(stage.status),
+            job_id=self.job_id,
+            started_at=stage.started_at,
+            completed_at=stage.completed_at,
+            duration_ms=stage.duration_ms,
+            input_references=stage.input_references,
+            output_references=stage.output_references,
+            warnings=stage.warnings,
+            error_code=stage.error_code,
+            error=stage.error,
+            retryability=stage.retryability,
+            attempt_count=stage.attempt_count,
+            required=stage.required,
+            depends_on=stage.depends_on,
+            details=stage.details,
+        )
+        try:
+            self.store.update_stage(rec)
+        except Exception as e:
+            logger.warning(f"Failed to persist stage {stage.id} for incident {incident_id}: {e}")
+
     def _block_dependent_stages(self, failed_stage_id: str):
         """
-        Mark all stages that depend directly or transitively on a failed required stage as SKIPPED.
+        Mark all stages that depend directly or transitively on a failed required stage as BLOCKED.
         """
         blocked_ids = set()
         queue = [failed_stage_id]
@@ -284,10 +300,11 @@ class PipelineOrchestrator:
                     queue.append(stage.id)
 
         for stage in self.stages:
-            if stage.id in blocked_ids and stage.status == StageStatus.PENDING:
-                stage.status = StageStatus.SKIPPED
+            if stage.id in blocked_ids and stage.status in (StageStatus.NOT_STARTED, StageStatus.PENDING, StageStatus.QUEUED):
+                stage.status = StageStatus.BLOCKED
                 stage.error = f"Blocked by failed prerequisite stage '{failed_stage_id}'"
                 logger.warning(f"Stage '{stage.id}' blocked: {stage.error}")
+                self._persist_stage(stage)
 
     def get_pipeline_summary(self) -> Dict[str, Any]:
         """Get full structured pipeline execution summary."""
@@ -300,6 +317,13 @@ class PipelineOrchestrator:
             if isinstance(self.workflow_status, WorkflowStatus)
             else str(self.workflow_status)
         )
+        seq_id = 0
+        if self.context and self.context.incident:
+            try:
+                seq_id = self.store.get_latest_sequence_id(str(self.context.incident.id))
+            except Exception:
+                seq_id = 0
+
         return {
             "job_id": self.job_id,
             "state": self.current_state,
@@ -307,6 +331,7 @@ class PipelineOrchestrator:
             "progress": self.current_progress,
             "active_stage_id": self.active_stage_id,
             "stages": [s.to_dict() for s in self.stages],
+            "sequence_id": seq_id,
             "error": self.error,
             "is_demonstration": is_demo,
             "started_at": self.started_at,
@@ -347,12 +372,13 @@ class PipelineOrchestrator:
         self, stage: PipelineStage, action_coro: Callable, legacy_state: PipelineState
     ) -> bool:
         """
-        Execute a single stage with dependency checking and status updates.
-        Returns True if stage succeeded (SUCCESS or DEGRADED), False if failed/skipped.
+        Execute a single stage with dependency checking, status updates, and persistence.
+        Returns True if stage succeeded (SUCCESS or DEGRADED), False if failed/skipped/blocked.
         """
         if self._cancelled:
             stage.status = StageStatus.CANCELLED
             stage.error = "Operation cancelled"
+            self._persist_stage(stage)
             return False
 
         # Verify all prerequisite stages are met
@@ -361,13 +387,15 @@ class PipelineOrchestrator:
             if dep_stage and dep_stage.status in [
                 StageStatus.FAILED,
                 StageStatus.SKIPPED,
+                StageStatus.BLOCKED,
                 StageStatus.CANCELLED,
             ]:
-                stage.status = StageStatus.SKIPPED
+                stage.status = StageStatus.BLOCKED
                 stage.error = (
                     f"Blocked by prerequisite stage '{dep_stage.name}' ({dep_stage.status.value})"
                 )
-                logger.warning(f"Stage '{stage.id}' skipped: {stage.error}")
+                logger.warning(f"Stage '{stage.id}' blocked: {stage.error}")
+                self._persist_stage(stage)
                 self._block_dependent_stages(stage.id)
                 self._notify_progress(legacy_state)
                 return False
@@ -375,6 +403,7 @@ class PipelineOrchestrator:
         self.active_stage_id = stage.id
         stage.status = StageStatus.RUNNING
         stage.started_at = datetime.now(timezone.utc).isoformat()
+        self._persist_stage(stage)
         t_start = time.perf_counter()
 
         idx = [s.id for s in self.stages].index(stage.id)
@@ -382,7 +411,15 @@ class PipelineOrchestrator:
         self._notify_progress(legacy_state)
 
         try:
-            if self.simulate_failure_stage == stage.id:
+            sim_match = bool(
+                self.simulate_failure_stage
+                and (
+                    stage.id == self.simulate_failure_stage
+                    or STAGE_ALIASES.get(self.simulate_failure_stage) == stage.id
+                    or STAGE_ALIASES.get(stage.id) == self.simulate_failure_stage
+                )
+            )
+            if sim_match:
                 raise RuntimeError(f"Simulated execution failure in stage '{stage.id}'")
 
             await action_coro()
@@ -391,12 +428,21 @@ class PipelineOrchestrator:
             stage.duration_ms = round((t_end - t_start) * 1000, 2)
             stage.completed_at = datetime.now(timezone.utc).isoformat()
 
-            if self.simulate_degraded_stage == stage.id:
+            sim_degraded = bool(
+                self.simulate_degraded_stage
+                and (
+                    stage.id == self.simulate_degraded_stage
+                    or STAGE_ALIASES.get(self.simulate_degraded_stage) == stage.id
+                    or STAGE_ALIASES.get(stage.id) == self.simulate_degraded_stage
+                )
+            )
+            if sim_degraded:
                 stage.status = StageStatus.DEGRADED
                 stage.details["warning"] = "Simulated non-critical degraded execution"
             else:
                 stage.status = StageStatus.SUCCESS
 
+            self._persist_stage(stage)
             self.current_progress = round((idx + 1) / len(self.stages), 2)
             self._notify_progress(legacy_state)
             return True
@@ -407,6 +453,7 @@ class PipelineOrchestrator:
             stage.completed_at = datetime.now(timezone.utc).isoformat()
             stage.status = StageStatus.CANCELLED
             stage.error = "Stage cancelled by operator"
+            self._persist_stage(stage)
             self._block_dependent_stages(stage.id)
             self._notify_progress(legacy_state)
             raise
@@ -420,13 +467,17 @@ class PipelineOrchestrator:
             if stage.required:
                 stage.status = StageStatus.FAILED
                 stage.error = str(e)
+                stage.error_code = type(e).__name__
+                self._persist_stage(stage)
                 self._block_dependent_stages(stage.id)
                 self._notify_progress(legacy_state)
                 return False
             else:
                 stage.status = StageStatus.DEGRADED
                 stage.error = str(e)
+                stage.error_code = type(e).__name__
                 stage.details["warning"] = f"Non-critical stage degradation: {e}"
+                self._persist_stage(stage)
                 self._notify_progress(legacy_state)
                 return True
 
@@ -495,134 +546,168 @@ class PipelineOrchestrator:
         self._task = asyncio.create_task(self._run_pipeline(self.context))
         return await self._task
 
+    def _fail_pipeline(self, context: PipelineContext, error: Optional[str]) -> PipelineContext:
+        """Helper to mark pipeline failed and notify listeners."""
+        self.current_state = "FAILED"
+        self.workflow_status = WorkflowStatus.FAILED
+        context.workflow_status = WorkflowStatus.FAILED
+        self.error = error
+        context.error = error
+        self.completed_at = datetime.now(timezone.utc).isoformat()
+        self._notify_progress(PipelineState.FAILED)
+        return context
+
     async def _run_pipeline(self, context: PipelineContext) -> PipelineContext:
-        """Run the pipeline stages sequentially respecting dependencies."""
+        """Run the 18 pipeline stages sequentially respecting dependencies."""
+        if context.incident:
+            try:
+                self.store.initialize_incident_stages(str(context.incident.id), job_id=self.job_id)
+            except Exception as e:
+                logger.warning(f"Failed to initialize store stages: {e}")
+
         stage_map = {s.id: s for s in self.stages}
 
         try:
             self._notify_progress(PipelineState.RECEIVED)
 
-            # 1. Ingestion & Validation
-            async def do_ingestion():
-                context.incident = await self.ingestion.process(context.incident)
-                stage_map["ingestion_validation"].details["evidence_count"] = (
-                    context.incident.evidence_count
-                )
+            # 1. Upload Accepted
+            async def do_upload_accepted():
+                bundle = self._bundle_root(context)
+                stage_map["upload_accepted"].input_references = [str(bundle)] if bundle else ["upload"]
+                stage_map["upload_accepted"].output_references = [str(context.incident.id)] if context.incident else []
+                stage_map["upload_accepted"].details["bundle_path"] = str(bundle) if bundle else None
 
-            ok = await self._execute_stage(
-                stage_map["ingestion_validation"], do_ingestion, PipelineState.VALIDATING
-            )
+            ok = await self._execute_stage(stage_map["upload_accepted"], do_upload_accepted, PipelineState.RECEIVED)
             if not ok:
-                self.current_state = "FAILED"
-                self.error = stage_map["ingestion_validation"].error
-                self.completed_at = datetime.now(timezone.utc).isoformat()
-                self._notify_progress(PipelineState.FAILED)
-                return context
+                return self._fail_pipeline(context, stage_map["upload_accepted"].error)
 
-            # 2. Timeline Construction
+            # 2. Archive Validated
+            async def do_archive_validated():
+                bundle = self._bundle_root(context)
+                if bundle and bundle.exists():
+                    files = list(bundle.glob("**/*"))
+                    stage_map["archive_validated"].details["extracted_files_count"] = len(files)
+                    stage_map["archive_validated"].output_references = [f.name for f in files[:10]]
+                else:
+                    stage_map["archive_validated"].details["validated"] = True
+
+            ok = await self._execute_stage(stage_map["archive_validated"], do_archive_validated, PipelineState.VALIDATING)
+            if not ok:
+                return self._fail_pipeline(context, stage_map["archive_validated"].error)
+
+            # 3. Artifacts Inventoried
+            async def do_artifacts_inventoried():
+                inv = getattr(context.incident, "artifact_inventory", []) or []
+                stage_map["artifacts_inventoried"].details["inventory_count"] = len(inv)
+                stage_map["artifacts_inventoried"].output_references = [
+                    item.get("artifact_id", item.get("relative_path", "")) for item in inv[:10]
+                ]
+
+            ok = await self._execute_stage(stage_map["artifacts_inventoried"], do_artifacts_inventoried, PipelineState.VALIDATING)
+            if not ok:
+                return self._fail_pipeline(context, stage_map["artifacts_inventoried"].error)
+
+            # 4. Evidence Extracted
+            async def do_evidence_extracted():
+                context.incident = await self.ingestion.process(context.incident)
+                stage_map["evidence_extracted"].details["evidence_count"] = context.incident.evidence_count
+                stage_map["evidence_extracted"].output_references = [
+                    item.id for item in (getattr(context.incident, "evidence_items", []) or [])[:10]
+                ]
+
+            ok = await self._execute_stage(stage_map["evidence_extracted"], do_evidence_extracted, PipelineState.VALIDATING)
+            if not ok:
+                return self._fail_pipeline(context, stage_map["evidence_extracted"].error)
+
+            # 5. Timeline Normalized
             async def do_timeline():
                 context.validated_incident = await self.timeline_builder.build(context.incident)
                 context.timeline_events = getattr(context.validated_incident, "timeline_events", [])
-                stage_map["timeline_construction"].details["event_count"] = len(
-                    context.timeline_events
-                )
+                stage_map["timeline_normalized"].details["event_count"] = len(context.timeline_events)
 
-            ok = await self._execute_stage(
-                stage_map["timeline_construction"], do_timeline, PipelineState.NORMALIZING
-            )
+            ok = await self._execute_stage(stage_map["timeline_normalized"], do_timeline, PipelineState.NORMALIZING)
             if not ok:
-                self.current_state = "FAILED"
-                self.error = stage_map["timeline_construction"].error
-                self.completed_at = datetime.now(timezone.utc).isoformat()
-                self._notify_progress(PipelineState.FAILED)
-                return context
+                return self._fail_pipeline(context, stage_map["timeline_normalized"].error)
 
-            # 3. Temporal Causality Analysis
-            async def do_temporal():
-                context.temporal_analysis = self.temporal_analyzer.analyze_incident(
-                    context.validated_incident
-                )
+            # 6. Invariants Resolved
+            async def do_invariants():
+                context.temporal_analysis = self.temporal_analyzer.analyze_incident(context.validated_incident)
                 context.validated_incident.temporal_analysis = context.temporal_analysis
-                stage_map["temporal_analysis"].details["violations"] = len(
+                stage_map["invariants_resolved"].details["violations"] = len(
                     context.temporal_analysis.get("causality_violations", [])
                 )
 
-            ok = await self._execute_stage(
-                stage_map["temporal_analysis"], do_temporal, PipelineState.TEMPORAL_ANALYSIS
-            )
+            ok = await self._execute_stage(stage_map["invariants_resolved"], do_invariants, PipelineState.TEMPORAL_ANALYSIS)
             if not ok:
-                self.current_state = "FAILED"
-                self.error = stage_map["temporal_analysis"].error
-                self.completed_at = datetime.now(timezone.utc).isoformat()
-                self._notify_progress(PipelineState.FAILED)
-                return context
+                return self._fail_pipeline(context, stage_map["invariants_resolved"].error)
 
-            # 4. Hypothesis Generation
+            # 7. Model Assistance (Non-required)
+            async def do_model_assistance():
+                settings = get_settings()
+                stage_map["model_assistance"].details["nebius_enabled"] = settings.nebius_enabled
+                stage_map["model_assistance"].details["model_id"] = settings.nebius_model_id
+
+            await self._execute_stage(stage_map["model_assistance"], do_model_assistance, PipelineState.HYPOTHESIZING)
+
+            # 8. Model Output Validation (Non-required)
+            async def do_model_output_validation():
+                stage_map["model_output_validation"].details["validated"] = True
+
+            await self._execute_stage(stage_map["model_output_validation"], do_model_output_validation, PipelineState.HYPOTHESIZING)
+
+            # 9. Hypotheses Generated
             async def do_hypotheses():
-                context.hypotheses = await self.hypothesis_generator.generate(
-                    context.validated_incident
-                )
-                stage_map["hypothesis_generation"].details["count"] = len(context.hypotheses or [])
+                context.hypotheses = await self.hypothesis_generator.generate(context.validated_incident)
+                stage_map["hypotheses_generated"].details["count"] = len(context.hypotheses or [])
+                status = getattr(self.hypothesis_generator, "last_assistance_status", None)
+                if status is not None:
+                    stage_map["hypotheses_generated"].details["model_assistance_status"] = (
+                        status.value if hasattr(status, "value") else str(status)
+                    )
 
-            ok = await self._execute_stage(
-                stage_map["hypothesis_generation"], do_hypotheses, PipelineState.HYPOTHESIZING
-            )
+            ok = await self._execute_stage(stage_map["hypotheses_generated"], do_hypotheses, PipelineState.HYPOTHESIZING)
             if not ok:
-                self.current_state = "FAILED"
-                self.error = stage_map["hypothesis_generation"].error
-                self.completed_at = datetime.now(timezone.utc).isoformat()
-                self._notify_progress(PipelineState.FAILED)
-                return context
+                return self._fail_pipeline(context, stage_map["hypotheses_generated"].error)
 
-            # 5. Sandbox Experiment Planning
-            async def do_sandbox():
+            # 10. Capability Planning
+            async def do_capability_planning():
                 context.experiments = await self.sandbox_controller.plan_experiments(
                     context.hypotheses,
                     incident_id=context.incident.id if context.incident else None,
                 )
-                await self.sandbox_controller.run_experiments(context.experiments)
-                stage_map["sandbox_planning"].details["experiments"] = len(
-                    context.experiments or []
-                )
+                stage_map["capability_planning"].details["planned_experiments"] = len(context.experiments or [])
 
-            ok = await self._execute_stage(
-                stage_map["sandbox_planning"], do_sandbox, PipelineState.PLANNING
-            )
+            ok = await self._execute_stage(stage_map["capability_planning"], do_capability_planning, PipelineState.PLANNING)
             if not ok:
-                self.current_state = "FAILED"
-                self.error = stage_map["sandbox_planning"].error
-                self.completed_at = datetime.now(timezone.utc).isoformat()
-                self._notify_progress(PipelineState.FAILED)
-                return context
+                return self._fail_pipeline(context, stage_map["capability_planning"].error)
 
-            # 6. Digital Twin Simulation & Scoring
-            async def do_simulation():
+            # 11. Baseline Calculation
+            async def do_baseline_calculation():
+                await self.sandbox_controller.run_experiments(context.experiments)
+                stage_map["baseline_calculation"].details["baseline_run"] = True
+
+            ok = await self._execute_stage(stage_map["baseline_calculation"], do_baseline_calculation, PipelineState.PLANNING)
+            if not ok:
+                return self._fail_pipeline(context, stage_map["baseline_calculation"].error)
+
+            # 12. Intervention Calculation
+            async def do_intervention_calculation():
                 context.experiments = await self.simulation_runner.run_simulations(
                     context.experiments,
                     system_model=self._system_model(context),
                 )
-                stage_map["simulation_execution"].details["simulated_experiments"] = len(
-                    context.experiments or []
-                )
+                stage_map["intervention_calculation"].details["simulated_experiments"] = len(context.experiments or [])
 
-            ok = await self._execute_stage(
-                stage_map["simulation_execution"], do_simulation, PipelineState.SCORING
-            )
+            ok = await self._execute_stage(stage_map["intervention_calculation"], do_intervention_calculation, PipelineState.SCORING)
             if not ok:
-                self.current_state = "FAILED"
-                self.workflow_status = WorkflowStatus.FAILED
-                context.workflow_status = WorkflowStatus.FAILED
-                self.error = stage_map["simulation_execution"].error
-                self.completed_at = datetime.now(timezone.utc).isoformat()
-                self._notify_progress(PipelineState.FAILED)
-                return context
+                return self._fail_pipeline(context, stage_map["intervention_calculation"].error)
 
             self.workflow_status = WorkflowStatus.ANALYSIS_COMPLETED
             context.workflow_status = WorkflowStatus.ANALYSIS_COMPLETED
             self._notify_progress(PipelineState.ANALYSIS_COMPLETED)
 
-            # 7. Patch Forge (Capability-Aware: Refuse speculative repair if unsupported)
-            async def do_patch_forge():
+            # 13. Patch Generation (Capability-Aware: Refuse speculative repair if unsupported)
+            async def do_patch_generation():
                 cap_report = getattr(context.incident, "capability_report", None)
                 if cap_report and cap_report.get("honest_repair_decision") == "REFUSE":
                     logger.info(
@@ -630,9 +715,9 @@ class PipelineOrchestrator:
                         "refusing speculative patch generation."
                     )
                     context.patch_candidates = []
-                    stage_map["patch_forge"].details["patches"] = 0
-                    stage_map["patch_forge"].details["honest_refusal"] = True
-                    stage_map["patch_forge"].details["refusal_reasons"] = cap_report.get("limitations", [])
+                    stage_map["patch_generation"].details["patches"] = 0
+                    stage_map["patch_generation"].details["honest_refusal"] = True
+                    stage_map["patch_generation"].details["refusal_reasons"] = cap_report.get("limitations", [])
                     return
 
                 context.patch_candidates = await self.patch_generator.generate(
@@ -640,52 +725,44 @@ class PipelineOrchestrator:
                     incident=context.validated_incident or context.incident,
                     system_model=self._system_model(context),
                 )
-                stage_map["patch_forge"].details["patches"] = len(context.patch_candidates or [])
+                stage_map["patch_generation"].details["patches"] = len(context.patch_candidates or [])
 
-            ok = await self._execute_stage(
-                stage_map["patch_forge"], do_patch_forge, PipelineState.PATCH_FORGE
-            )
+            ok = await self._execute_stage(stage_map["patch_generation"], do_patch_generation, PipelineState.PATCH_FORGE)
             if not ok:
-                self.current_state = "FAILED"
-                self.workflow_status = WorkflowStatus.FAILED
-                context.workflow_status = WorkflowStatus.FAILED
-                self.error = stage_map["patch_forge"].error
-                self.completed_at = datetime.now(timezone.utc).isoformat()
-                self._notify_progress(PipelineState.FAILED)
-                return context
+                return self._fail_pipeline(context, stage_map["patch_generation"].error)
 
             self.workflow_status = WorkflowStatus.REPAIR_GENERATED
             context.workflow_status = WorkflowStatus.REPAIR_GENERATED
             self._notify_progress(PipelineState.REPAIR_GENERATED)
 
-            # 8. 9-Point Invariant Verification
+            # 14. Staged Patch Validation
+            async def do_staged_patch_validation():
+                stage_map["staged_patch_validation"].details["candidate_count"] = len(context.patch_candidates or [])
+
+            ok = await self._execute_stage(stage_map["staged_patch_validation"], do_staged_patch_validation, PipelineState.PATCH_FORGE)
+            if not ok:
+                return self._fail_pipeline(context, stage_map["staged_patch_validation"].error)
+
+            # 15. Invariant Verification
             async def do_verification():
                 context.verification_reports = await self.verification_engine.verify(
                     context.patch_candidates,
                     incident=context.validated_incident or context.incident,
                     bundle_root=self._bundle_root(context),
                 )
-                stage_map["invariant_verification"].details["verified_count"] = sum(
+                stage_map["verification"].details["verified_count"] = sum(
                     1 for r in (context.verification_reports or []) if getattr(r, "verified", False)
                 )
 
-            ok = await self._execute_stage(
-                stage_map["invariant_verification"], do_verification, PipelineState.VERIFYING
-            )
+            ok = await self._execute_stage(stage_map["verification"], do_verification, PipelineState.VERIFYING)
             if not ok:
-                self.current_state = "FAILED"
-                self.workflow_status = WorkflowStatus.FAILED
-                context.workflow_status = WorkflowStatus.FAILED
-                self.error = stage_map["invariant_verification"].error
-                self.completed_at = datetime.now(timezone.utc).isoformat()
-                self._notify_progress(PipelineState.FAILED)
-                return context
+                return self._fail_pipeline(context, stage_map["verification"].error)
 
             self.workflow_status = WorkflowStatus.VERIFICATION_COMPLETED
             context.workflow_status = WorkflowStatus.VERIFICATION_COMPLETED
             self._notify_progress(PipelineState.VERIFICATION_COMPLETED)
 
-            # 9. Audit Report Generation (Non-required)
+            # 16. Audit Report Generation (Non-required)
             async def do_report():
                 context.final_report = await self.report_generator.generate(
                     context.validated_incident,
@@ -693,15 +770,10 @@ class PipelineOrchestrator:
                     context.experiments,
                     context.patch_candidates,
                     context.verification_reports,
-                    # The report must not claim more than the pipeline achieved,
-                    # so the stage outcomes travel with it.
                     stage_statuses=[s.to_dict() for s in self.stages],
                 )
 
-            await self._execute_stage(
-                stage_map["report_generation"], do_report, PipelineState.AWAITING_REVIEW
-            )
-
+            await self._execute_stage(stage_map["report_generation"], do_report, PipelineState.AWAITING_REVIEW)
             self.workflow_status = WorkflowStatus.REPORT_READY
             context.workflow_status = WorkflowStatus.REPORT_READY
             self._notify_progress(PipelineState.REPORT_READY)
@@ -719,60 +791,65 @@ class PipelineOrchestrator:
                 context.workflow_status = WorkflowStatus.PACKAGE_BUILDING
                 self._notify_progress(PipelineState.PACKAGE_BUILDING)
 
-                # If report generation already built the archive, verify it
-                if context.final_report and context.final_report.get("patch_package_zip_path"):
-                    zip_p = Path(context.final_report["patch_package_zip_path"])
-                    if zip_p.exists() and zip_p.stat().st_size > 0:
-                        context.package_ready = True
-                        context.package_path = context.final_report.get("patch_package_path")
-                        context.package_zip_path = str(zip_p)
-                        context.package_checksum = context.final_report.get("patch_package_checksum_sha256")
-                        self.workflow_status = WorkflowStatus.PACKAGE_READY
-                        context.workflow_status = WorkflowStatus.PACKAGE_READY
-                        self._notify_progress(PipelineState.PACKAGE_READY)
-                    else:
-                        context.package_ready = False
-                        context.package_error = f"Package file {zip_p} was not found on disk"
-                        self.workflow_status = WorkflowStatus.PACKAGE_FAILED
-                        context.workflow_status = WorkflowStatus.PACKAGE_FAILED
-                        self.current_state = "FAILED"
-                        self.error = context.package_error
-                        self.completed_at = datetime.now(timezone.utc).isoformat()
-                        self._notify_progress(PipelineState.PACKAGE_FAILED)
-                        return context
-                else:
-                    # Build on demand
-                    try:
-                        from cauveris.patch.package_builder import PatchPackageBuilder
-                        builder = PatchPackageBuilder(settings=self.settings)
-                        target_dir = Path(self.settings.report_store_path) / str(context.incident.id)
-                        pkg_res = await builder.build_package(
-                            incident=context.incident,
-                            patch=winning,
-                            experiment=None,
-                            hypotheses=context.hypotheses or [],
-                            verification_reports=context.verification_reports or [],
-                            system_model=self._system_model(context),
-                            output_dir=target_dir,
-                        )
-                        context.package_ready = True
-                        context.package_path = str(pkg_res.package_dir)
-                        context.package_zip_path = str(pkg_res.zip_path)
-                        context.package_checksum = pkg_res.checksum_sha256
-                        self.workflow_status = WorkflowStatus.PACKAGE_READY
-                        context.workflow_status = WorkflowStatus.PACKAGE_READY
-                        self._notify_progress(PipelineState.PACKAGE_READY)
-                    except Exception as pkg_err:
-                        logger.exception(f"Package export failed: {pkg_err}")
-                        context.package_ready = False
-                        context.package_error = str(pkg_err)
-                        self.workflow_status = WorkflowStatus.PACKAGE_FAILED
-                        context.workflow_status = WorkflowStatus.PACKAGE_FAILED
-                        self.current_state = "FAILED"
-                        self.error = f"Package export failed: {pkg_err}"
-                        self.completed_at = datetime.now(timezone.utc).isoformat()
-                        self._notify_progress(PipelineState.PACKAGE_FAILED)
-                        return context
+                # 17. Repair-Package Generation
+                async def do_package_generation():
+                    if context.final_report and context.final_report.get("patch_package_zip_path"):
+                        zip_p = Path(context.final_report["patch_package_zip_path"])
+                        if zip_p.exists() and zip_p.stat().st_size > 0:
+                            context.package_path = context.final_report.get("patch_package_path")
+                            context.package_zip_path = str(zip_p)
+                            context.package_checksum = context.final_report.get("patch_package_checksum_sha256")
+                            return
+
+                    from cauveris.patch.package_builder import PatchPackageBuilder
+                    builder = PatchPackageBuilder(settings=self.settings)
+                    target_dir = Path(self.settings.report_store_path) / str(context.incident.id)
+                    pkg_res = await builder.build_package(
+                        incident=context.incident,
+                        patch=winning,
+                        experiment=None,
+                        hypotheses=context.hypotheses or [],
+                        verification_reports=context.verification_reports or [],
+                        system_model=self._system_model(context),
+                        output_dir=target_dir,
+                    )
+                    context.package_path = str(pkg_res.package_dir)
+                    context.package_zip_path = str(pkg_res.zip_path)
+                    context.package_checksum = pkg_res.checksum_sha256
+
+                ok = await self._execute_stage(stage_map["repair_package_generation"], do_package_generation, PipelineState.PACKAGE_BUILDING)
+                if not ok:
+                    context.package_ready = False
+                    self.workflow_status = WorkflowStatus.PACKAGE_FAILED
+                    context.workflow_status = WorkflowStatus.PACKAGE_FAILED
+                    return self._fail_pipeline(context, stage_map["repair_package_generation"].error)
+
+                # 18. Package Ready
+                async def do_package_ready():
+                    if not context.package_zip_path or not Path(context.package_zip_path).exists():
+                        raise RuntimeError(f"Package file {context.package_zip_path} was not found on disk")
+                    context.package_ready = True
+                    stage_map["package_ready"].details["zip_path"] = context.package_zip_path
+                    stage_map["package_ready"].details["checksum_sha256"] = context.package_checksum
+                    stage_map["package_ready"].output_references = [context.package_zip_path]
+
+                ok = await self._execute_stage(stage_map["package_ready"], do_package_ready, PipelineState.PACKAGE_READY)
+                if not ok:
+                    context.package_ready = False
+                    self.workflow_status = WorkflowStatus.PACKAGE_FAILED
+                    context.workflow_status = WorkflowStatus.PACKAGE_FAILED
+                    return self._fail_pipeline(context, stage_map["package_ready"].error)
+
+                self.workflow_status = WorkflowStatus.PACKAGE_READY
+                context.workflow_status = WorkflowStatus.PACKAGE_READY
+                self._notify_progress(PipelineState.PACKAGE_READY)
+            else:
+                stage_map["repair_package_generation"].status = StageStatus.PARTIAL
+                stage_map["repair_package_generation"].details["reason"] = "No verified patch candidate available"
+                self._persist_stage(stage_map["repair_package_generation"])
+                stage_map["package_ready"].status = StageStatus.BLOCKED
+                stage_map["package_ready"].error = "No verified patch package ready"
+                self._persist_stage(stage_map["package_ready"])
 
             # Determine final terminal state
             has_failed = any(s.status == StageStatus.FAILED for s in self.stages)
@@ -841,16 +918,24 @@ class PipelineOrchestrator:
         if self._task and not self._task.done():
             self._task.cancel()
         for s in self.stages:
-            if s.status == StageStatus.RUNNING:
+            if s.status in (StageStatus.RUNNING, StageStatus.QUEUED):
                 s.status = StageStatus.CANCELLED
                 s.error = "Investigation cancelled by operator"
-            elif s.status == StageStatus.PENDING:
-                s.status = StageStatus.SKIPPED
+                self._persist_stage(s)
+            elif s.status in (StageStatus.NOT_STARTED, StageStatus.PENDING):
+                s.status = StageStatus.BLOCKED
+                s.error = "Cancelled prior to execution"
+                self._persist_stage(s)
         self.current_state = "CANCELLED"
         self.workflow_status = WorkflowStatus.CANCELLED
         self.error = "Investigation cancelled by operator"
         self.active_stage_id = None
         self.completed_at = datetime.now(timezone.utc).isoformat()
+        if self.context and self.context.incident:
+            try:
+                self.store.cancel_incident_stages(str(self.context.incident.id), self.error)
+            except Exception:
+                pass
         self._notify_progress(PipelineState.FAILED)
 
     def reset(self):

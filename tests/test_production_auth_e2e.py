@@ -271,6 +271,49 @@ async def test_cross_user_isolation(setup_test_auth_db):
         )
         assert res_b_dl.status_code == 403
 
+        # User B attempts to access hypotheses -> must be 403 Forbidden
+        res_b_hypo = await client.get(
+            f"/api/v1/incidents/{inc_id}/hypotheses",
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+        assert res_b_hypo.status_code == 403
+
+        # User B attempts to access experiments -> must be 403 Forbidden
+        res_b_exp = await client.get(
+            f"/api/v1/incidents/{inc_id}/experiments",
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+        assert res_b_exp.status_code == 403
+
+        # User B attempts to access patches -> must be 403 Forbidden
+        res_b_patches = await client.get(
+            f"/api/v1/incidents/{inc_id}/patches",
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+        assert res_b_patches.status_code == 403
+
+        # User B attempts to access report -> must be 403 Forbidden
+        res_b_report = await client.get(
+            f"/api/v1/incidents/{inc_id}/report",
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+        assert res_b_report.status_code == 403
+
+        # User B attempts to trigger rollback -> must be 403 Forbidden
+        res_b_rollback = await client.post(
+            f"/api/v1/incidents/{inc_id}/apply-patch",
+            json={"target_directory": ".", "rollback": True},
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+        assert res_b_rollback.status_code == 403
+
+        # User B attempts to read model execution records -> must be 403 Forbidden
+        res_b_exec = await client.get(
+            f"/api/v1/incidents/{inc_id}/model-executions",
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+        assert res_b_exec.status_code == 403
+
 
 def test_production_security_validation_refuses_insecure_demo_auth():
     """Test validate_production_security prevents startup with demo auth in production."""

@@ -11,6 +11,8 @@ import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, model_validator
 
+from cauveris.analysis.provenance import ProvenanceClass, ProvenanceRecord, create_provenance_record
+
 
 class BaselineRun(BaseModel):
     """
@@ -30,11 +32,30 @@ class BaselineRun(BaseModel):
     random_seed: int = 42
     trial_count: int = 12
     baseline_outputs: Dict[str, Any] = Field(default_factory=dict)
+    metric_provenance: Dict[str, ProvenanceRecord] = Field(default_factory=dict)
     named_reproduced_failure: str
     failed_invariants: List[str] = Field(default_factory=list)
     model_adequacy: str = "CONFIRMED"
     limitations: List[str] = Field(default_factory=list)
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+
+    def record_output_metric(
+        self,
+        name: str,
+        value: Optional[float],
+        unit: str = "",
+        provenance: ProvenanceClass = ProvenanceClass.SIMULATED,
+        rationale: Optional[str] = None,
+    ) -> None:
+        """Records an output metric with explicit provenance."""
+        self.baseline_outputs[name] = value if value is not None else "UNAVAILABLE"
+        self.metric_provenance[name] = create_provenance_record(
+            parameter_id=name,
+            value=value,
+            unit=unit,
+            provenance=provenance,
+            calculation_rationale=rationale or f"Simulated via {self.model_id} v{self.model_version}",
+        )
 
     @model_validator(mode="before")
     @classmethod
@@ -67,10 +88,29 @@ class InterventionRun(BaseModel):
     random_seed: int = 42
     trial_count: int = 12
     outputs: Dict[str, Any] = Field(default_factory=dict)
+    metric_provenance: Dict[str, ProvenanceRecord] = Field(default_factory=dict)
     invariant_results: Dict[str, bool] = Field(default_factory=dict)
     regression_results: Dict[str, Any] = Field(default_factory=dict)
     limitations: List[str] = Field(default_factory=list)
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat())
+
+    def record_output_metric(
+        self,
+        name: str,
+        value: Optional[float],
+        unit: str = "",
+        provenance: ProvenanceClass = ProvenanceClass.SIMULATED,
+        rationale: Optional[str] = None,
+    ) -> None:
+        """Records an output metric with explicit provenance."""
+        self.outputs[name] = value if value is not None else "UNAVAILABLE"
+        self.metric_provenance[name] = create_provenance_record(
+            parameter_id=name,
+            value=value,
+            unit=unit,
+            provenance=provenance,
+            calculation_rationale=rationale or f"Simulated intervention via {self.model_id} v{self.model_version}",
+        )
 
 
 class RunComparison(BaseModel):
@@ -89,6 +129,7 @@ class RunComparison(BaseModel):
     before_metrics: Dict[str, Any]
     after_metrics: Dict[str, Any]
     delta: Dict[str, Any]
+    metric_provenance: Dict[str, ProvenanceRecord] = Field(default_factory=dict)
     uncertainty: Optional[float] = None
     regressions: List[str] = Field(default_factory=list)
     conclusion: str
@@ -115,6 +156,19 @@ def compare_runs(
         raise ValueError(
             f"Comparison rejected: Invariant set mismatch. Baseline used {baseline.invariant_set_id}, "
             f"Intervention used {intervention.invariant_set_id}. Both must reference identical invariant set."
+        )
+
+    # 1b. Input Set and Seed Comparability Validation
+    if baseline.model_input_set_id != intervention.model_input_set_id:
+        raise ValueError(
+            f"Comparison rejected: Model input set mismatch. Baseline used {baseline.model_input_set_id}, "
+            f"Intervention used {intervention.model_input_set_id}. Both must evaluate identical input sets."
+        )
+
+    if baseline.random_seed != intervention.random_seed:
+        raise ValueError(
+            f"Comparison rejected: Random seed mismatch. Baseline used seed {baseline.random_seed}, "
+            f"Intervention used seed {intervention.random_seed}. Both must evaluate under identical random seeds."
         )
 
     # 2. Candidate Linkage Validation
@@ -170,6 +224,10 @@ def compare_runs(
 
     comp_id = f"cmp_{baseline.baseline_run_id}_{intervention.intervention_run_id}"
 
+    comp_provenance: Dict[str, ProvenanceRecord] = {}
+    comp_provenance.update(baseline.metric_provenance)
+    comp_provenance.update(intervention.metric_provenance)
+
     return RunComparison(
         comparison_id=comp_id,
         baseline_run_id=baseline.baseline_run_id,
@@ -183,6 +241,7 @@ def compare_runs(
         before_metrics=before,
         after_metrics=after,
         delta=delta,
+        metric_provenance=comp_provenance,
         regressions=regressions,
         conclusion=conclusion,
         limitations=limitations,

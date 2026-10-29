@@ -106,6 +106,7 @@ class LocalModelGateway(ModelGateway):
         schema: Optional[Type[BaseModel]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        **kwargs: Any,
     ) -> ModelResponse:
         """
         Send the prompt to the first local server that answers.

@@ -123,6 +123,16 @@ class ReportGenerator:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+        # Attach recorded model executions if available
+        try:
+            from cauveris.model_gateway.records import get_execution_store
+            incident_report["model_executions"] = [
+                rec.model_dump() for rec in get_execution_store().get_by_incident(incident.id)
+            ]
+        except Exception as exc:
+            logger.debug(f"Could not attach model executions: {exc}")
+            incident_report["model_executions"] = []
+
         # Write incident report
         report_path = report_dir / "incident_report.json"
         with open(report_path, "w", encoding="utf-8") as f:
@@ -151,8 +161,184 @@ class ReportGenerator:
             incident_report["patch_package_zip_path"] = str(pkg_res.zip_path)
             incident_report["patch_package_checksum_sha256"] = pkg_res.checksum_sha256
 
+        # Generate comprehensive human-readable Markdown report
+        md_text = self._generate_markdown_report(incident_report)
+        md_report_path = report_dir / "incident_report.md"
+        with open(md_report_path, "w", encoding="utf-8") as f:
+            f.write(md_text)
+
+        incident_report["report_markdown_path"] = str(md_report_path)
+        incident_report["report_json_path"] = str(report_path)
+        incident_report["report_markdown"] = md_text
+
+        # Re-save JSON with the paths
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(incident_report, f, indent=2, default=str)
+
         logger.info(f"Report generated at {report_dir}")
         return incident_report
+
+    def _generate_markdown_report(self, data: Dict[str, Any]) -> str:
+        lines: List[str] = []
+        inc_id = data.get("incident_id", "UNKNOWN")
+        title = data.get("title", "Incident Report")
+        status = data.get("status", "INCOMPLETE")
+        gen_at = data.get("generated_at", "UNAVAILABLE")
+
+        lines.append(f"# Incident Investigation Report: {inc_id} - {title}\n")
+        lines.append(f"**Generated**: `{gen_at}` | **Investigation Status**: `{status}`\n")
+        lines.append("---\n")
+
+        # 1. Incident Overview
+        lines.append("## 1. Incident Overview\n")
+        lines.append(f"- **Incident ID**: {inc_id}")
+        lines.append(f"- **Title**: {title}")
+        lines.append(f"- **System**: {data.get('system_name') or 'UNAVAILABLE'}")
+        lines.append(f"- **Description**: {data.get('description') or 'UNAVAILABLE'}")
+        timeline = data.get("timeline") or []
+        if timeline:
+            lines.append(f"- **Timeline Events**: {len(timeline)} event(s) recorded.")
+        else:
+            lines.append("- **Timeline**: UNAVAILABLE: No timeline events recorded")
+        lines.append("")
+
+        # 2. Evidence Grounding & Inventory
+        lines.append("## 2. Evidence Grounding & Inventory\n")
+        ev_sum = data.get("evidence_summary", {})
+        total_ev = ev_sum.get("total_evidence_items", 0)
+        req_ev = ev_sum.get("required_evidence_items", 0)
+        missing_req = ev_sum.get("missing_required_evidence", [])
+        lines.append(f"- **Total Evidence Items**: {total_ev}")
+        lines.append(f"- **Required Evidence Items**: {req_ev}")
+        if missing_req:
+            lines.append(f"- **Missing Required Evidence**: {', '.join(missing_req)}")
+        else:
+            lines.append("- **Missing Required Evidence**: None")
+        lines.append("")
+
+        # 3. Root Cause Analysis & Hypotheses
+        lines.append("## 3. Root Cause Analysis & Hypotheses\n")
+        hyps = data.get("hypotheses") or []
+        if hyps:
+            for i, h in enumerate(hyps, 1):
+                h_id = h.get("hypothesis_id", f"H{i}")
+                claim = h.get("causal_claim", "UNAVAILABLE")
+                conf = h.get("confidence_prior", 0.0)
+                supp = h.get("supporting_evidence_ids") or h.get("supporting_artifact_ids") or []
+                contra = h.get("contradicting_evidence_ids") or h.get("contradicting_artifact_ids") or []
+                falsify = h.get("falsification_criteria") or h.get("falsifying_observation") or "UNAVAILABLE"
+                speculative = h.get("speculative", False)
+                lines.append(f"### {h_id}: {claim}")
+                lines.append(f"- **Confidence**: {conf:.2f} ({'SPECULATIVE' if speculative else 'GROUNDED'})")
+                if h.get("confidence_rationale"):
+                    lines.append(f"- **Confidence Rationale**: {h['confidence_rationale']}")
+                if h.get("provider_execution_id"):
+                    lines.append(f"- **Provider Execution ID**: `{h['provider_execution_id']}`")
+                lines.append(f"- **Supporting Evidence**: {', '.join(supp) if supp else 'None'}")
+                lines.append(f"- **Contradicting Evidence**: {', '.join(contra) if contra else 'None'}")
+                lines.append(f"- **Falsification Criteria**: {falsify}")
+                lines.append("")
+        else:
+            lines.append("UNAVAILABLE: No causal hypotheses were formulated for this incident.\n")
+
+        # 4. Simulation Results & Reproduction
+        lines.append("## 4. Digital Twin Simulation & Verification\n")
+        exps = data.get("experiments") or []
+        if exps:
+            for exp in exps:
+                exp_id = exp.get("experiment_id", "")
+                repro_rate = exp.get("reproduction_rate", 0.0)
+                repro_count = exp.get("reproduction_count", 0)
+                trial_count = exp.get("trial_count", 0)
+                conclusion = exp.get("conclusion", "UNAVAILABLE")
+                lines.append(f"### Experiment `{exp_id}`")
+                lines.append(f"- **Intervention**: {exp.get('intervention', 'UNAVAILABLE')}")
+                lines.append(f"- **Reproduction**: {repro_count}/{trial_count} trials ({repro_rate:.1%})")
+                lines.append(f"- **Conclusion**: {conclusion}")
+                lines.append("")
+        else:
+            lines.append("NOT_PERFORMED: No digital twin simulations were executed.\n")
+
+        # 5. Patch Details
+        lines.append("## 5. Candidate Patches & Structure-Aware Edits\n")
+        patches = data.get("patch_candidates") or []
+        if patches:
+            for p in patches:
+                p_id = p.get("candidate_id", "")
+                aff = p.get("affected_files") or []
+                level = p.get("verification_level", "UNVERIFIED")
+                is_sel = p.get("is_selected", False)
+                lines.append(f"### Candidate `{p_id}` ({'SELECTED' if is_sel else 'NOT_SELECTED'})")
+                lines.append(f"- **Target Files**: {', '.join(aff) if aff else 'None'}")
+                lines.append(f"- **Verification Level**: `{level}` | **Verified**: `{p.get('verified', False)}`")
+                if p.get("before_hash") and p.get("after_hash"):
+                    lines.append(f"- **Target Checksums**: before `{p['before_hash'][:12]}...` -> after `{p['after_hash'][:12]}...`")
+                if p.get("rationale"):
+                    lines.append(f"- **Rationale**: {p['rationale']}")
+                if p.get("unified_diff"):
+                    lines.append("\n```diff")
+                    lines.append(p["unified_diff"].strip())
+                    lines.append("```\n")
+        else:
+            lines.append("UNAVAILABLE: No candidate patches were produced.\n")
+
+        # 6. Verification Summary
+        lines.append("## 6. Atomic Verification Summary\n")
+        v_reports = data.get("verification_reports") or []
+        if v_reports:
+            for rep in v_reports:
+                cand_id = rep.get("patch_candidate_id", "")
+                v_level = rep.get("verification_level", "UNVERIFIED")
+                v_sum = rep.get("verification_summary") or {}
+                ov_status = v_sum.get("overall_status", "UNKNOWN")
+                lines.append(f"### Verification for `{cand_id}`: `{v_level}` ({ov_status})")
+                checks = v_sum.get("checks") or []
+                if checks:
+                    lines.append("| Check Name | Required | Status | Target Level | Details |")
+                    lines.append("|---|---|---|---|---|")
+                    for c in checks:
+                        lines.append(f"| {c.get('name')} | {'Yes' if c.get('required') else 'No'} | `{c.get('status')}` | `{c.get('target_level')}` | {c.get('failure_reason') or c.get('actual') or 'OK'} |")
+                    lines.append("")
+                if v_sum.get("rejection_reasons"):
+                    lines.append("**Rejection Reasons**:")
+                    for rr in v_sum["rejection_reasons"]:
+                        lines.append(f"- {rr}")
+                    lines.append("")
+        else:
+            lines.append("NOT_PERFORMED: No atomic verification checks were executed.\n")
+
+        # 7. Repair Package & Deployment
+        lines.append("## 7. Repair Package & Deployment References\n")
+        sel_rep = data.get("selected_repair_id")
+        pkg_path = data.get("patch_package_path")
+        pkg_zip = data.get("patch_package_zip_path")
+        pkg_sha = data.get("patch_package_checksum_sha256")
+        if sel_rep and pkg_zip:
+            lines.append(f"- **Selected Repair Candidate**: `{sel_rep}`")
+            if pkg_path:
+                lines.append(f"- **Package Staging Path**: `{pkg_path}`")
+            lines.append(f"- **Package ZIP Path**: `{pkg_zip}`")
+            lines.append(f"- **Package Checksum (SHA-256)**: `{pkg_sha}`")
+        else:
+            lines.append("NOT_PERFORMED: No verified repair package has been built or staged.\n")
+
+        # 8. Model Assistance Transparency
+        lines.append("## 8. Model Assistance Transparency\n")
+        mod_execs = data.get("model_executions") or []
+        if mod_execs:
+            lines.append("| Execution ID | Provider | Model | Task | Tokens | Created At |")
+            lines.append("|---|---|---|---|---|---|")
+            for m in mod_execs:
+                m_model = m.get("model_name") or m.get("model_id") or "UNAVAILABLE"
+                m_task = m.get("task_type") or m.get("task_id") or "UNAVAILABLE"
+                usage = m.get("usage") or {}
+                tokens = m.get("total_tokens") or ((usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0))
+                lines.append(f"| `{m.get('execution_id', '')[:16]}` | {m.get('provider')} | {m_model} | {m_task} | {tokens} | {m.get('created_at', '')} |")
+            lines.append("")
+        else:
+            lines.append("NOT_PERFORMED: No external model provider executions recorded for this incident.\n")
+
+        return "\n".join(lines)
 
     async def _generate_patch_package(
         self,
@@ -263,9 +449,15 @@ class ReportGenerator:
             "causal_claim": hypothesis.causal_claim,
             "status": hypothesis.status,
             "supporting_artifact_ids": hypothesis.supporting_artifact_ids,
+            "supporting_evidence_ids": getattr(hypothesis, "supporting_evidence_ids", []) or hypothesis.supporting_artifact_ids,
             "contradicting_artifact_ids": hypothesis.contradicting_artifact_ids,
+            "contradicting_evidence_ids": getattr(hypothesis, "contradicting_evidence_ids", []) or hypothesis.contradicting_artifact_ids,
             "missing_evidence": hypothesis.missing_evidence,
             "confidence_prior": hypothesis.confidence_prior,
+            "confidence_rationale": getattr(hypothesis, "confidence_rationale", None),
+            "provider_execution_id": getattr(hypothesis, "provider_execution_id", None),
+            "falsification_criteria": getattr(hypothesis, "falsification_criteria", None) or hypothesis.falsifying_observation,
+            "speculative": getattr(hypothesis, "speculative", False),
             "expected_observation": hypothesis.expected_observation,
             "falsifying_observation": hypothesis.falsifying_observation,
             "intervention": hypothesis.intervention,
@@ -298,6 +490,14 @@ class ReportGenerator:
         """Convert PatchCandidate object to dictionary."""
         return {
             "candidate_id": patch.candidate_id,
+            "incident_id": getattr(patch, "incident_id", None),
+            "hypothesis_id": getattr(patch, "hypothesis_id", None),
+            "target_file": getattr(patch, "target_file", None) or (patch.affected_files[0] if patch.affected_files else None),
+            "rationale": getattr(patch, "rationale", None),
+            "before_hash": getattr(patch, "before_hash", None),
+            "after_hash": getattr(patch, "after_hash", None),
+            "file_checksums": getattr(patch, "file_checksums", {}),
+            "is_selected": getattr(patch, "is_selected", False),
             "affected_files": patch.affected_files,
             "lines_changed": patch.lines_changed,
             "unified_diff": patch.unified_diff,
@@ -311,6 +511,7 @@ class ReportGenerator:
             "score": patch.score,
             "rejection_reason": patch.rejection_reason,
             "applied_cleanly": patch.applied_cleanly,
+            "applies_cleanly": getattr(patch, "applies_cleanly", patch.applied_cleanly),
             "regression_test_fails_before": patch.regression_test_fails_before,
             "regression_test_passes_after": patch.regression_test_passes_after,
             "original_failure_not_reproduced": patch.original_failure_not_reproduced,
@@ -320,12 +521,15 @@ class ReportGenerator:
             "forbidden_change_scan_passes": patch.forbidden_change_scan_passes,
             "rollback_test_passes": patch.rollback_test_passes,
             "verified": patch.verified,
+            "verification_level": getattr(patch, "verification_level", "UNVERIFIED"),
+            "verification_summary": getattr(patch, "verification_summary", None),
         }
 
     def _verification_to_dict(self, report: VerificationReport) -> Dict[str, Any]:
         """Convert VerificationReport object to dictionary."""
         return {
             "patch_candidate_id": report.patch_candidate_id,
+            "incident_id": getattr(report, "incident_id", None),
             "applies_cleanly": report.applies_cleanly,
             "regression_test_fails_before": report.regression_test_fails_before,
             "regression_test_passes_after": report.regression_test_passes_after,
@@ -336,6 +540,8 @@ class ReportGenerator:
             "forbidden_change_scan_passes": report.forbidden_change_scan_passes,
             "rollback_test_passes": report.rollback_test_passes,
             "verified": report.verified,
+            "verification_level": getattr(report, "verification_level", "UNVERIFIED"),
+            "verification_summary": getattr(report, "verification_summary", None),
             "details": report.details,
         }
 

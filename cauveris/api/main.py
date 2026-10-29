@@ -12,6 +12,8 @@ import os
 import zipfile
 import re
 import hashlib
+import io
+import html
 from pathlib import Path, PurePath
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
@@ -20,6 +22,7 @@ from threading import Lock
 from fastapi import (
     FastAPI,
     File,
+    Form,
     UploadFile,
     HTTPException,
     BackgroundTasks,
@@ -35,6 +38,7 @@ from pydantic import BaseModel
 from cauveris.schemas.incident import Incident, EvidenceItem
 from cauveris.schemas.hypothesis import Hypothesis
 from cauveris.schemas.experiment import Experiment
+from cauveris.schemas.base import StatusLabel
 from cauveris.schemas.patch import PatchCandidate, VerificationReport
 from cauveris.analysis.system_model import SystemModel, get_system_model
 from cauveris.api.sample_loader import load_explicit_sample
@@ -74,7 +78,9 @@ from cauveris.concurrency import (
 )
 from cauveris.job_queue import init_job_queue, close_job_queue
 from cauveris.config import get_settings
+from cauveris.api.deps import get_current_user, get_optional_user
 from cauveris.api.holographic import router as holographic_router, get_holographic_reconstruction
+from cauveris.packaging.api_router import router as packaging_router
 
 
 class CreateIncidentRequest(BaseModel):
@@ -335,7 +341,7 @@ async def correlation_id_middleware(request: Request, call_next):
 async def rate_limit_middleware(request: Request, call_next):
     """Apply rate limiting to all endpoints based on cost class."""
     # Skip rate limiting for health checks
-    if request.url.path in ["/health", "/api/v1/health", "/", "/api/v1/limits"]:
+    if request.url.path in ["/health", "/api/v1/health", "/ready", "/api/v1/ready", "/", "/api/v1/limits"]:
         return await call_next(request)
 
     # Determine cost class for this endpoint
@@ -519,6 +525,8 @@ async def auth_middleware(request: Request, call_next):
         "/",
         "/health",
         "/api/v1/health",
+        "/ready",
+        "/api/v1/ready",
         "/api/v1/limits",
         "/api/v1/auth/login",
         "/api/v1/auth/register",
@@ -713,36 +721,6 @@ async def check_incident_access(
             request_id=request_id,
         )
     )
-
-
-async def get_current_user(request: Request) -> tuple[str, str, str]:
-    """
-    Get authenticated user identity from request state.
-    Returns: (user_id, org_id, role)
-    Raises HTTPException 401 if not authenticated.
-    """
-    if not getattr(request.state, "authenticated", False):
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return (
-        request.state.auth_user_id,
-        request.state.auth_org_id,
-        request.state.auth_role,
-    )
-
-
-async def get_optional_user(request: Request) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Get user identity if authenticated, otherwise None."""
-    if getattr(request.state, "authenticated", False):
-        return (
-            request.state.auth_user_id,
-            request.state.auth_org_id,
-            request.state.auth_role,
-        )
-    return None, None, None
 
 
 # In-memory storage for incidents (replace with database in production)
@@ -1165,7 +1143,9 @@ def _resolve_hypothesis(hypotheses: list, hypothesis_id: str) -> Optional[Hypoth
         index = int(clean[1:]) - 1
         if 0 <= index < len(hypotheses):
             return hypotheses[index]
-    return hypotheses[0]
+    if clean in ("", "default"):
+        return hypotheses[0]
+    return None
 
 
 def _incident_system_model(
@@ -1343,6 +1323,7 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
 
 # Include holographic router
 app.include_router(holographic_router, prefix="/api/v1")
+app.include_router(packaging_router)
 
 
 @app.get("/api/v1/incidents/{incident_id}/holographic/reconstruction")
@@ -1380,8 +1361,41 @@ async def root():
 @app.get("/health")
 @app.get("/api/v1/health")
 async def health():
-    """Health check endpoint."""
+    """Health check endpoint (Liveness probe)."""
     return {"status": "healthy", "service": "cauveris", "version": "0.1.0"}
+
+
+@app.get("/ready")
+@app.get("/api/v1/ready")
+async def readiness():
+    """
+    Readiness probe for deployment orchestrator (Nebius / Kubernetes).
+    Confirms core storage and mandatory dependencies are ready.
+    """
+    settings = get_settings()
+    auth_store = get_auth_store()
+
+    if auth_store is None:
+        raise HTTPException(status_code=503, detail="Auth database store is not initialized")
+
+    # If live Nebius provider is mandatory, verify reachability
+    if settings.model_provider_required:
+        from cauveris.model_gateway.nebius import NebiusModelGateway
+        gw = NebiusModelGateway(timeout=3.0)
+        probe = await gw.probe()
+        if not probe.get("reachable"):
+            raise HTTPException(
+                status_code=503,
+                detail=f"Live model provider is mandatory but Nebius is unreachable: {probe.get('error')}",
+            )
+
+    return {
+        "status": "ready",
+        "service": "cauveris",
+        "mode": settings.runtime_mode,
+        "provider_required": settings.model_provider_required,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # =========================================================================
@@ -2631,6 +2645,8 @@ async def create_incident(
         orch.context = PipelineContext(incident=incident)
         pipeline_tasks[incident.id] = orch
         pipeline_progress[incident.id] = orch.get_pipeline_summary()
+        from cauveris.state_machine.persistence import PipelinePersistenceStore
+        PipelinePersistenceStore.get_instance().initialize_incident_stages(incident.id, overwrite=True)
         logger.info(f"Loaded golden incident {incident.id} [DEMO BENCHMARK]")
 
         # Record creation for limit tracking
@@ -2684,6 +2700,8 @@ async def create_incident(
     orch.context = PipelineContext(incident=incident)
     pipeline_tasks[incident_id] = orch
     pipeline_progress[incident_id] = orch.get_pipeline_summary()
+    from cauveris.state_machine.persistence import PipelinePersistenceStore
+    PipelinePersistenceStore.get_instance().initialize_incident_stages(incident_id, overwrite=True)
     logger.info(f"Created empty incident {incident_id}")
 
     # Record creation for limit tracking
@@ -2718,6 +2736,154 @@ async def create_incident(
         media_type="application/json",
         headers=limit_headers,
     )
+
+
+
+@app.post("/api/v1/incidents/upload")
+async def upload_and_create_incident(
+    request: Request,
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    system_name: Optional[str] = Form(None),
+    user_data: tuple = Depends(get_current_user),
+):
+    """
+    Canonical single-step incident upload and creation from a ZIP package.
+    Computes package SHA-256, validates archive, extracts securely,
+    creates incident and workspace, inventories artifacts, and initializes pipeline.
+    Requires: incident:create and evidence:upload permissions.
+    """
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    await authorize(
+        auth_store,
+        user,
+        "incident:create",
+        ip=request.client.host if request.client else "unknown",
+        user_agent=request.headers.get("User-Agent", ""),
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+    allowed, error_message, retry_after, limit_headers = _check_incident_creation_limits(request)
+    if not allowed:
+        raise HTTPException(
+            status_code=429 if retry_after > 0 else 409,
+            detail=error_message,
+            headers={**limit_headers, "Retry-After": str(retry_after)} if retry_after > 0 else limit_headers,
+        )
+
+    if file.filename is None or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="File must be a ZIP archive")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    package_sha256 = hashlib.sha256(content).hexdigest()
+    safe_name = PurePath(file.filename.replace("\\", "/")).name
+    if not safe_name or safe_name in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid file name")
+
+    settings = get_settings()
+    try:
+        with zipfile.ZipFile(io.BytesIO(content), "r") as zf:
+            members = zf.infolist()
+            if not members:
+                raise ValueError("ZIP archive is empty")
+            if len(members) > settings.max_archive_members:
+                raise ValueError("ZIP archive exceeds the member threshold")
+            uncompressed_size = sum(max(0, int(m.file_size)) for m in members)
+            if uncompressed_size > settings.max_archive_uncompressed_size:
+                raise ValueError("ZIP archive exceeds the uncompressed-size threshold")
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid ZIP file: archive is corrupt")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=f"Invalid ZIP file: {str(ve)}")
+
+    short_uuid = uuid.uuid4().hex[:8].upper()
+    incident_id = f"INC-{short_uuid}"
+    resolved_title = title or file.filename.replace(".zip", "").replace("-", " ").replace("_", " ").title()
+
+    incident = Incident(
+        id=incident_id,
+        title=resolved_title,
+        description=description or "Uploaded incident bundle",
+        system_name=system_name or "robotic-worker",
+        is_demonstration=False,
+    )
+    incident._owner_user_id = user_id
+    incident._owner_org_id = org_id
+    incident._is_anonymous = False
+    incident.package_sha256 = package_sha256
+    setattr(incident, "_uploaded_filename", file.filename)
+
+    extract_dir = Path(settings.evidence_store_path) / incident_id
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    zip_path = safe_join(str(UPLOAD_DIR), f"{incident_id}_{safe_name}")
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(zip_path, "wb") as buf:
+            buf.write(content)
+        extracted_files = extract_zip_safely(zip_path, extract_dir)
+    finally:
+        if zip_path.exists():
+            zip_path.unlink()
+
+    incident.bundle_path = str(extract_dir)
+    incident.manifest = {
+        "bundle_path": str(extract_dir),
+        "package_sha256": package_sha256,
+        "uploaded_filename": file.filename,
+    }
+
+    controller = IngestionController()
+    for extracted_file in extracted_files:
+        try:
+            rel = extracted_file.relative_to(extract_dir)
+            det_type = controller._detect_file_type(extracted_file)
+            csum = compute_file_hash(str(extracted_file))
+            incident.evidence_items.append(
+                EvidenceItem(
+                    file_path=str(rel).replace("\\", "/"),
+                    file_type=det_type,
+                    size_bytes=extracted_file.stat().st_size,
+                    checksum_sha256=csum,
+                    status=StatusLabel.OBSERVED,
+                    is_required=False,
+                )
+            )
+        except Exception as e:
+            logger.warning(f"Error indexing extracted file {extracted_file}: {e}")
+
+    incident = await controller.process(incident)
+    incidents[incident_id] = incident
+
+    orch = PipelineOrchestrator()
+    orch.context = PipelineContext(incident=incident)
+    pipeline_tasks[incident_id] = orch
+    pipeline_contexts[incident_id] = orch.context
+
+    return {
+        "incident_id": incident.id,
+        "job_id": getattr(incident, "job_id", incident.id),
+        "title": incident.title,
+        "package_sha256": package_sha256,
+        "filename": file.filename,
+        "size": len(content),
+        "evidence_count": len(incident.evidence_items),
+        "artifact_inventory_count": len(incident.artifact_inventory or []),
+        "capability_report": incident.capability_report,
+        "message": "Incident package uploaded and ingested successfully",
+    }
 
 
 @app.post("/api/v1/incidents/{incident_id}/upload")
@@ -2849,6 +3015,8 @@ async def upload_incident(
         raise HTTPException(status_code=400, detail="Invalid file name")
     zip_path.parent.mkdir(parents=True, exist_ok=True)
 
+    package_sha256 = hashlib.sha256(content).hexdigest()
+
     try:
         # Write the uploaded file to temp location
         with open(zip_path, "wb") as buffer:
@@ -2880,6 +3048,10 @@ async def upload_incident(
         if incident.manifest is None:
             incident.manifest = {}
         incident.manifest["bundle_path"] = str(extract_dir)
+        incident.manifest["package_sha256"] = package_sha256
+        incident.manifest["uploaded_filename"] = file.filename
+        setattr(incident, "package_sha256", package_sha256)
+        setattr(incident, "_uploaded_filename", file.filename)
 
         for extracted_file in extracted_files:
             try:
@@ -2989,6 +3161,9 @@ async def upload_incident(
             "message": "File uploaded and processed",
             "filename": file.filename,
             "size": len(content),
+            "package_sha256": package_sha256,
+            "incident_id": incident.id,
+            "title": incident.title,
             "evidence_count": len(incident.evidence_items),
             "artifact_inventory_count": len(incident.artifact_inventory or []),
             "capability_report": incident.capability_report,
@@ -3005,6 +3180,98 @@ async def upload_incident(
                 temp_upload_dir.rmdir()
         except Exception as e:
             logger.warning(f"Cleanup failed: {e}")
+
+
+@app.get("/api/v1/incidents/{incident_id}/artifacts/{artifact_id}/preview")
+async def get_artifact_preview(
+    request: Request,
+    incident_id: str,
+    artifact_id: str,
+    user_data: tuple = Depends(get_current_user),
+):
+    """
+    Safe preview of an incident artifact with secret redaction and HTML escaping.
+    Requires: incident:read permission and that artifact belongs to this incident.
+    """
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    await check_incident_access(incident, user, "incident:read", "artifact.preview", request, auth_store)
+
+    inv = getattr(incident, "artifact_inventory", []) or []
+    target_item = None
+    for item in inv:
+        if item.get("artifact_id") == artifact_id or item.get("relative_path") == artifact_id:
+            target_item = item
+            break
+
+    if not target_item:
+        raise HTTPException(status_code=404, detail="Artifact not found in incident inventory")
+
+    if target_item.get("incident_id") and str(target_item.get("incident_id")) != str(incident_id):
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "cross_incident_artifact_access", "message": f"Artifact belongs to incident '{target_item.get('incident_id')}', not '{incident_id}'"},
+        )
+
+    rel_path = target_item.get("relative_path", "")
+    bundle_path = getattr(incident, "bundle_path", None)
+    if not bundle_path:
+        raise HTTPException(status_code=404, detail="Incident bundle path not found")
+
+    try:
+        file_path = safe_join(bundle_path, rel_path)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid relative path in artifact")
+
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact file does not exist on disk")
+
+    classification = target_item.get("classification", "text")
+    if classification == "binary" or target_item.get("parse_status") in ("BINARY", "ENCRYPTED", "REJECTED"):
+        return {
+            "artifact_id": target_item.get("artifact_id"),
+            "relative_path": rel_path,
+            "preview_available": False,
+            "classification": "binary",
+            "reason": "Preview not supported for binary or encrypted files",
+        }
+
+    max_bytes = 64 * 1024
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            raw_text = f.read(max_bytes + 1)
+        is_truncated = len(raw_text) > max_bytes
+        if is_truncated:
+            raw_text = raw_text[:max_bytes]
+
+        from cauveris.model_gateway.security import redact_secrets
+
+        redacted_text, redaction_count = redact_secrets(raw_text)
+        escaped_preview = html.escape(redacted_text)
+
+        return {
+            "artifact_id": target_item.get("artifact_id"),
+            "relative_path": rel_path,
+            "preview_available": True,
+            "classification": "text",
+            "preview": escaped_preview,
+            "truncated": is_truncated,
+            "size_bytes": file_path.stat().st_size,
+            "redaction_count": redaction_count,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read artifact: {e}")
 
 
 @app.post("/api/v1/incidents/{incident_id}/validate")
@@ -4281,6 +4548,8 @@ async def reset_incident(
     orch.context = PipelineContext(incident=incident)
     pipeline_tasks[incident.id] = orch
     pipeline_progress[incident.id] = orch.get_pipeline_summary()
+    from cauveris.state_machine.persistence import PipelinePersistenceStore
+    PipelinePersistenceStore.get_instance().initialize_incident_stages(incident.id, overwrite=True)
 
     if incident.id in pipeline_contexts:
         del pipeline_contexts[incident.id]
@@ -4538,6 +4807,9 @@ async def get_incident(
         )
     )
 
+    ctx = pipeline_contexts.get(incident_id)
+    ver_reports = (getattr(ctx, "verification_reports", None) or []) if ctx else []
+
     return {
         "id": incident.id,
         "title": incident.title,
@@ -4564,6 +4836,12 @@ async def get_incident(
                 "validation_errors": item.validation_errors,
             }
             for item in incident.evidence_items
+        ],
+        "artifact_inventory": getattr(incident, "artifact_inventory", []) or [],
+        "capability_report": getattr(incident, "capability_report", None),
+        "verification_reports": [
+            r.model_dump() if hasattr(r, "model_dump") else dict(r)
+            for r in ver_reports
         ],
     }
 
@@ -5352,7 +5630,13 @@ async def get_incident_hypotheses(
         dump["title"] = _hypothesis_title(hyp_id, rank)
         dump["description"] = dump.get("causal_claim", "")
         dump["confidence"] = int(float(dump.get("confidence_prior", 0.5)) * 100)
-        dump["evidence_count"] = len(dump.get("supporting_artifact_ids", []))
+        supp_evs = dump.get("supporting_evidence_ids") or dump.get("supporting_artifact_ids") or []
+        dump["supporting_evidence_ids"] = supp_evs
+        dump["contradicting_evidence_ids"] = dump.get("contradicting_evidence_ids") or dump.get("contradicting_artifact_ids") or []
+        dump["evidence_count"] = len(supp_evs)
+        dump["falsification_criteria"] = dump.get("falsification_criteria") or dump.get("falsifying_observation") or ""
+        dump["confidence_rationale"] = dump.get("confidence_rationale") or f"Confidence derived from {len(supp_evs)} evidence artifact(s)"
+        dump["speculative"] = bool(dump.get("speculative") or not supp_evs)
         formatted_hypotheses.append(dump)
 
     return {
@@ -5625,7 +5909,10 @@ async def test_hypothesis_endpoint(
     target_hyp = _resolve_hypothesis(hypotheses, hypothesis_id)
 
     if not target_hyp:
-        raise HTTPException(status_code=404, detail="No hypothesis available")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Hypothesis '{hypothesis_id}' not found for incident '{incident_id}'",
+        )
 
     # Run sandbox experiment and simulation
     from cauveris.sandbox.controller import SandboxController
@@ -7500,6 +7787,7 @@ async def get_incident_patches(
     ctx = pipeline_contexts.get(incident_id)
     patches = ctx.patch_candidates if ctx and ctx.patch_candidates else []
     verification_reports = ctx.verification_reports if ctx and ctx.verification_reports else []
+    selected_id = getattr(ctx, "selected_repair_id", None) if ctx else None
 
     formatted_patches = []
     for p in patches:
@@ -7508,6 +7796,7 @@ async def get_incident_patches(
         dump["id"] = cand_id
         dump["title"] = cand_id.replace("patch-", "").replace("exp-", "").replace("_", " ").title()
         dump["diff"] = dump.get("unified_diff", "")
+        dump["is_selected"] = bool(cand_id == selected_id or dump.get("is_selected", False))
         formatted_patches.append(dump)
 
     formatted_reports = [
@@ -7522,9 +7811,142 @@ async def get_incident_patches(
     }
 
 
+@app.get("/api/v1/incidents/{incident_id}/patches/{candidate_id}")
+async def get_incident_patch(
+    request: Request,
+    incident_id: str,
+    candidate_id: str,
+    user_data: tuple = Depends(get_current_user),
+):
+    """Get a specific patch candidate for an incident.
+    Requires: patch:read permission
+    """
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
+    is_admin = (
+        user.has_permission("*")
+        or getattr(user, "is_superuser", False)
+        or user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN)
+    )
+    if not is_admin:
+        if owner_user and owner_user != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "access_denied", "message": "Not owner of incident", "incident_id": incident_id},
+            )
+        if owner_org and owner_org != org_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "access_denied", "message": "Cross-organization incident access denied", "incident_id": incident_id},
+            )
+
+    ctx = pipeline_contexts.get(incident_id)
+    patches = ctx.patch_candidates if ctx and ctx.patch_candidates else []
+    matching = [p for p in patches if getattr(p, "candidate_id", None) == candidate_id]
+    if not matching:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "patch_not_found", "message": f"Patch candidate '{candidate_id}' not found for incident '{incident_id}'"},
+        )
+
+    target_patch = matching[0]
+    dump = target_patch.model_dump() if hasattr(target_patch, "model_dump") else dict(target_patch)
+    selected_id = getattr(ctx, "selected_repair_id", None) if ctx else None
+    dump["is_selected"] = bool(candidate_id == selected_id or dump.get("is_selected", False))
+    return {"incident_id": incident_id, "patch_candidate": dump}
+
+
+@app.post("/api/v1/incidents/{incident_id}/patches/{candidate_id}/select")
+async def select_incident_patch(
+    request: Request,
+    incident_id: str,
+    candidate_id: str,
+    user_data: tuple = Depends(get_current_user),
+):
+    """Explicitly select a patch candidate for packaging and deployment.
+    Requires: patch:write permission
+    """
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    owner_user = getattr(incident, "_owner_user_id", None)
+    owner_org = getattr(incident, "_owner_org_id", None)
+    is_admin = (
+        user.has_permission("*")
+        or getattr(user, "is_superuser", False)
+        or user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN)
+    )
+    if not is_admin:
+        if owner_user and owner_user != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "access_denied", "message": "Not owner of incident", "incident_id": incident_id},
+            )
+        if owner_org and owner_org != org_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "access_denied", "message": "Cross-organization incident access denied", "incident_id": incident_id},
+            )
+
+    ctx = pipeline_contexts.get(incident_id)
+    if not ctx or not ctx.patch_candidates:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "patch_not_found", "message": f"No patch candidates found for incident '{incident_id}'"},
+        )
+
+    found = False
+    for p in ctx.patch_candidates:
+        if getattr(p, "candidate_id", None) == candidate_id:
+            p.is_selected = True
+            found = True
+        else:
+            p.is_selected = False
+
+    if not found:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "patch_not_found", "message": f"Patch candidate '{candidate_id}' not found for incident '{incident_id}'"},
+        )
+
+    ctx.selected_repair_id = candidate_id
+    return {
+        "incident_id": incident_id,
+        "selected_candidate_id": candidate_id,
+        "is_selected": True,
+        "message": f"Patch candidate '{candidate_id}' selected for repair package deployment.",
+    }
+
+
 @app.get("/api/v1/incidents/{incident_id}/report")
 async def get_incident_report(
-    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+    request: Request,
+    incident_id: str,
+    format: Optional[str] = None,
+    user_data: tuple = Depends(get_current_user),
 ):
     """Get comprehensive incident investigation report.
     Requires: report:read permission
@@ -7767,15 +8189,33 @@ async def get_incident_report(
     )
 
     ctx = pipeline_contexts.get(incident_id)
+    report_data = None
     if ctx and ctx.final_report:
-        return ctx.final_report
+        if isinstance(ctx.final_report, dict) and ctx.final_report.get("incident_id") and str(ctx.final_report.get("incident_id")) != str(incident_id):
+            raise HTTPException(status_code=404, detail="Report does not belong to requested incident")
+        report_data = ctx.final_report
+    else:
+        report_file = _report_path(incident_id, "incident_report.json")
+        if report_file.exists():
+            with open(report_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data.get("incident_id") and str(data.get("incident_id")) != str(incident_id):
+                    raise HTTPException(status_code=404, detail="Report file belongs to different incident")
+                report_data = data
 
-    report_file = _report_path(incident_id, "incident_report.json")
-    if report_file.exists():
-        with open(report_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+    if not report_data:
+        return {"message": "Report not yet generated for this incident"}
 
-    return {"message": "Report not yet generated for this incident"}
+    if format in ("markdown", "md"):
+        md_text = report_data.get("report_markdown")
+        if not md_text:
+            md_path = _report_path(incident_id, "incident_report.md")
+            if md_path.exists():
+                md_text = md_path.read_text(encoding="utf-8")
+        if md_text:
+            return Response(content=md_text, media_type="text/markdown")
+
+    return report_data
 
 
 @app.get("/api/v1/incidents/{incident_id}/reports")
@@ -8045,6 +8485,75 @@ async def list_incident_reports(
     return {"reports": reports}
 
 
+@app.get("/api/v1/incidents/{incident_id}/reports/{report_id}")
+async def get_incident_report_by_id(
+    request: Request,
+    incident_id: str,
+    report_id: str,
+    format: Optional[str] = None,
+    user_data: tuple = Depends(get_current_user),
+):
+    """
+    Get a specific report for an incident.
+    Requires: report:read permission and that the report belongs to this incident.
+    """
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    await check_incident_access(incident, user, "report:read", "report.read", request, auth_store)
+
+    expected_id = f"rpt-{incident_id}-001"
+    if report_id != expected_id and not report_id.startswith(f"rpt-{incident_id}-"):
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "report_not_found",
+                "message": f"Report '{report_id}' does not belong to incident '{incident_id}'.",
+                "incident_id": incident_id,
+                "report_id": report_id,
+            },
+        )
+
+    ctx = pipeline_contexts.get(incident_id)
+    report_data = None
+    if ctx and ctx.final_report:
+        if isinstance(ctx.final_report, dict) and ctx.final_report.get("incident_id") and str(ctx.final_report.get("incident_id")) != str(incident_id):
+            raise HTTPException(status_code=404, detail="Report does not belong to requested incident")
+        report_data = ctx.final_report
+    else:
+        report_file = _report_path(incident_id, "incident_report.json")
+        if report_file.exists():
+            with open(report_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data.get("incident_id") and str(data.get("incident_id")) != str(incident_id):
+                    raise HTTPException(status_code=404, detail="Report file belongs to different incident")
+                report_data = data
+
+    if not report_data:
+        raise HTTPException(status_code=404, detail=f"Report '{report_id}' not found for incident '{incident_id}'")
+
+    if format in ("markdown", "md"):
+        md_text = report_data.get("report_markdown")
+        if not md_text:
+            md_path = _report_path(incident_id, "incident_report.md")
+            if md_path.exists():
+                md_text = md_path.read_text(encoding="utf-8")
+        if md_text:
+            return Response(content=md_text, media_type="text/markdown")
+
+    return report_data
+
+
 @app.delete("/api/v1/incidents/{incident_id}/reports/{report_id}")
 async def delete_incident_report(
     request: Request, incident_id: str, report_id: str, user_data: tuple = Depends(get_current_user)
@@ -8064,6 +8573,18 @@ async def delete_incident_report(
     incident = _ensure_incident(incident_id)
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
+
+    expected_id = f"rpt-{incident_id}-001"
+    if report_id != expected_id and not report_id.startswith(f"rpt-{incident_id}-"):
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "report_not_found",
+                "message": f"Report '{report_id}' does not belong to incident '{incident_id}'.",
+                "incident_id": incident_id,
+                "report_id": report_id,
+            },
+        )
 
     # Check ownership - only admin can delete
     owner_user = getattr(incident, "_owner_user_id", None)
@@ -8134,68 +8655,68 @@ class ModelTestRequest(BaseModel):
 @app.get("/api/v1/model-health")
 async def model_health():
     """
-    Model provider connectivity and health status.
-
-    The whole chain is probed, not just the hosted provider: the chain is
-    what the pipeline actually uses, so the health check has to report what
-    the chain can do.
-
-    A deployment with no model reachable is not a broken deployment -
-    Cauveris' own evidence rules still produce the analysis - so the
-    platform's status stays healthy while ``gateway_status`` says
-    ``no_inference``.  Only an unexpected failure is a degradation.
+    Model provider connectivity, readiness, and NVIDIA model health status.
+    Provides sanitized metadata, operational provider states, and circuit breaker metrics.
     """
     from cauveris.config import get_settings
     from cauveris.model_gateway.local import LocalModelGateway
-    from cauveris.model_gateway.nebius import NebiusModelGateway
+    from cauveris.model_gateway.nebius import NebiusModelGateway, get_controller
+    from cauveris.model_gateway.enums import ProviderState
 
     settings = get_settings()
-    is_live = bool(settings.nebius_api_key)
+    is_live = bool(settings.nebius_api_key and settings.nebius_enabled)
+    exact_model_id = settings.nebius_model_id or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
 
     probes: List[Dict[str, Any]] = []
     gateway_error = None
+    provider_state = ProviderState.LOCAL_DETERMINISTIC_ONLY.value
+
+    controller = get_controller()
+    cb_status = controller.get_status()
+
+    if not is_live:
+        provider_state = ProviderState.LOCAL_DETERMINISTIC_ONLY.value
+    elif not settings.nebius_base_url or not settings.nebius_base_url.startswith(("http://", "https://")):
+        provider_state = ProviderState.CONFIGURATION_INVALID.value
+    elif cb_status.get("circuit_state") == "OPEN":
+        provider_state = ProviderState.PROVIDER_UNAVAILABLE.value
 
     try:
         import asyncio
-
-        # Probe every provider at once: a health check that waits for the
-        # dead ones to time out one after another is worse than no check.
         coros = []
         if is_live:
             coros.append(NebiusModelGateway(timeout=3.0).probe())
-        coros.append(
-            LocalModelGateway(probe_timeout=0.5).probe()
-        )
+        coros.append(LocalModelGateway(probe_timeout=0.5).probe())
         results = await asyncio.gather(*coros, return_exceptions=True)
         for result in results:
             if isinstance(result, Exception):
                 gateway_error = f"{type(result).__name__}: {result}"
                 continue
-            probes.extend(result)
+            probes.extend(result if isinstance(result, list) else [result])
     except Exception as exc:
         gateway_error = f"{type(exc).__name__}: {exc}"
 
     reachable = [p for p in probes if p.get("reachable")]
     inference_available = bool(reachable)
-    if inference_available:
-        gateway_status = "connected"
-        provider_name = (
-            "Nebius Token Factory"
-            if "tokenfactory" in str(reachable[0].get("endpoint", ""))
-            else "Local model server"
-        )
-    elif gateway_error:
-        gateway_status = "error"
-        provider_name = "none reachable"
-    else:
-        gateway_status = "no_inference"
-        provider_name = "none reachable"
+
+    if is_live:
+        nebius_probe = next((p for p in probes if "tokenfactory" in str(p.get("endpoint", ""))), None)
+        if nebius_probe and nebius_probe.get("reachable"):
+            provider_state = ProviderState.NEBIUS_NVIDIA_ACTIVE.value
+            exact_model_id = nebius_probe.get("active_model", exact_model_id)
+        elif is_live:
+            provider_state = ProviderState.NEBIUS_NVIDIA_DEGRADED.value
 
     return {
-        "status": "healthy" if gateway_status != "error" else "degraded",
-        "provider": provider_name,
-        "mode": "live_gateway" if is_live else "local_only",
-        "cloud_credentials_required": False,
+        "status": "healthy" if (provider_state == ProviderState.NEBIUS_NVIDIA_ACTIVE.value or not settings.model_provider_required) else "degraded",
+        "provider": "nebius" if is_live else "local_only",
+        "provider_state": provider_state,
+        "model_id": exact_model_id,
+        "exact_model_id": exact_model_id,
+        "endpoint_mode": "hosted" if is_live else "local",
+        "runtime_mode": settings.runtime_mode,
+        "deterministic_fallback_available": True,
+        "cloud_credentials_required": settings.model_provider_required,
         "nebius_configured": is_live,
         "inference_available": inference_available,
         "local_model_endpoints": [
@@ -8208,11 +8729,122 @@ async def model_health():
         "model_fast": settings.model_fast,
         "model_reasoning": settings.model_reasoning,
         "model_escalation": settings.model_escalation,
-        "gateway_status": gateway_status,
+        "gateway_status": "connected" if inference_available else ("error" if gateway_error else "no_inference"),
         "gateway_error": gateway_error,
+        "circuit_breaker": cb_status,
         "provider_probes": probes,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.get("/api/v1/incidents/{incident_id}/model-executions")
+async def get_incident_model_executions(
+    request: Request,
+    incident_id: str,
+    user_data: tuple = Depends(get_current_user),
+):
+    """
+    Query sanitized model execution records for an incident.
+    Requires: incident:read permission.
+    """
+    from cauveris.model_gateway.records import get_execution_store
+
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    await check_incident_access(incident, user, "incident:read", "incident.model_executions.read", request, auth_store)
+
+    records = get_execution_store().list_by_incident(incident_id)
+    return {
+        "incident_id": incident_id,
+        "count": len(records),
+        "executions": [r.to_dict() for r in records],
+    }
+
+
+@app.get("/api/v1/incidents/{incident_id}/model-executions/{execution_id}")
+async def get_incident_model_execution_detail(
+    request: Request,
+    incident_id: str,
+    execution_id: str,
+    user_data: tuple = Depends(get_current_user),
+):
+    """
+    Get detailed sanitized execution record specifically scoped to this incident.
+    Requires: incident:read permission and that the execution belongs to this incident.
+    """
+    from cauveris.model_gateway.records import get_execution_store
+
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    incident = _ensure_incident(incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    await check_incident_access(incident, user, "incident:read", "incident.model_execution.read", request, auth_store)
+
+    rec = get_execution_store().get(execution_id)
+    if not rec or str(rec.incident_id) != str(incident_id):
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "execution_record_not_found",
+                "message": f"Execution record '{execution_id}' does not belong to incident '{incident_id}'.",
+                "incident_id": incident_id,
+                "execution_id": execution_id,
+            },
+        )
+
+    return rec.to_dict()
+
+
+@app.get("/api/v1/model-executions/{execution_id}")
+async def get_model_execution_detail(
+    request: Request,
+    execution_id: str,
+    user_data: tuple = Depends(get_current_user),
+):
+    """
+    Get detailed sanitized execution record by execution ID.
+    """
+    from cauveris.model_gateway.records import get_execution_store
+
+    user_id, org_id, role = user_data
+    auth_store = get_auth_store()
+    if not auth_store:
+        raise HTTPException(status_code=503, detail="Auth store not initialized")
+
+    user = await auth_store.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    rec = get_execution_store().get(execution_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Execution record not found")
+
+    if rec.incident_id and rec.incident_id != "global":
+        incident = _ensure_incident(rec.incident_id)
+        if incident:
+            await check_incident_access(incident, user, "incident:read", "model_execution.read", request, auth_store)
+
+    return rec.to_dict()
 
 
 @app.post("/api/v1/model/configure")
@@ -8461,6 +9093,8 @@ async def get_status_center():
 
 
 @app.get("/api/v1/incidents/{incident_id}/download-patch-package")
+@app.get("/api/v1/incidents/{incident_id}/patch-package/download")
+@app.get("/api/v1/incidents/{incident_id}/package")
 async def download_patch_package(
     request: Request,
     incident_id: str,
@@ -8650,14 +9284,29 @@ async def download_patch_package(
                     target_candidate = c
                     break
         if not target_candidate:
-            for c in candidates:
-                if getattr(c, "verified", False):
-                    target_candidate = c
-                    break
-        if not target_candidate and candidates:
-            target_candidate = candidates[0]
+            verified_candidates = [c for c in candidates if getattr(c, "verified", False)]
+            if len(verified_candidates) == 1:
+                target_candidate = verified_candidates[0]
+            elif len(verified_candidates) > 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "PACKAGE_MULTIPLE_CANDIDATES",
+                        "message": "Multiple verified repair candidates exist. Specify explicit repair_id.",
+                        "incident_id": incident_id,
+                    },
+                )
 
     if not target_candidate:
+        if any(not getattr(c, "verified", False) for c in candidates):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "unverified_repair_candidate",
+                    "message": "Repair candidates have not passed invariant verification. Only verified repairs can be exported.",
+                    "incident_id": incident_id,
+                },
+            )
         raise HTTPException(
             status_code=404,
             detail={
@@ -8683,55 +9332,46 @@ async def download_patch_package(
     # Resolve safe filename components
     safe_incident = re.sub(r"[^a-zA-Z0-9_\-]", "_", incident_id)
     safe_repair = re.sub(r"[^a-zA-Z0-9_\-]", "_", target_candidate.candidate_id)
-    cand_zip = _report_path(f"cauveris-repair-package-{safe_incident}-{safe_repair}.zip")
 
-    zip_file = None
-    if cand_zip.exists() and cand_zip.stat().st_size > 0:
-        zip_file = cand_zip
-    elif (
-        ctx
-        and getattr(ctx, "selected_repair_id", None) == target_candidate.candidate_id
-        and ctx.package_zip_path
-        and Path(ctx.package_zip_path).exists()
-        and Path(ctx.package_zip_path).stat().st_size > 0
-    ):
-        zip_file = Path(ctx.package_zip_path)
+    from cauveris.packaging import PackageBuilder, PackageStore
+    store = PackageStore()
+    record = store.get_latest(incident_id, target_candidate.candidate_id)
 
-    if not zip_file:
-        from cauveris.patch.package_builder import PatchPackageBuilder
-        builder = PatchPackageBuilder(settings=get_settings())
-
-        bundle_path = None
-        raw = getattr(incident, "bundle_path", None)
-        if raw:
-            bundle_path = Path(raw)
-        elif isinstance(getattr(incident, "manifest", None), dict):
-            manifest_path = incident.manifest.get("bundle_path")
-            if manifest_path:
-                bundle_path = Path(manifest_path)
-
+    if record is None or not record.is_downloadable:
+        builder = PackageBuilder(settings=get_settings(), store=store)
         ver_report = None
         for r in (getattr(ctx, "verification_reports", []) if ctx else []):
             if getattr(r, "patch_candidate_id", None) == target_candidate.candidate_id or getattr(r, "candidate_id", None) == target_candidate.candidate_id:
                 ver_report = r
                 break
 
-        output_dir = _report_path(safe_incident, f"patch-package-{safe_repair}")
+        bundle_path = builder._resolve_bundle(incident)
+        system_model = getattr(ctx, "_system_model_cache", None) or getattr(ctx, "system_model", None)
+        if system_model is None and bundle_path:
+            try:
+                system_model = get_system_model(str(incident_id), bundle_path)
+            except Exception:
+                system_model = None
+
+        experiment = None
+        if ctx and getattr(ctx, "experiments", None):
+            for e in ctx.experiments:
+                if getattr(e, "experiment_id", None) == target_candidate.candidate_id or getattr(e, "hypothesis_id", None) == getattr(target_candidate, "hypothesis_id", None):
+                    experiment = e
+                    break
+
         try:
-            pkg_res = await builder.build_package(
+            _ = await builder.build(
                 incident=incident,
                 patch=target_candidate,
-                experiment=None,
+                user_id=user_id,
+                org_id=org_id,
+                experiment=experiment,
                 hypotheses=getattr(ctx, "hypotheses", []) if ctx else [],
                 verification_reports=[ver_report] if ver_report else [],
-                system_model=getattr(ctx, "validated_incident", None) and get_system_model(str(incident_id), bundle_path) if bundle_path else None,
-                output_dir=output_dir,
+                system_model=system_model,
             )
-            zip_file = pkg_res.zip_path
-            if cand_zip.resolve() != zip_file.resolve():
-                cand_zip.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(str(zip_file), str(cand_zip))
-                zip_file = cand_zip
+            record = store.get_latest(incident_id, target_candidate.candidate_id)
         except Exception as e:
             logger.exception(f"Failed to build package for {incident_id}/{target_candidate.candidate_id}: {e}")
             raise HTTPException(
@@ -8743,6 +9383,8 @@ async def download_patch_package(
                     "repair_id": target_candidate.candidate_id,
                 },
             )
+
+    zip_file = Path(record.storage_locator) if record and record.storage_locator else None
 
     if not zip_file or not zip_file.exists() or zip_file.stat().st_size == 0:
         raise HTTPException(
@@ -9403,7 +10045,10 @@ async def apply_patch_to_target(
 
 @app.get("/api/v1/incidents/{incident_id}/events")
 async def get_incident_events(
-    request: Request, incident_id: str, user_data: tuple = Depends(get_current_user)
+    request: Request,
+    incident_id: str,
+    after_sequence_id: Optional[int] = Query(None, description="Return events strictly after this sequence ID"),
+    user_data: tuple = Depends(get_current_user),
 ):
     """Get processing events/progress for an incident.
     Requires: incident:read permission
@@ -9645,13 +10290,41 @@ async def get_incident_events(
         )
     )
 
-    if incident_id not in pipeline_progress:
-        orch = PipelineOrchestrator()
-        orch.context = PipelineContext(incident=incident)
-        pipeline_tasks[incident_id] = orch
-        pipeline_progress[incident_id] = orch.get_pipeline_summary()
+    from cauveris.state_machine.persistence import PipelinePersistenceStore
 
-    return pipeline_progress[incident_id]
+    store = PipelinePersistenceStore.get_instance()
+    persisted_stages = store.get_stages(incident_id)
+    if not persisted_stages:
+        persisted_stages = store.initialize_incident_stages(incident_id)
+
+    stage_dicts = [s.to_dict() for s in persisted_stages]
+    latest_seq = store.get_latest_sequence_id(incident_id)
+
+    orch = pipeline_tasks.get(incident_id)
+    summary = orch.get_pipeline_summary() if orch else pipeline_progress.get(incident_id, {})
+
+    has_failed = any(s["status"] == "FAILED" for s in stage_dicts)
+    has_running = any(s["status"] in ("RUNNING", "QUEUED", "IN_PROGRESS") for s in stage_dicts)
+    all_success = all(s["status"] in ("SUCCESS", "COMPLETED", "PARTIAL", "UNSUPPORTED") for s in stage_dicts)
+
+    state = summary.get("state") or (
+        "FAILED" if has_failed else ("RUNNING" if has_running else ("COMPLETED" if all_success else "IDLE"))
+    )
+
+    events_list = store.get_events(incident_id, after_sequence_id=after_sequence_id)
+
+    return {
+        "incident_id": incident_id,
+        "job_id": summary.get("job_id"),
+        "state": state,
+        "workflow_status": summary.get("workflow_status", state),
+        "progress": summary.get("progress", 0.0),
+        "active_stage_id": summary.get("active_stage_id"),
+        "stages": stage_dicts,
+        "sequence_id": latest_seq,
+        "latest_sequence_id": latest_seq,
+        "events": events_list,
+    }
 
 
 @app.get("/api/v1/incidents/{incident_id}/stream")

@@ -51,6 +51,7 @@ from cauveris.analysis.system_model import classify_parameter
 from cauveris.config import get_settings
 from cauveris.model_gateway import create_model_gateway
 from cauveris.model_gateway.base import ModelGateway, ModelResponse
+from cauveris.model_gateway.enums import ModelAssistanceStatus, ModelTaskType
 from cauveris.schemas.base import StatusLabel
 from cauveris.schemas.hypothesis import Hypothesis, ProposedChange
 from cauveris.schemas.incident import Incident
@@ -141,6 +142,9 @@ class HypothesisGenerator:
 
     def __init__(self, model_gateway: Optional[ModelGateway] = None):
         self.settings = get_settings()
+        self.last_assistance_status: ModelAssistanceStatus = (
+            ModelAssistanceStatus.MODEL_ASSISTANCE_NOT_REQUIRED
+        )
         if model_gateway is None:
             # In production, this will use NebiusModelGateway if NEBIUS_API_KEY is set
             # For testing, pass force_local=True to use LocalModelGateway
@@ -220,8 +224,22 @@ class HypothesisGenerator:
         # around - which is how a synthetic incident ends up being simulated
         # against the demo bundle.
         bundle_path = evidence.bundle_path
-        if bundle_path is not None:
-            for hypothesis in hypotheses:
+        for hypothesis in hypotheses:
+            hypothesis.incident_id = incident.id
+            if not hypothesis.supporting_evidence_ids and hypothesis.supporting_artifact_ids:
+                hypothesis.supporting_evidence_ids = list(hypothesis.supporting_artifact_ids)
+            if not hypothesis.falsification_criteria:
+                hypothesis.falsification_criteria = hypothesis.falsifying_observation or "Counterfactual test does not reproduce failure"
+            if not hypothesis.confidence_rationale:
+                count = len(hypothesis.supporting_evidence_ids)
+                hypothesis.confidence_rationale = (
+                    f"Evidence-grounded derivation across {count} artifact(s) with prior {hypothesis.confidence_prior:.2f}"
+                    if count > 0
+                    else "Speculative proposal without direct evidence citations"
+                )
+            hypothesis.speculative = bool(not hypothesis.supporting_evidence_ids)
+
+            if bundle_path is not None:
                 try:
                     hypothesis.bundle_path = str(bundle_path)
                 except Exception:  # a frozen hypothesis is not fatal
@@ -1937,16 +1955,42 @@ class HypothesisGenerator:
         self, incident: Incident, ev: _Evidence
     ) -> Optional[Hypothesis]:
         """Ask the model gateway for a hypothesis grounded in the evidence."""
+        if not self.model_gateway.is_available():
+            self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_UNAVAILABLE
+            return None
+
+        self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_RUNNING
         prompt = self._build_prompt(incident, ev)
         response: Optional[ModelResponse] = None
         try:
-            response = await self.model_gateway.generate(prompt=prompt, schema=Hypothesis)
+            try:
+                response = await self.model_gateway.generate(
+                    prompt=prompt,
+                    schema=Hypothesis,
+                    task_type=ModelTaskType.HYPOTHESIS_PROPOSAL,
+                    incident_id=incident.id,
+                    incident_context={
+                        "incident_id": incident.id,
+                        "title": incident.title,
+                        "evidence_categories": list(ev.categories.keys()),
+                    },
+                )
+            except TypeError as te:
+                if "unexpected keyword argument" in str(te):
+                    response = await self.model_gateway.generate(
+                        prompt=prompt,
+                        schema=Hypothesis,
+                    )
+                else:
+                    raise
             logger.info(f"Model gateway response provider: {response.provider}")
         except Exception as exc:
             logger.warning(f"Model gateway query failed: {exc}")
+            self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_FAILED
             return None
 
         if response is None:
+            self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_FAILED
             return None
         if not getattr(response, "inference", True):
             # The provider returned something, but not an inference - a
@@ -1958,8 +2002,10 @@ class HypothesisGenerator:
                 "Ignoring the gateway answer from %s: it is not an inference",
                 response.provider,
             )
+            self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_REJECTED
             return None
 
+        self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_VALIDATING
         if response.structured_data and isinstance(response.structured_data, dict):
             data = dict(response.structured_data)
             # Real models emit natural-language statuses ("CONFIRMED", "PROVEN", ...)
@@ -1968,9 +2014,11 @@ class HypothesisGenerator:
             raw_status = str(data.get("status", "")).strip().upper()
             data["status"] = raw_status if raw_status in StatusLabel.__members__ else "INFERRED"
             try:
-                data["confidence_prior"] = float(data.get("confidence_prior", 0.85))
+                conf = float(data.get("confidence_prior", 0.85))
             except (TypeError, ValueError):
-                data["confidence_prior"] = 0.85
+                conf = 0.85
+            # Deterministic confidence ceiling: model confidence can never exceed 0.85
+            data["confidence_prior"] = min(0.85, max(0.0, conf))
 
             # Coerce string fields to lists if the LLM emitted a single string instead of array
             for list_field in ["missing_evidence", "supporting_artifact_ids", "likely_parameters"]:
@@ -1984,6 +2032,12 @@ class HypothesisGenerator:
             # same provider on two different incidents must not collide, and
             # the same incident must always get the same identifier.
             data["hypothesis_id"] = f"hyp-{incident.id}-{response.provider}"
+            data["incident_id"] = incident.id
+            data["provider_execution_id"] = getattr(response, "execution_id", None) or getattr(response, "request_id", None) or f"exec-{incident.id}-{response.provider}"
+            data.setdefault(
+                "confidence_rationale",
+                f"Generated by {response.provider} assistance under bounded validation constraints",
+            )
             data.setdefault(
                 "causal_claim", "Model-inferred root cause from multi-source incident analysis"
             )
@@ -1995,30 +2049,42 @@ class HypothesisGenerator:
                 "falsifying_observation", "Counterfactual test does not reproduce latency spike"
             )
             data.setdefault(
+                "falsification_criteria", "Counterfactual test does not reproduce latency spike"
+            )
+            data.setdefault(
                 "intervention", "Tune configuration to the pre-incident baseline parameters"
             )
-            data.setdefault("confidence_prior", 0.85)
             try:
-                return Hypothesis(**data)
+                hyp = Hypothesis(**data)
+                self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_ACCEPTED
+                return hyp
             except Exception as val_err:
                 logger.warning(
                     f"Could not construct Hypothesis from model structured data: {val_err}"
                 )
+                self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_REJECTED
 
         if response.content:
             first_line = response.content.strip().split("\n")[0][:250]
+            self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_PARTIAL
             return Hypothesis(
                 hypothesis_id=f"hyp-{incident.id}-{response.provider}",
+                incident_id=incident.id,
                 causal_claim=first_line or f"AI-inferred root cause for {incident.title}",
                 status=StatusLabel.INFERRED,
                 supporting_artifact_ids=[],
                 confidence_prior=0.85,
+                confidence_rationale=f"Model text inference from {response.provider} (speculative due to ungrounded raw text)",
+                provider_execution_id=getattr(response, "execution_id", None) or getattr(response, "request_id", None) or f"exec-{incident.id}-{response.provider}",
                 expected_observation="Observed anomaly aligns with the model's reasoning",
                 falsifying_observation=(
                     "Targeted counterfactual perturbation fails to restore baseline"
                 ),
+                falsification_criteria="Targeted counterfactual perturbation fails to restore baseline",
                 intervention="Apply the model-recommended parameter correction",
+                speculative=True,
             )
+        self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_REJECTED
         return None
 
     def _build_prompt(self, incident: Incident, ev: _Evidence) -> str:

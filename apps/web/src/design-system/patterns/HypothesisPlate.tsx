@@ -11,6 +11,9 @@ export interface HypothesisData {
   title: string;
   causalClaim: string;
   confidence: number; // 0 - 1
+  confidenceRationale?: string;
+  falsificationCriteria?: string;
+  speculative?: boolean;
   supportingEvidence: string[];
   contradictoryEvidence: string[];
   missingEvidence: string[];
@@ -91,6 +94,15 @@ export function HypothesisPlate({
               INTERVENE:
             </span>
             <span className="text-[var(--color-fg-default,#1f2933)] font-mono truncate">{hypothesis.proposedIntervention}</span>
+          </div>
+        )}
+
+        {hypothesis.falsificationCriteria && (
+          <div className="text-xs bg-amber-500/5 p-2 rounded-[var(--radius-md,6px)] border border-amber-500/20 text-[var(--color-fg-muted,#5f6b76)] flex items-start gap-1.5">
+            <span className="text-amber-700 dark:text-amber-400 font-semibold uppercase text-[10px] tracking-wider shrink-0 mt-0.5">
+              FALSIFY IF:
+            </span>
+            <span className="text-[var(--color-fg-default,#1f2933)] text-xs leading-normal">{hypothesis.falsificationCriteria}</span>
           </div>
         )}
 

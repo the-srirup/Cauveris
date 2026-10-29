@@ -1,0 +1,97 @@
+version: "3.9"
+
+services:
+  cauveris-api:
+    build:
+      context: ../..
+      dockerfile: deploy/nebius/Dockerfile.api
+    image: cauveris/api:production
+    container_name: cauveris-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - CAUVERIS_HOST=0.0.0.0
+      - CAUVERIS_PORT=8000
+      - CAUVERIS_NEBIUS_ENABLED=true
+      - CAUVERIS_NEBIUS_API_KEY=${NEBIUS_API_KEY:-}
+      - CAUVERIS_NEBIUS_BASE_URL=${NEBIUS_BASE_URL:-https://api.tokenfactory.nebius.com/v1}
+      - CAUVERIS_NEBIUS_MODEL_ID=${NEBIUS_MODEL_ID:-nvidia/Llama-3.1-Nemotron-70B-Instruct-HF}
+      - CAUVERIS_NEBIUS_REQUEST_TIMEOUT_SECONDS=${NEBIUS_REQUEST_TIMEOUT_SECONDS:-60.0}
+      - CAUVERIS_NEBIUS_MAX_RETRIES=${NEBIUS_MAX_RETRIES:-3}
+      - CAUVERIS_NEBIUS_MAX_CONCURRENT_REQUESTS=${NEBIUS_MAX_CONCURRENT_REQUESTS:-4}
+      - CAUVERIS_NEBIUS_DAILY_BUDGET_LIMIT=${NEBIUS_DAILY_BUDGET_LIMIT:-50.0}
+      - CAUVERIS_MODEL_PROVIDER_REQUIRED=${MODEL_PROVIDER_REQUIRED:-true}
+      - CAUVERIS_JWT_SECRET=${CAUVERIS_JWT_SECRET:-cauveris-production-secret-change-me-immediately-32char}
+      - CAUVERIS_STORAGE_PATH=/data/storage
+      - CAUVERIS_REPORT_STORE_PATH=/data/reports
+      - CAUVERIS_EVIDENCE_STORE_PATH=/data/evidence
+      - CAUVERIS_DEMO_MODE=false
+      - CAUVERIS_DEMO_AUTH=false
+    volumes:
+      - cauveris_storage:/data/storage
+      - cauveris_reports:/data/reports
+      - cauveris_evidence:/data/evidence
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4096M
+        reservations:
+          cpus: "1.0"
+          memory: 1024M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/v1/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - cauveris_internal
+
+  cauveris-web:
+    build:
+      context: ../..
+      dockerfile: deploy/nebius/Dockerfile.web
+    image: cauveris/web:production
+    container_name: cauveris-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://cauveris-api:8000
+    depends_on:
+      cauveris-api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - cauveris_internal
+
+volumes:
+  cauveris_storage:
+    name: cauveris_storage
+  cauveris_reports:
+    name: cauveris_reports
+  cauveris_evidence:
+    name: cauveris_evidence
+
+networks:
+  cauveris_internal:
+    name: cauveris_internal
+    driver: bridge

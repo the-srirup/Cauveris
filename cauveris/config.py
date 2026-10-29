@@ -9,6 +9,12 @@ import warnings
 from typing import Optional
 from dataclasses import dataclass, field
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 
 def _generate_secure_secret() -> str:
     """Generate a cryptographically secure random secret."""
@@ -105,17 +111,76 @@ class Settings:
 
     # Model Gateway (Nebius Token Factory / OpenAI Compatible)
     model_fast: str = field(
-        default_factory=lambda: os.getenv("NEBIUS_MODEL_FAST", "meta-llama/Meta-Llama-3.1-8B-Instruct")
+        default_factory=lambda: os.getenv("NEBIUS_MODEL_FAST", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
     )
     model_reasoning: str = field(
-        default_factory=lambda: os.getenv("NEBIUS_MODEL_REASONING", "meta-llama/Meta-Llama-3.1-70B-Instruct")
+        default_factory=lambda: os.getenv("NEBIUS_MODEL_REASONING", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
     )
     model_escalation: str = field(
         default_factory=lambda: os.getenv("NEBIUS_MODEL_ESCALATION", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
     )
-    nebius_api_key: Optional[str] = field(default_factory=lambda: os.getenv("NEBIUS_API_KEY"))
+    nebius_model_id: str = field(
+        default_factory=lambda: os.getenv("CAUVERIS_NEBIUS_MODEL_ID") or os.getenv("NEBIUS_MODEL_ID", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
+    )
+    nebius_api_key: Optional[str] = field(
+        default_factory=lambda: os.getenv("CAUVERIS_NEBIUS_API_KEY") or os.getenv("NEBIUS_API_KEY")
+    )
     nebius_base_url: str = field(
-        default_factory=lambda: os.getenv("NEBIUS_BASE_URL", "https://api.tokenfactory.nebius.com/v1")
+        default_factory=lambda: os.getenv("CAUVERIS_NEBIUS_BASE_URL") or os.getenv("NEBIUS_BASE_URL", "https://api.tokenfactory.nebius.com/v1")
+    )
+    nebius_request_timeout_seconds: float = field(
+        default_factory=lambda: float(
+            os.getenv("CAUVERIS_NEBIUS_REQUEST_TIMEOUT_SECONDS")
+            or os.getenv("NEBIUS_REQUEST_TIMEOUT_SECONDS", "60.0")
+        )
+    )
+    nebius_max_retries: int = field(
+        default_factory=lambda: int(
+            os.getenv("CAUVERIS_NEBIUS_MAX_RETRIES")
+            or os.getenv("NEBIUS_MAX_RETRIES", "3")
+        )
+    )
+    nebius_max_concurrent_requests: int = field(
+        default_factory=lambda: int(
+            os.getenv("CAUVERIS_NEBIUS_MAX_CONCURRENT_REQUESTS")
+            or os.getenv("NEBIUS_MAX_CONCURRENT_REQUESTS", "5")
+        )
+    )
+    nebius_daily_budget_limit: float = field(
+        default_factory=lambda: float(
+            os.getenv("CAUVERIS_NEBIUS_DAILY_BUDGET_LIMIT")
+            or os.getenv("NEBIUS_DAILY_BUDGET_LIMIT", "100.0")
+        )
+    )
+    nebius_enabled: bool = field(
+        default_factory=lambda: (
+            os.getenv("CAUVERIS_NEBIUS_ENABLED")
+            or os.getenv("NEBIUS_ENABLED", "true")
+        ).lower() == "true"
+    )
+    model_provider_required: bool = field(
+        default_factory=lambda: (
+            os.getenv("CAUVERIS_MODEL_PROVIDER_REQUIRED")
+            or os.getenv("MODEL_PROVIDER_REQUIRED", "false")
+        ).lower() == "true"
+    )
+    runtime_fixtures: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_RUNTIME_FIXTURES", "false").lower() == "true"
+    )
+    autoload_sample: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_AUTOLOAD_SAMPLE", "false").lower() == "true"
+    )
+    allow_explicit_samples: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_ALLOW_EXPLICIT_SAMPLES", "false").lower() == "true"
+    )
+    nebius_routing_policy_version: str = field(
+        default_factory=lambda: os.getenv("NEBIUS_ROUTING_POLICY_VERSION", "1.0")
+    )
+    prompt_template_version: str = field(
+        default_factory=lambda: os.getenv("CAUVERIS_PROMPT_TEMPLATE_VERSION", "1.0")
+    )
+    structured_output_schema_version: str = field(
+        default_factory=lambda: os.getenv("CAUVERIS_SCHEMA_VERSION", "1.0")
     )
 
     # Local model servers (Ollama / vLLM / LM Studio), OpenAI-compatible.
@@ -271,6 +336,9 @@ class Settings:
     job_queue_backend: str = field(
         default_factory=lambda: os.getenv("CAUVERIS_JOB_QUEUE_BACKEND", "memory")
     )
+    job_queue_sqlite_path: str = field(
+        default_factory=lambda: os.getenv("CAUVERIS_JOB_QUEUE_SQLITE_PATH", "data/job_queue.db")
+    )
     job_queue_redis_url: str = field(
         default_factory=lambda: os.getenv("CAUVERIS_JOB_QUEUE_REDIS_URL", "redis://localhost:6379")
     )
@@ -317,6 +385,18 @@ class Settings:
         default_factory=lambda: os.getenv(
             "CAUVERIS_AUTH_DB_PATH",
             os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cauveris_auth.db"),
+        )
+    )
+    model_execution_db_path: str = field(
+        default_factory=lambda: os.getenv(
+            "CAUVERIS_MODEL_EXECUTION_DB_PATH",
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "model_executions.db"),
+        )
+    )
+    pipeline_db_path: str = field(
+        default_factory=lambda: os.getenv(
+            "CAUVERIS_PIPELINE_DB_PATH",
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pipeline_stages.db"),
         )
     )
     auth_backend: str = field(default_factory=lambda: os.getenv("CAUVERIS_AUTH_BACKEND", "sqlite"))
@@ -376,19 +456,68 @@ class Settings:
         Strictly forbids running with insecure demo authentication, insecure demo mode,
         or default development secrets in production runtime mode.
         """
-        if self.runtime_mode == "production":
+        if self.runtime_mode in ("production", "production-demo"):
             if self.demo_auth:
                 raise RuntimeError(
-                    "FATAL SECURITY VIOLATION: CAUVERIS_DEMO_AUTH is enabled while CAUVERIS_RUNTIME_MODE=production"
+                    f"FATAL SECURITY VIOLATION: CAUVERIS_DEMO_AUTH is enabled while CAUVERIS_RUNTIME_MODE={self.runtime_mode}"
                 )
             if self.demo_mode:
                 raise RuntimeError(
-                    "FATAL SECURITY VIOLATION: CAUVERIS_DEMO_MODE is enabled while CAUVERIS_RUNTIME_MODE=production"
+                    f"FATAL SECURITY VIOLATION: CAUVERIS_DEMO_MODE is enabled while CAUVERIS_RUNTIME_MODE={self.runtime_mode}"
                 )
-            if self.secret_key == "dev-secret-change-in-prod" or os.getenv("CAUVERIS_SECRET_KEY") == "dev-secret-change-in-prod":
+            if self.runtime_fixtures:
+                raise RuntimeError(
+                    f"FATAL SECURITY VIOLATION: CAUVERIS_RUNTIME_FIXTURES is enabled while CAUVERIS_RUNTIME_MODE={self.runtime_mode}"
+                )
+            if self.autoload_sample:
+                raise RuntimeError(
+                    f"FATAL SECURITY VIOLATION: CAUVERIS_AUTOLOAD_SAMPLE is enabled while CAUVERIS_RUNTIME_MODE={self.runtime_mode}"
+                )
+            if self.allow_explicit_samples:
+                raise RuntimeError(
+                    f"FATAL SECURITY VIOLATION: CAUVERIS_ALLOW_EXPLICIT_SAMPLES is enabled while CAUVERIS_RUNTIME_MODE={self.runtime_mode}"
+                )
+            if self.runtime_mode == "production" and (
+                self.secret_key == "dev-secret-change-in-prod"
+                or os.getenv("CAUVERIS_SECRET_KEY") == "dev-secret-change-in-prod"
+            ):
                 raise RuntimeError(
                     "FATAL SECURITY VIOLATION: CAUVERIS_SECRET_KEY is using development default in production"
                 )
+            if self.runtime_mode == "production-demo" and not self.nebius_enabled:
+                raise RuntimeError(
+                    "FATAL CONFIGURATION ERROR: CAUVERIS_NEBIUS_ENABLED must be true in production-demo mode"
+                )
+            if not self.job_queue_embedded_worker and self.job_queue_backend == "memory":
+                raise RuntimeError(
+                    "FATAL CONFIGURATION ERROR: CAUVERIS_JOB_QUEUE_BACKEND cannot be 'memory' when CAUVERIS_JOB_QUEUE_EMBEDDED_WORKER=false. "
+                    "External worker processes cannot access an in-memory queue in another process. "
+                    "Configure a shared persistent backend ('sqlite', 'redis', or 'rabbitmq')."
+                )
+
+        if self.model_provider_required:
+            if not self.nebius_api_key:
+                raise RuntimeError(
+                    "FATAL CONFIGURATION ERROR: Live model provider is required "
+                    "(CAUVERIS_MODEL_PROVIDER_REQUIRED=true) but NEBIUS_API_KEY is not configured"
+                )
+            if not self.nebius_base_url or not self.nebius_base_url.startswith(("http://", "https://")):
+                raise RuntimeError(
+                    "FATAL CONFIGURATION ERROR: NEBIUS_BASE_URL must be a valid HTTP/HTTPS endpoint"
+                )
+            if not self.nebius_model_id:
+                raise RuntimeError(
+                    "FATAL CONFIGURATION ERROR: NEBIUS_MODEL_ID is not configured"
+                )
+
+        if self.nebius_request_timeout_seconds <= 0:
+            raise RuntimeError(
+                f"FATAL CONFIGURATION ERROR: NEBIUS_REQUEST_TIMEOUT_SECONDS must be positive, got {self.nebius_request_timeout_seconds}"
+            )
+        if self.nebius_max_retries < 0:
+            raise RuntimeError(
+                f"FATAL CONFIGURATION ERROR: NEBIUS_MAX_RETRIES cannot be negative, got {self.nebius_max_retries}"
+            )
 
 
 # Global settings instance

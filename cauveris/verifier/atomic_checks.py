@@ -47,7 +47,10 @@ class AtomicCheckRecord(BaseModel):
     status: CheckStatus = CheckStatus.SKIPPED
     expected: str = ""
     actual: str = ""
+    duration_ms: float = 0.0
     evidence_locator: Optional[str] = None
+    evidence_ref: Optional[str] = None
+    error_detail: Optional[str] = None
     failure_reason: Optional[str] = None
 
 
@@ -60,6 +63,7 @@ class VerificationSummary(BaseModel):
     baseline_run_id: str
     intervention_run_id: str
     achieved_level: VerificationLevel = VerificationLevel.UNVERIFIED
+    overall_status: str = "FAILED"
     checks: List[AtomicCheckRecord] = Field(default_factory=list)
     checks_passed_count: int = 0
     checks_failed_count: int = 0
@@ -87,6 +91,9 @@ def evaluate_verification_level(
     rejection_reasons: List[str] = []
     limitations: List[str] = []
 
+    if not checks:
+        rejection_reasons.append("No verification checks were executed; verification cannot be granted without evidence.")
+
     passed = [c for c in checks if c.status == CheckStatus.PASSED]
     failed = [c for c in checks if c.status == CheckStatus.FAILED]
     skipped = [c for c in checks if c.status == CheckStatus.SKIPPED]
@@ -95,13 +102,26 @@ def evaluate_verification_level(
     for c in failed:
         if c.required:
             msg = f"Check '{c.name}' FAILED: expected '{c.expected}', got '{c.actual}'"
-            if c.failure_reason:
-                msg += f" ({c.failure_reason})"
+            if c.failure_reason or c.error_detail:
+                msg += f" ({c.failure_reason or c.error_detail})"
             rejection_reasons.append(msg)
 
     for c in skipped:
         if c.required:
             rejection_reasons.append(f"Required check '{c.name}' was SKIPPED (skipped checks cannot grant verification)")
+
+    has_failed_required = any(c.status == CheckStatus.FAILED and c.required for c in checks)
+    has_failed_optional = any(c.status == CheckStatus.FAILED and not c.required for c in checks)
+    has_skipped_required = any(c.status == CheckStatus.SKIPPED and c.required for c in checks)
+
+    if has_failed_required or has_skipped_required or not checks:
+        overall_status = "FAILED"
+    elif has_failed_optional:
+        overall_status = "PARTIAL"
+    elif all(c.status == CheckStatus.PASSED for c in checks if c.required):
+        overall_status = "PASSED"
+    else:
+        overall_status = "FAILED"
 
     # Level 1: MODEL_VERIFIED requirements
     model_checks = [c for c in checks if c.target_level == VerificationLevel.MODEL_VERIFIED and c.required]
@@ -140,7 +160,13 @@ def evaluate_verification_level(
         achieved = VerificationLevel.UNVERIFIED
 
     summary_id = f"vsum_{candidate_id}_{baseline_run_id[:8]}"
-    verified = LEVEL_RANK[achieved] >= LEVEL_RANK[VerificationLevel.MODEL_VERIFIED] and len(rejection_reasons) == 0
+    verified = (
+        achieved != VerificationLevel.UNVERIFIED
+        and overall_status in ("PASSED", "PARTIAL")
+        and not has_failed_required
+        and not has_skipped_required
+        and len(rejection_reasons) == 0
+    )
 
     return VerificationSummary(
         summary_id=summary_id,
@@ -150,6 +176,7 @@ def evaluate_verification_level(
         baseline_run_id=baseline_run_id,
         intervention_run_id=intervention_run_id,
         achieved_level=achieved,
+        overall_status=overall_status,
         checks=checks,
         checks_passed_count=len(passed),
         checks_failed_count=len(failed),

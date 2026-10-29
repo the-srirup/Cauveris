@@ -15,6 +15,8 @@ from enum import Enum
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
+from cauveris.analysis.provenance import ProvenanceClass, normalize_provenance_string
+
 
 class RepairStrategyType(str, Enum):
     REDUCE_BATCHING = "reduce_batching"
@@ -32,14 +34,25 @@ class RepairStrategyType(str, Enum):
 class LatencyComponent(BaseModel):
     """An atomic component of the end-to-end request latency."""
     name: str
-    value: float
+    value: Optional[float] = None
     unit: str = "ms"
-    provenance: str = "OBSERVED"  # OBSERVED, INFERRED, ASSUMED, DERIVED
+    provenance: ProvenanceClass = ProvenanceClass.OBSERVED
     source_artifact: Optional[str] = None
+    source_locator: Optional[str] = None
+    calculation_rationale: Optional[str] = None
     uncertainty: Optional[float] = None
     changed_under_intervention: bool = False
     reason_for_change: Optional[str] = None
     min_physically_achievable_ms: float = 0.0
+
+    @property
+    def display_value(self) -> str:
+        """String representation showing UNAVAILABLE when value is None or missing."""
+        if self.value is None or self.provenance == ProvenanceClass.UNAVAILABLE:
+            return "UNAVAILABLE"
+        if isinstance(self.value, float) and self.value.is_integer():
+            return f"{int(self.value)} {self.unit}".strip()
+        return f"{self.value:.2f} {self.unit}".strip()
 
 
 class StrategyEvaluation(BaseModel):
@@ -96,46 +109,68 @@ def decompose_and_evaluate_latency(
     """
     prov = provenance_map or {}
 
+    def _resolve_prov(key: str, default_prov: ProvenanceClass) -> tuple[ProvenanceClass, Optional[str]]:
+        raw = prov.get(key)
+        if raw is None:
+            return default_prov, None
+        if isinstance(raw, ProvenanceClass):
+            return raw, None
+        return normalize_provenance_string(str(raw))
+
+    p_queue, r_queue = _resolve_prov("queue_wait", ProvenanceClass.OBSERVED)
     c_queue = LatencyComponent(
         name="queue_wait",
         value=queue_wait_ms,
-        provenance=prov.get("queue_wait", "OBSERVED"),
+        provenance=p_queue,
+        calculation_rationale=r_queue or "Derived from queue ingress to dispatch interval",
         min_physically_achievable_ms=0.5,
     )
+    p_batch, r_batch = _resolve_prov("batching_wait", ProvenanceClass.DECLARED)
     c_batch = LatencyComponent(
         name="batching_wait",
         value=batching_wait_ms,
-        provenance=prov.get("batching_wait", "DECLARED"),
+        provenance=p_batch,
+        calculation_rationale=r_batch or "Extracted from batching timeout configuration",
         min_physically_achievable_ms=0.0,
     )
+    p_req, r_req = _resolve_prov("request_transport", ProvenanceClass.OBSERVED)
     c_req_tx = LatencyComponent(
         name="request_transport",
         value=request_transport_ms,
-        provenance=prov.get("request_transport", "OBSERVED"),
+        provenance=p_req,
+        calculation_rationale=r_req or "Measured network transit duration to worker host",
         min_physically_achievable_ms=max(1.0, request_transport_ms * 0.8),
     )
+    p_dep, r_dep = _resolve_prov("dependency_wait", ProvenanceClass.OBSERVED)
     c_dep = LatencyComponent(
         name="dependency_wait",
         value=dependency_wait_ms,
-        provenance=prov.get("dependency_wait", "OBSERVED"),
+        provenance=p_dep,
+        calculation_rationale=r_dep or "Measured remote RPC / dependency round-trip duration",
         min_physically_achievable_ms=dependency_wait_ms if not dependency_can_be_cached else 1.0,
     )
+    p_comp, r_comp = _resolve_prov("compute_time", ProvenanceClass.OBSERVED)
     c_compute = LatencyComponent(
         name="compute_time",
         value=compute_time_ms,
-        provenance=prov.get("compute_time", "OBSERVED"),
+        provenance=p_comp,
+        calculation_rationale=r_comp or "Measured on-device kernel / process CPU execution time",
         min_physically_achievable_ms=max(5.0, compute_time_ms * 0.9),
     )
+    p_resp, r_resp = _resolve_prov("response_transport", ProvenanceClass.OBSERVED)
     c_resp_tx = LatencyComponent(
         name="response_transport",
         value=response_transport_ms,
-        provenance=prov.get("response_transport", "OBSERVED"),
+        provenance=p_resp,
+        calculation_rationale=r_resp or "Measured response payload transmission duration",
         min_physically_achievable_ms=max(1.0, response_transport_ms * 0.8),
     )
+    p_sched, r_sched = _resolve_prov("scheduling_overhead", ProvenanceClass.INFERRED)
     c_sched = LatencyComponent(
         name="scheduling_overhead",
         value=scheduling_overhead_ms,
-        provenance=prov.get("scheduling_overhead", "INFERRED"),
+        provenance=p_sched,
+        calculation_rationale=r_sched or "Residual delay attributed to OS thread scheduling and dispatch jitter",
         min_physically_achievable_ms=0.2,
     )
 

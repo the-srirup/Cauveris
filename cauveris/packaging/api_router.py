@@ -42,11 +42,15 @@ from fastapi import (
     Request,
     Response,
 )
+from pydantic import BaseModel
 
 from cauveris.api.deps import get_current_user
 from cauveris.auth import get_auth_store, AuditLogEntry
 from cauveris.packaging import PackageBuilder, PackageStore
 from cauveris.packaging.models import (
+    PACKAGE_CANDIDATE_UNVERIFIED,
+    PACKAGE_MULTIPLE_CANDIDATES,
+    PACKAGE_NO_REPAIR_CANDIDATE,
     PackageError,
     PackageStatus,
     RepairPackageRecord,
@@ -61,6 +65,13 @@ router = APIRouter(
     prefix="/api/v1/incidents",
     tags=["repair-packages"],
 )
+
+class CreatePackageRequest(BaseModel):
+    candidate_id: Optional[str] = None
+    repair_id: Optional[str] = None
+    verification_run_id: Optional[str] = None
+    report_id: Optional[str] = None
+    workspace_id: Optional[str] = None
 
 _SAFE_NAME_RE = re.compile(r"^([A-Za-z0-9._-]+)$")
 
@@ -251,7 +262,8 @@ def _build_package_summary(
 async def request_repair_package(
     request: Request,
     incident_id: str,
-    repair_id: str = Query(..., description="The repair candidate ID to package"),
+    repair_id: Optional[str] = Query(None, description="The repair candidate ID to package"),
+    body: Optional[CreatePackageRequest] = None,
     user_data: tuple = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
@@ -304,15 +316,44 @@ async def request_repair_package(
             },
         )
 
+    # Resolve candidate ID
+    effective_repair_id = repair_id
+    if not effective_repair_id and body:
+        effective_repair_id = body.candidate_id or body.repair_id
+
     # Resolve candidates.
     ctx = _get_pipeline_context(incident_id)
     candidates: List[PatchCandidate] = (
         getattr(ctx, "patch_candidates", None) if ctx else None
     ) or getattr(incident, "patch_candidates", []) or []
 
+    if not effective_repair_id:
+        if not candidates:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": PACKAGE_NO_REPAIR_CANDIDATE,
+                    "message": f"No repair candidate available for incident '{incident_id}'",
+                    "incident_id": incident_id,
+                },
+            )
+        if len(candidates) == 1:
+            effective_repair_id = candidates[0].candidate_id
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": PACKAGE_MULTIPLE_CANDIDATES,
+                    "message": "Multiple repair candidates exist. Specify explicit candidate_id.",
+                    "incident_id": incident_id,
+                },
+            )
+
     target = None
     for c in candidates:
-        if getattr(c, "candidate_id", None) == repair_id:
+        if getattr(c, "candidate_id", None) == effective_repair_id:
+            if getattr(c, "incident_id", None) and str(c.incident_id) != str(incident_id):
+                continue
             target = c
             break
 
@@ -321,9 +362,9 @@ async def request_repair_package(
             status_code=404,
             detail={
                 "error": "repair_candidate_not_found",
-                "message": f"Repair candidate '{repair_id}' not found for incident '{incident_id}'",
+                "message": f"Repair candidate '{effective_repair_id}' not found for incident '{incident_id}'",
                 "incident_id": incident_id,
-                "repair_id": repair_id,
+                "repair_id": effective_repair_id,
             },
         )
 
@@ -332,19 +373,19 @@ async def request_repair_package(
         raise HTTPException(
             status_code=422,
             detail={
-                "error": "unverified_repair_candidate",
+                "error": PACKAGE_CANDIDATE_UNVERIFIED,
                 "message": (
-                    f"Repair candidate '{repair_id}' has not passed invariant verification. "
+                    f"Repair candidate '{effective_repair_id}' has not passed invariant verification. "
                     "Only verified repairs can be packaged."
                 ),
                 "incident_id": incident_id,
-                "repair_id": repair_id,
+                "repair_id": effective_repair_id,
             },
         )
 
     # Check if a build is already in progress.
     store = PackageStore()
-    latest = store.get_latest(incident_id, repair_id)
+    latest = store.get_latest(incident_id, effective_repair_id)
     if latest and latest.status == PackageStatus.BUILDING:
         raise HTTPException(
             status_code=409,
@@ -352,7 +393,7 @@ async def request_repair_package(
                 "error": "package_building",
                 "message": "A package build is already in progress for this repair candidate",
                 "incident_id": incident_id,
-                "repair_id": repair_id,
+                "repair_id": effective_repair_id,
             },
         )
 
@@ -376,7 +417,7 @@ async def request_repair_package(
                 "error": "package_failed",
                 "message": f"Package creation failed: {ctx.package_error or 'Unknown error'}",
                 "incident_id": incident_id,
-                "repair_id": repair_id,
+                "repair_id": effective_repair_id,
             },
         )
 
@@ -427,7 +468,7 @@ async def request_repair_package(
                 "error": exc.error_code,
                 "message": exc.detail,
                 "incident_id": incident_id,
-                "repair_id": repair_id,
+                "repair_id": effective_repair_id,
             },
         )
 
@@ -442,7 +483,7 @@ async def request_repair_package(
             resource_owner_id=owner_user,
             decision="allow",
             reason=(
-                f"Built package build#{outcome.build_number} for {repair_id} "
+                f"Built package build#{outcome.build_number} for {effective_repair_id} "
                 f"(sha256:{outcome.package_checksum[:12]})"
             ),
             ip_address=request.client.host if request.client else "unknown",
@@ -450,16 +491,18 @@ async def request_repair_package(
         )
     )
 
+    safe_inc = _safe_name(incident_id)
+    safe_rep = _safe_name(effective_repair_id)
     return {
         "incident_id": incident_id,
-        "repair_id": repair_id,
+        "repair_id": effective_repair_id,
         "build_number": outcome.build_number,
-        "package_id": f"pkg_{incident_id}_{repair_id}_{outcome.build_number}",
+        "package_id": f"pkg_{safe_inc}_{safe_rep}_{outcome.build_number}",
         "status": PackageStatus.READY.value,
         "verification_level": outcome.manifest.get("verification_level"),
         "checksum_sha256": outcome.package_checksum,
         "size_bytes": outcome.size_bytes,
-        "download_url": f"/api/v1/incidents/{incident_id}/repair-packages/{repair_id}/download",
+        "download_url": f"/api/v1/incidents/{incident_id}/repair-packages/{effective_repair_id}/download",
     }
 
 
@@ -514,7 +557,13 @@ async def get_repair_package(
     await _check_access(request, incident, user_id, org_id, user, "repair_package.get", incident_id)
 
     store = PackageStore()
-    record = store.get_latest(incident_id, repair_id)
+    record = store.get_by_package_id(repair_id)
+    if record is not None and str(record.incident_id) != str(incident_id):
+        record = None
+    if record is None:
+        record = store.get_latest(incident_id, repair_id)
+    if record is not None and str(record.incident_id) != str(incident_id):
+        record = None
     if record is None:
         raise HTTPException(
             status_code=404,
@@ -639,7 +688,13 @@ async def download_repair_package(
     _check_pipeline_state(request, incident_id, auth_store, user, user_id, org_id, repair_id)
 
     store = PackageStore()
-    record = store.get_latest(incident_id, repair_id)
+    record = store.get_by_package_id(repair_id)
+    if record is not None and str(record.incident_id) != str(incident_id):
+        record = None
+    if record is None:
+        record = store.get_latest(incident_id, repair_id)
+    if record is not None and str(record.incident_id) != str(incident_id):
+        record = None
 
     if record is None:
         raise HTTPException(
@@ -776,12 +831,13 @@ async def download_repair_package(
 
     safe_incident = _safe_name(incident_id)
     safe_repair = _safe_name(repair_id)
-    download_name = f"cauveris-repair-package-{safe_incident}-{safe_repair}.zip"
+    download_name = record.safe_filename or f"cauveris-repair-package-{safe_incident}-{safe_repair}.zip"
 
     headers = {
         "Content-Length": str(len(zip_bytes)),
         "X-Checksum-SHA256": actual_sha256,
         "X-Repair-ID": str(repair_id),
+        "X-Package-ID": str(record.package_id),
         "X-Incident-ID": str(incident_id),
         "X-Build-Number": str(record.build_number),
         "X-Verification-Level": record.verification_level,

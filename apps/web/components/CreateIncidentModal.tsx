@@ -370,55 +370,13 @@ export function CreateIncidentModal({ isOpen, onClose }: { isOpen: boolean; onCl
                 <div className={sectionDividerStyles()}>
                   <span className="flex items-center gap-1.5">
                     <span className="h-5 w-5 flex items-center justify-center rounded bg-primary/20 text-primary text-[10px] font-mono">4</span>
-                    Evidence Files (Optional)
+                    Evidence Bundle (.zip)
                   </span>
                 </div>
 
                 <div className={fieldStyles()}>
-                  <div className="relative">
-                    <div
-                      className={`border-2 border-dashed rounded-[var(--radius-md)] p-6 text-center transition-colors cursor-pointer ${
-                        formData.evidenceFiles.length > 0
-                          ? "border-[var(--color-success-fg)] bg-[var(--color-success-muted)]"
-                          : "border-[var(--color-border-default)] hover:border-[var(--color-accent-fg)] bg-[var(--color-canvas)]"
-                      }`}
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".zip,.json,.tar.gz"
-                        multiple
-                        onChange={handleFileChange}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                        disabled={isLoading}
-                      />
-                      {formData.evidenceFiles.length > 0 ? (
-                        <>
-                          <div className="flex items-center justify-center gap-2 mb-2">
-                            <span className="text-sm font-medium text-[var(--color-success-fg)]">
-                              {formData.evidenceFiles.length} file(s) selected
-                            </span>
-                            <Badge tone="success" className="text-xs">
-                              Ready
-                            </Badge>
-                          </div>
-                          <ul className="text-xs text-[var(--color-fg-muted)] space-y-1 text-left max-h-24 overflow-y-auto">
-                            {formData.evidenceFiles.map((f, i) => (
-                              <li key={i} className="flex items-center gap-2">
-                                <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-success-fg)]" />
-                                <span className="font-mono text-xs">{f.name}</span> ({(f.size / 1024).toFixed(1)} KB)
-                              </li>
-                            ))}
-                          </ul>
-                        </>
-                      ) : (
-                        <>
-                          <div className="text-xs font-medium text-[var(--color-fg-default)] mb-1">Click or drag to upload evidence files</div>
-                          <div className="text-[11px] text-[var(--color-fg-muted)] font-mono">Supported: .zip, .json, .tar.gz</div>
-                        </>
-                      )}
-                    </div>
+                  <div className="p-4 border rounded-[var(--radius-md)] border-[var(--color-border-default)] bg-[var(--color-canvas)] text-xs text-[var(--color-fg-muted)] space-y-2">
+                    <p>To inspect and analyze incident evidence with cryptographic provenance, please upload the incident package (.zip) directly using the primary &ldquo;Upload incident package&rdquo; control on the dashboard.</p>
                   </div>
                 </div>
               </>

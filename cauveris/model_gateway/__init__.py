@@ -1,25 +1,75 @@
 """
-Model gateway abstraction for Cauveris.
-
-The gateway is a chain of providers, not a single client:
-
-1. **Nebius Token Factory** - the hosted models, used when a key is set.
-2. **A local model server** - Ollama, vLLM, LM Studio or anything else that
-   speaks the OpenAI chat-completions protocol.
-
-The chain exists because the platform has to keep working when the hosted
-provider is down, and because on a robot the network being down is often the
-incident being investigated.  Each provider is tried in order and the first
-one that produces an actual inference wins.
+Model gateway abstraction and Nebius NVIDIA provider integration for Cauveris.
 """
+
+from __future__ import annotations
 
 import logging
 from typing import Optional
 
-from .base import ModelGateway, ModelResponse
+from .base import ModelGateway, ModelResponse, extract_json_from_text
+from .circuit_breaker import (
+    BudgetExceededError,
+    CircuitBreakerOpen,
+    ConcurrencyAndCostController,
+    get_controller,
+)
+from .enums import (
+    ModelAssistanceStatus,
+    ModelTaskType,
+    ProviderState,
+    ValidationResult,
+)
 from .fallback import AllProvidersFailed, FallbackModelGateway, ProviderAttempt
 from .local import LocalModelGateway, NoLocalModelAvailable
-from .nebius import CredentialNotConfigured, NebiusModelGateway
+from .nebius import (
+    CredentialNotConfigured,
+    ModelRateLimitedError,
+    NebiusModelGateway,
+    normalize_nebius_url,
+)
+from .records import (
+    ModelExecutionRecord,
+    ModelExecutionStore,
+    get_execution_store,
+)
+from .security import (
+    MAX_PROMPT_INPUT_CHARS,
+    redact_secrets,
+    validate_contained_ids,
+    wrap_untrusted_input,
+)
+from .tasks import (
+    TASK_REGISTRY,
+    EvidenceRecommendation,
+    ExplanationGenerationInput,
+    ExplanationGenerationOutput,
+    HypothesisProposalInput,
+    HypothesisProposalOutput,
+    LogCluster,
+    LogClusteringInput,
+    LogClusteringOutput,
+    MissingEvidenceInput,
+    MissingEvidenceOutput,
+    ProposedControlAdjustment,
+    ProposedHypothesis,
+    ProposedRepairStrategy,
+    ProposedTermMapping,
+    RepairStrategyInput,
+    RepairStrategyOutput,
+    TaskSpecification,
+    TerminologyMappingInput,
+    TerminologyMappingOutput,
+)
+from .validators import (
+    VALIDATOR_VERSION,
+    validate_explanation,
+    validate_hypothesis_proposal,
+    validate_log_clustering,
+    validate_missing_evidence,
+    validate_repair_strategy,
+    validate_terminology_mapping,
+)
 from cauveris.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -30,28 +80,16 @@ def create_model_gateway(
 ) -> ModelGateway:
     """
     Build the gateway chain for this deployment.
-
-    Args:
-        force_local: Skip the hosted provider and use only local servers.
-            Used by tests that must not touch the network.
-        timeout: Per-request timeout in seconds.  A health check passes a
-            short one; a reasoning call uses the configured default.
-
-    Returns:
-        A :class:`FallbackModelGateway`.  The chain is always returned, even
-        when it holds a single provider, so that callers can rely on the
-        chain's shape rather than on the deployment's configuration.
     """
     settings = get_settings()
     providers: list[ModelGateway] = []
 
-    if not force_local and settings.nebius_api_key:
+    if not force_local and settings.nebius_api_key and settings.nebius_enabled:
         providers.append(NebiusModelGateway(timeout=timeout))
     elif not force_local:
         logger.info(
-            "NEBIUS_API_KEY is not configured; the hosted model provider is "
-            "not part of the gateway chain. Local servers, if any, will be "
-            "used instead."
+            "NEBIUS_API_KEY is not configured or Nebius is disabled; the hosted provider is "
+            "not active. Local deterministic fallback will be used."
         )
 
     providers.append(
@@ -67,6 +105,7 @@ def create_model_gateway(
 __all__ = [
     "ModelGateway",
     "ModelResponse",
+    "extract_json_from_text",
     "LocalModelGateway",
     "NebiusModelGateway",
     "FallbackModelGateway",
@@ -74,5 +113,49 @@ __all__ = [
     "AllProvidersFailed",
     "NoLocalModelAvailable",
     "CredentialNotConfigured",
+    "ModelRateLimitedError",
     "create_model_gateway",
+    "normalize_nebius_url",
+    "ProviderState",
+    "ModelTaskType",
+    "ModelAssistanceStatus",
+    "ValidationResult",
+    "ModelExecutionRecord",
+    "ModelExecutionStore",
+    "get_execution_store",
+    "redact_secrets",
+    "wrap_untrusted_input",
+    "validate_contained_ids",
+    "MAX_PROMPT_INPUT_CHARS",
+    "TASK_REGISTRY",
+    "TaskSpecification",
+    "TerminologyMappingInput",
+    "TerminologyMappingOutput",
+    "ProposedTermMapping",
+    "LogClusteringInput",
+    "LogClusteringOutput",
+    "LogCluster",
+    "HypothesisProposalInput",
+    "HypothesisProposalOutput",
+    "ProposedHypothesis",
+    "RepairStrategyInput",
+    "RepairStrategyOutput",
+    "ProposedRepairStrategy",
+    "ProposedControlAdjustment",
+    "MissingEvidenceInput",
+    "MissingEvidenceOutput",
+    "EvidenceRecommendation",
+    "ExplanationGenerationInput",
+    "ExplanationGenerationOutput",
+    "VALIDATOR_VERSION",
+    "validate_terminology_mapping",
+    "validate_log_clustering",
+    "validate_missing_evidence",
+    "validate_hypothesis_proposal",
+    "validate_repair_strategy",
+    "validate_explanation",
+    "ConcurrencyAndCostController",
+    "get_controller",
+    "CircuitBreakerOpen",
+    "BudgetExceededError",
 ]

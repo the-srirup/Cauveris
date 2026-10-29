@@ -52,6 +52,13 @@ export function useEvidenceExplorer(incidentId: string) {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "OBSERVED": return "text-[var(--color-accent)]";
+      case "DECLARED": return "text-[var(--color-brand-info,#38bdf8)]";
+      case "DERIVED": return "text-[var(--color-brand-accent,#a855f7)]";
+      case "CALIBRATED": return "text-[var(--color-brand-success,#22c55e)]";
+      case "INFERRED": return "text-[var(--color-brand-warning,#eab308)]";
+      case "SIMULATED": return "text-[var(--color-brand-accent,#8b5cf6)]";
+      case "EXPLICIT_DEFAULT": return "text-[var(--color-text-muted,#71717a)]";
+      case "UNAVAILABLE": return "text-[var(--color-brand-danger,#ef4444)]";
       case "VALIDATED": return "text-[var(--color-brand-success)]";
       case "MISSING": return "text-[var(--color-brand-warning)]";
       default: return "text-muted";
@@ -61,6 +68,13 @@ export function useEvidenceExplorer(incidentId: string) {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "OBSERVED": return "primary";
+      case "DECLARED": return "info";
+      case "DERIVED": return "accent";
+      case "CALIBRATED": return "success";
+      case "INFERRED": return "warning";
+      case "SIMULATED": return "secondary";
+      case "EXPLICIT_DEFAULT": return "muted";
+      case "UNAVAILABLE": return "danger";
       case "VALIDATED": return "success";
       case "MISSING": return "warning";
       case "REDACTED": return "muted";
@@ -89,32 +103,6 @@ interface EvidenceItemViewProps {
 }
 
 export function EvidenceItemView({ item, onClose }: EvidenceItemViewProps) {
-  const [content, setContent] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  // SECURITY: For text files, load content safely - but note we don't render HTML
-  const loadContent = async () => {
-    setLoading(true);
-    try {
-      // SECURITY: Never render HTML directly - use text/plain or sanitized JSON
-      const incidentReport = await api.getReport(item.file_path.split("/")[0] || "CAU-0001");
-
-      // For now, show metadata only since actual file content would need safe handling
-      setContent(null);
-    } catch {
-      setContent(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (item?.file_type?.startsWith("text/") || item?.file_type === "application/json") {
-      // Note: In production, you'd fetch the actual file content securely
-      // This is a placeholder that shows the metadata-based approach
-    }
-  }, [item]);
-
   const formatSize = (bytes: number) => {
     if (bytes === 0) return "0 B";
     const k = 1024;
@@ -144,6 +132,14 @@ export function EvidenceItemView({ item, onClose }: EvidenceItemViewProps) {
               <div>
                 <span className="text-[var(--color-text-muted)]">Size:</span>
                 <span className="font-mono ml-2 text-[var(--color-text-primary)]">{formatSize(item.size_bytes || 0)}</span>
+              </div>
+              <div>
+                <span className="text-[var(--color-text-muted)]">Provenance:</span>
+                <span className="font-mono ml-2 text-[var(--color-brand-success,#22c55e)] font-bold">{item.status || "OBSERVED"}</span>
+              </div>
+              <div>
+                <span className="text-[var(--color-text-muted)]">Required:</span>
+                <span className="font-mono ml-2 text-[var(--color-text-primary)]">{item.is_required ? "Yes" : "No"}</span>
               </div>
             </div>
 

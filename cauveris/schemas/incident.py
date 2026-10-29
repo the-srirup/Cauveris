@@ -3,7 +3,7 @@ Incident-related schemas.
 """
 
 from .base import BaseEntity, StatusLabel
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -67,6 +67,18 @@ class Incident(BaseEntity):
     discovered_repository: Optional[Dict[str, Any]] = Field(
         default=None, description="Discovered source repository analysis"
     )
+    package_sha256: Optional[str] = Field(
+        default=None, description="Cryptographic SHA-256 of the uploaded package archive"
+    )
+    job_id: Optional[str] = Field(
+        default=None, description="Associated pipeline job execution ID"
+    )
+
+    # Multi-tenant and upload context private attributes
+    _owner_user_id: Optional[str] = PrivateAttr(default=None)
+    _owner_org_id: Optional[str] = PrivateAttr(default=None)
+    _is_anonymous: bool = PrivateAttr(default=False)
+    _uploaded_filename: Optional[str] = PrivateAttr(default=None)
 
     # Computed properties
     evidence_count: int = Field(0, description="Number of evidence items")

@@ -3,7 +3,7 @@ Patch and verification schemas.
 """
 
 from .base import BaseEntity
-from pydantic import Field
+from pydantic import Field, model_validator
 from typing import Optional, List, Dict, Any
 
 
@@ -37,6 +37,17 @@ class PatchCandidate(BaseEntity):
     """A candidate patch for fixing the incident."""
 
     candidate_id: str = Field(..., description="Unique identifier for the patch candidate")
+    incident_id: Optional[str] = Field(None, description="The incident this patch candidate belongs to")
+    hypothesis_id: Optional[str] = Field(None, description="Hypothesis ID this patch resolves")
+    target_file: Optional[str] = Field(None, description="Primary relative target file modified by patch")
+    rationale: Optional[str] = Field(None, description="Rationale linking patch intervention to hypothesis")
+    provider_execution_id: Optional[str] = Field(None, description="Model execution ID that assisted this patch")
+    before_hash: Optional[str] = Field(None, description="SHA-256 hash of original target file before patch")
+    after_hash: Optional[str] = Field(None, description="SHA-256 hash of modified target file after patch")
+    file_checksums: Dict[str, Dict[str, str]] = Field(
+        default_factory=dict, description="Per-file before and after SHA-256 hashes"
+    )
+    is_selected: bool = Field(False, description="Whether this candidate is selected for repair package deployment")
     affected_files: List[str] = Field(
         default_factory=list, description="List of files changed by the patch"
     )
@@ -58,6 +69,21 @@ class PatchCandidate(BaseEntity):
     score: float = Field(0.0, description="Overall score of the candidate")
     rejection_reason: Optional[str] = Field(None, description="Reason if candidate was rejected")
     applied_cleanly: bool = Field(False, description="Whether patch applied without conflicts")
+    applies_cleanly: bool = Field(False, description="Whether patch applies cleanly (alias for applied_cleanly)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_cleanly(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "applies_cleanly" in data and "applied_cleanly" not in data:
+                data["applied_cleanly"] = data["applies_cleanly"]
+            elif "applied_cleanly" in data and "applies_cleanly" not in data:
+                data["applies_cleanly"] = data["applied_cleanly"]
+            elif "applies_cleanly" in data and "applied_cleanly" in data:
+                synced = bool(data["applies_cleanly"] or data["applied_cleanly"])
+                data["applies_cleanly"] = synced
+                data["applied_cleanly"] = synced
+        return data
     regression_test_fails_before: bool = Field(
         False, description="Regression test fails on original"
     )
@@ -81,6 +107,7 @@ class VerificationReport(BaseEntity):
     """Report of verification checks for a patch candidate."""
 
     patch_candidate_id: str = Field(..., description="ID of patch candidate being verified")
+    incident_id: Optional[str] = Field(None, description="The incident this verification report belongs to")
     applies_cleanly: bool = Field(False, description="Patch applies cleanly")
     regression_test_fails_before: bool = Field(
         False, description="Regression test fails on original commit"

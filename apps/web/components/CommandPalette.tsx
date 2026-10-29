@@ -104,23 +104,16 @@ export function CommandPalette() {
     },
     {
       id: "upload-evidence",
-      label: "Upload Evidence Bundle",
-      description: "Upload evidence artifacts from local files",
-      shortcut: "U B",
+      label: "Upload Incident Package",
+      description: "Upload real incident bundle from file (.zip)",
+      shortcut: "U P",
       category: "incident",
       icon: <Upload className="h-3.5 w-3.5" />,
       action: () => {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = ".zip,.json,.tar.gz";
-        input.multiple = true;
-        input.onchange = (e) => {
-          const files = (e.target as HTMLInputElement).files;
-          if (files && files.length > 0) {
-            console.log("Uploading", files.length, "files");
-          }
-        };
-        input.click();
+        const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+        if (fileInput) {
+          fileInput.click();
+        }
         setCommandPalette(false);
       },
     },

@@ -196,7 +196,7 @@ function PatchForgeContent() {
     try {
       notify("Assembling verified patch package and regression test suite...", "info");
       await api.exportPatch(incidentId, "zip");
-      notify("Patch package created successfully at report/CAU-0001/patch-package (includes fix.patch, apply_patch.py, rollback.sh, PULL_REQUEST.md)!", "success");
+      notify(`Patch package created successfully at report/${incidentId}/patch-package (includes fix.patch, apply_patch.py, rollback.sh, PULL_REQUEST.md)!`, "success");
     } catch (e: any) {
       setError(e.message);
       notify(e.message || "Failed to create patch package", "error");

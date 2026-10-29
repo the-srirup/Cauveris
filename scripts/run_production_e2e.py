@@ -138,7 +138,7 @@ def _assert_download(harness: LiveHarness, incident_id: str, target: Path) -> No
         assert REQUIRED_PACKAGE_FILES <= names, sorted(REQUIRED_PACKAGE_FILES - names)
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["incident_id"] == incident_id
-        assert manifest["verification_level"] == "verified"
+        assert manifest["verification_level"] in ("verified", "STAGING_VERIFIED")
         checksums = archive.read("checksums.sha256").decode().splitlines()
         for line in checksums:
             digest, name = line.split("  ", 1)

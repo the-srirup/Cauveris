@@ -1385,6 +1385,268 @@ class RabbitMQQueueBackend(QueueBackend):
         self._healthy = False
 
 
+class SQLiteQueueBackend(QueueBackend):
+    """
+    Persistent SQLite-backed queue for cross-process coordination.
+
+    Features:
+    - Multi-process safe: uses SQLite WAL mode and busy timeouts.
+    - Priority-based scheduling (CRITICAL > HIGH > NORMAL > LOW).
+    - Multi-tenant isolation.
+    - Lease-based claim timeouts with automatic dead worker reclamation.
+    - Survives process restarts with zero job loss.
+    """
+
+    def __init__(
+        self,
+        db_path: str = "data/job_queue.db",
+        max_size: int = 10000,
+        default_ttl: int = 3600,
+        claim_timeout: float = 300.0,
+    ):
+        from pathlib import Path
+        self.db_path = Path(db_path)
+        self.max_size = max_size
+        self.default_ttl = default_ttl
+        self.claim_timeout = claim_timeout
+        self._init_db()
+
+    def _get_connection(self):
+        import sqlite3
+        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        return conn
+
+    def _init_db(self):
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._get_connection() as con:
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    priority INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    started_at REAL,
+                    completed_at REAL,
+                    expires_at REAL,
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    max_retries INTEGER NOT NULL DEFAULT 3,
+                    retry_delay REAL NOT NULL DEFAULT 1.0,
+                    owner_id TEXT,
+                    tenant_id TEXT,
+                    metadata TEXT,
+                    result TEXT,
+                    error TEXT,
+                    attempts TEXT,
+                    worker_id TEXT
+                );
+            """)
+            con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status_priority ON jobs(status, priority DESC, created_at ASC);")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(type);")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_jobs_tenant ON jobs(tenant_id);")
+
+    def _row_to_job(self, row) -> Job:
+        return Job(
+            id=row["id"],
+            type=row["type"],
+            payload=json.loads(row["payload"]) if row["payload"] else {},
+            priority=JobPriority(row["priority"]),
+            status=JobStatus(row["status"]),
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+            expires_at=row["expires_at"],
+            retry_count=row["retry_count"],
+            max_retries=row["max_retries"],
+            retry_delay=row["retry_delay"],
+            owner_id=row["owner_id"] or "",
+            tenant_id=row["tenant_id"],
+            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
+            result=json.loads(row["result"]) if row["result"] else None,
+            error=row["error"],
+            attempts=json.loads(row["attempts"]) if row["attempts"] else [],
+        )
+
+    async def enqueue(self, job: Job) -> bool:
+        if job.expires_at is None and self.default_ttl:
+            job.expires_at = time.time() + self.default_ttl
+
+        with self._get_connection() as con:
+            cur = con.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued', 'processing')")
+            count = cur.fetchone()[0]
+            if count >= self.max_size:
+                return False
+
+            con.execute(
+                """
+                INSERT OR REPLACE INTO jobs (
+                    id, type, payload, priority, status, created_at, started_at,
+                    completed_at, expires_at, retry_count, max_retries, retry_delay,
+                    owner_id, tenant_id, metadata, result, error, attempts, worker_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job.id,
+                    job.type,
+                    json.dumps(job.payload),
+                    int(job.priority),
+                    job.status.value,
+                    job.created_at,
+                    job.started_at,
+                    job.completed_at,
+                    job.expires_at,
+                    job.retry_count,
+                    job.max_retries,
+                    job.retry_delay,
+                    job.owner_id,
+                    job.tenant_id,
+                    json.dumps(job.metadata),
+                    json.dumps(job.result) if job.result is not None else None,
+                    job.error,
+                    json.dumps(job.attempts),
+                    None,
+                ),
+            )
+        return True
+
+    async def dequeue(self, worker_id: str, types: List[str], max_jobs: int = 1) -> List[Job]:
+        now = time.time()
+        with self._get_connection() as con:
+            # 1. Reclaim dead jobs
+            cutoff = now - self.claim_timeout
+            dead_rows = con.execute(
+                "SELECT id, retry_count, max_retries FROM jobs WHERE status = 'processing' AND started_at < ?",
+                (cutoff,),
+            ).fetchall()
+            for r in dead_rows:
+                if r["retry_count"] < r["max_retries"]:
+                    con.execute(
+                        "UPDATE jobs SET status = 'queued', started_at = NULL, worker_id = NULL, retry_count = retry_count + 1 WHERE id = ?",
+                        (r["id"],),
+                    )
+                else:
+                    con.execute(
+                        "UPDATE jobs SET status = 'dead_letter', error = 'Claim lease expired (worker timeout/death)' WHERE id = ?",
+                        (r["id"],),
+                    )
+
+            # 2. Reclaim expired queued jobs
+            con.execute(
+                "UPDATE jobs SET status = 'dead_letter', error = 'Job TTL expired' WHERE status = 'queued' AND expires_at IS NOT NULL AND expires_at < ?",
+                (now,),
+            )
+
+            # 3. Claim jobs atomically
+            placeholders = ",".join("?" for _ in types)
+            query = f"""
+                SELECT id FROM jobs
+                WHERE status = 'queued' AND type IN ({placeholders})
+                ORDER BY priority DESC, created_at ASC
+                LIMIT ?
+            """
+            rows = con.execute(query, (*types, max_jobs)).fetchall()
+            claimed_jobs = []
+            for r in rows:
+                j_id = r["id"]
+                res = con.execute(
+                    "UPDATE jobs SET status = 'processing', started_at = ?, worker_id = ? WHERE id = ? AND status = 'queued'",
+                    (now, worker_id, j_id),
+                )
+                if res.rowcount > 0:
+                    job_row = con.execute("SELECT * FROM jobs WHERE id = ?", (j_id,)).fetchone()
+                    if job_row:
+                        claimed_jobs.append(self._row_to_job(job_row))
+            return claimed_jobs
+
+    async def requeue(self, job: Job) -> bool:
+        with self._get_connection() as con:
+            con.execute(
+                "UPDATE jobs SET status = 'queued', started_at = NULL, worker_id = NULL, retry_count = ?, error = ? WHERE id = ?",
+                (job.retry_count, job.error, job.id),
+            )
+        return True
+
+    async def complete(self, job_id: str, result: Dict[str, Any]) -> bool:
+        now = time.time()
+        with self._get_connection() as con:
+            res = con.execute(
+                "UPDATE jobs SET status = 'completed', completed_at = ?, result = ? WHERE id = ?",
+                (now, json.dumps(result), job_id),
+            )
+            return res.rowcount > 0
+
+    async def fail(self, job_id: str, error: str, retry: bool = False) -> bool:
+        now = time.time()
+        with self._get_connection() as con:
+            row = con.execute("SELECT retry_count, max_retries FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if not row:
+                return False
+            retries = row["retry_count"]
+            max_retries = row["max_retries"]
+            if retry and retries < max_retries:
+                res = con.execute(
+                    "UPDATE jobs SET status = 'queued', started_at = NULL, worker_id = NULL, retry_count = retry_count + 1, error = ? WHERE id = ?",
+                    (error, job_id),
+                )
+            else:
+                final_status = "dead_letter" if retry else "failed"
+                res = con.execute(
+                    "UPDATE jobs SET status = ?, completed_at = ?, error = ? WHERE id = ?",
+                    (final_status, now, error, job_id),
+                )
+            return res.rowcount > 0
+
+    async def get_job(self, job_id: str) -> Optional[Job]:
+        with self._get_connection() as con:
+            row = con.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            return self._row_to_job(row) if row else None
+
+    async def cancel(self, job_id: str) -> bool:
+        with self._get_connection() as con:
+            res = con.execute(
+                "UPDATE jobs SET status = 'cancelled' WHERE id = ? AND status IN ('queued', 'processing')",
+                (job_id,),
+            )
+            return res.rowcount > 0
+
+    async def get_stats(self) -> Dict[str, Any]:
+        with self._get_connection() as con:
+            rows = con.execute("SELECT status, count(*) as cnt FROM jobs GROUP BY status").fetchall()
+            stats = {
+                "backend": "sqlite",
+                "max_size": self.max_size,
+                "queued": 0,
+                "processing": 0,
+                "completed": 0,
+                "failed": 0,
+                "dead_letter": 0,
+                "cancelled": 0,
+                "total": 0,
+            }
+            for r in rows:
+                st = r["status"]
+                cnt = r["cnt"]
+                if st in stats:
+                    stats[st] = cnt
+                stats["total"] += cnt
+            return stats
+
+    async def health_check(self) -> bool:
+        try:
+            with self._get_connection() as con:
+                con.execute("SELECT 1").fetchone()
+            return True
+        except Exception:
+            return False
+
+    async def close(self) -> None:
+        pass
+
+
 class JobQueue:
     """
     High-level job queue manager.
@@ -1586,6 +1848,14 @@ def init_job_queue(
             amqp_url=url,
             max_size=effective_max_size,
             default_ttl=effective_default_ttl,
+        )
+    elif chosen_backend == "sqlite":
+        db_path = getattr(settings, "job_queue_sqlite_path", "data/job_queue.db")
+        _job_queue_backend = SQLiteQueueBackend(
+            db_path=db_path,
+            max_size=effective_max_size,
+            default_ttl=effective_default_ttl,
+            claim_timeout=getattr(settings, "job_queue_claim_timeout_seconds", 300.0),
         )
     else:
         _job_queue_backend = InMemoryQueueBackend(

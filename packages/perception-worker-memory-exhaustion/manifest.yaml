@@ -1,0 +1,13 @@
+incident_id: DEMO-PERCEPTION-MEMORY-001
+title: Perception Worker Memory Exhaustion
+description: Real perception worker OOM kill with configurable memory quota and headroom capacity.
+system_name: perception-pipeline
+required_evidence:
+  - config/worker.yaml
+  - telemetry/oom-events.log
+  - telemetry/heap.csv
+e2e:
+  family: memory_or_resource_exhaustion
+  expected_mechanism: resource_exhaustion
+  expected_hypothesis: h_memory_exhaustion
+  expected_key: resources.memory_limit_mb

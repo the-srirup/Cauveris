@@ -2,11 +2,13 @@
 Ingestion controller for processing incident bundles.
 """
 
+import json
 import logging
 import zipfile
 import yaml
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import mimetypes
 import shutil
 from cauveris.schemas.incident import Incident, EvidenceItem
@@ -45,9 +47,25 @@ def extract_zip_safely(zip_path: Path, extract_to: Path) -> List[Path]:
         uncompressed_size = sum(max(0, int(member.file_size)) for member in members)
         if uncompressed_size > settings.max_archive_uncompressed_size:
             raise ValueError("ZIP archive exceeds the uncompressed-size threshold")
+        max_file_size = getattr(settings, "max_archive_file_size", 50 * 1024 * 1024)
         for member_info in members:
             member = member_info.filename
-            member_path = Path(member)
+            norm_member = member.replace("\\", "/")
+            if norm_member.startswith("/") or ".." in norm_member.split("/"):
+                raise ValueError(f"Path traversal attempt detected: {member}")
+
+            # Reject symlinks to prevent symlink escape attacks
+            is_symlink = (member_info.external_attr >> 16) & 0o170000 == 0o120000
+            if is_symlink:
+                raise ValueError(f"Symlinks are forbidden in archive: {member}")
+
+            # Per-file size check
+            if member_info.file_size > max_file_size:
+                raise ValueError(f"File {member} exceeds maximum permitted size")
+
+            member_path = Path(norm_member)
+            if len(member_path.parts) > 15:
+                raise ValueError(f"Directory nesting exceeds maximum permitted depth: {member}")
             if member_path.is_absolute() or ".." in member_path.parts:
                 raise ValueError(f"Invalid path in ZIP: {member}")
 
@@ -116,13 +134,28 @@ class IngestionController:
         if bundle_path:
             logger.info(f"Using bundle path: {bundle_path}")
             manifest_file = bundle_path / "manifest.yaml"
+            if not manifest_file.exists():
+                for alt_name in ("manifest.yml", "manifest.json"):
+                    alt_path = bundle_path / alt_name
+                    if alt_path.exists():
+                        manifest_file = alt_path
+                        break
+
             if manifest_file.exists():
                 try:
                     with open(manifest_file, "r", encoding="utf-8") as f:
-                        manifest_data = yaml.safe_load(f)
+                        if manifest_file.suffix.lower() == ".json":
+                            manifest_data = json.load(f)
+                        else:
+                            manifest_data = yaml.safe_load(f)
                     if manifest_data and isinstance(manifest_data, dict):
+                        # Preserve existing bundle_path / package_sha256 if present
+                        if incident.manifest and isinstance(incident.manifest, dict):
+                            for k in ("bundle_path", "package_sha256", "uploaded_filename"):
+                                if k in incident.manifest and k not in manifest_data:
+                                    manifest_data[k] = incident.manifest[k]
                         incident.manifest = manifest_data
-                        if not incident.title or incident.title == "Uploaded Incident":
+                        if not incident.title or incident.title in ("Uploaded Incident", "New Incident"):
                             incident.title = manifest_data.get("title", incident.title)
                         if not incident.description:
                             incident.description = manifest_data.get(
@@ -156,7 +189,82 @@ class IngestionController:
                                     )
                                 )
                 except Exception as e:
-                    logger.warning(f"Error parsing manifest.yaml: {e}")
+                    logger.warning(f"Error parsing manifest file: {e}")
+            else:
+                # PHASE 4: SUPPORT ZIP PACKAGES WITHOUT MANIFEST.YAML
+                # Detect configuration roots and source roots
+                config_roots: List[str] = []
+                source_roots: List[str] = []
+                for p in bundle_path.rglob("*"):
+                    if p.is_file():
+                        rel = p.relative_to(bundle_path)
+                        parts = rel.parts
+                        if len(parts) > 1:
+                            root_dir = str(parts[0])
+                            ext = p.suffix.lower()
+                            if ext in (".yaml", ".yml", ".json", ".toml", ".ini", ".conf", ".cfg"):
+                                if root_dir not in config_roots:
+                                    config_roots.append(root_dir)
+                            elif ext in (".py", ".cpp", ".c", ".h", ".hpp", ".rs", ".go", ".ts", ".js", ".sh"):
+                                if root_dir not in source_roots:
+                                    source_roots.append(root_dir)
+
+                # Title resolution order:
+                # 1. Explicit title provided during upload
+                # 2. Uploaded manifest title (checked above, not present here)
+                # 3. ZIP filename without extension
+                # 4. Incident plus a short backend ID
+                resolved_title = None
+                if incident.title and incident.title not in ("Uploaded Incident", "New Incident"):
+                    resolved_title = incident.title
+                elif incident.manifest and incident.manifest.get("uploaded_filename"):
+                    raw_fn = incident.manifest.get("uploaded_filename", "")
+                    stem = Path(raw_fn).stem
+                    if stem:
+                        resolved_title = stem.replace("-", " ").replace("_", " ").title()
+
+                if not resolved_title:
+                    short_id = incident.id[:8] if incident.id else "0000"
+                    resolved_title = f"Incident {short_id}"
+
+                incident.title = resolved_title
+
+                package_sha = getattr(incident, "package_sha256", "") or (
+                    incident.manifest.get("package_sha256", "") if incident.manifest else ""
+                )
+                uploaded_fn = getattr(incident, "_uploaded_filename", None) or (
+                    incident.manifest.get("uploaded_filename", "") if incident.manifest else ""
+                )
+
+                internal_manifest: Dict[str, Any] = {
+                    "incident_id": incident.id,
+                    "title": resolved_title,
+                    "uploaded_filename": uploaded_fn,
+                    "package_sha256": package_sha,
+                    "extraction_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "detected_configuration_roots": config_roots,
+                    "detected_source_roots": source_roots,
+                    "warnings": ["Manifest file (manifest.yaml) not found in bundle; internal ingestion manifest generated."],
+                    "bundle_path": str(bundle_path),
+                }
+                incident.manifest = internal_manifest
+
+                # Discover any files on disk not already in evidence_items
+                existing_paths = {item.file_path for item in incident.evidence_items}
+                for fpath in bundle_path.rglob("*"):
+                    if fpath.is_file():
+                        rel_path = str(fpath.relative_to(bundle_path)).replace("\\", "/")
+                        if rel_path not in existing_paths:
+                            incident.evidence_items.append(
+                                EvidenceItem(
+                                    file_path=rel_path,
+                                    file_type=self._detect_file_type(fpath),
+                                    size_bytes=fpath.stat().st_size,
+                                    checksum_sha256=compute_file_hash(str(fpath)),
+                                    status=StatusLabel.OBSERVED,
+                                    is_required=False,
+                                )
+                            )
 
         # Process each evidence item
         for evidence in incident.evidence_items:
@@ -170,7 +278,7 @@ class IngestionController:
         # Build dynamic artifact inventory, capability report, and repo discovery if bundle_path exists
         if bundle_path and bundle_path.exists():
             try:
-                inventory = ArtifactInventory(bundle_path)
+                inventory = ArtifactInventory(bundle_path, incident_id=incident.id)
                 entries = inventory.scan()
                 incident.artifact_inventory = [e.to_dict() for e in entries]
 
