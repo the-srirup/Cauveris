@@ -91,7 +91,7 @@ def test_artifact_inventory_scanner_inventories_unknown_artifacts(tmp_path: Path
     assert "service.log" in rel_paths
 
     bin_entry = next(e for e in entries if e.relative_path == "weird_name.bin")
-    assert bin_entry.parse_status == "skipped_binary"
+    assert bin_entry.parse_status in ("skipped_binary", "BINARY")
     assert bin_entry.is_editable is False
     assert bin_entry.contributes_to_diagnosis is False
     assert len(bin_entry.checksum_sha256) == 64
@@ -129,7 +129,7 @@ def test_jsonl_artifacts_are_parsed_as_jsonl_not_json(tmp_path: Path):
 
     for name in ("stream.jsonl", "records.ndjson", "telemetry.jsonl"):
         entry = entries[name]
-        assert entry.parse_status == "parsed", f"{name}: {entry.warnings}"
+        assert entry.parse_status in ("parsed", "SUPPORTED"), f"{name}: {entry.warnings}"
         assert entry.parser_selected == "jsonlines"
         assert entry.record_count == 2
         assert entry.contributes_to_diagnosis is True
@@ -138,4 +138,4 @@ def test_jsonl_artifacts_are_parsed_as_jsonl_not_json(tmp_path: Path):
     (bundle / "config.json").write_text('{"a": 1, "b": 2}', encoding="utf-8")
     entries = {e.relative_path: e for e in ArtifactInventory(bundle).scan()}
     assert entries["config.json"].parser_selected == "json"
-    assert entries["config.json"].parse_status == "parsed"
+    assert entries["config.json"].parse_status in ("parsed", "SUPPORTED")

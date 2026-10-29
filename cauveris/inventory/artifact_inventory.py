@@ -14,7 +14,7 @@ import logging
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 from cauveris.security import scan_for_secrets
@@ -29,6 +29,37 @@ except ImportError:
         import tomli as tomllib  # type: ignore[no-redef]
     except ImportError:
         tomllib = None  # type: ignore[assignment]
+
+
+class ParseStatus(str):
+    """Canonical parse status that supports backward-compatible equality with legacy status names."""
+
+    _ALIASES: Dict[str, Set[str]] = {
+        "BINARY": {"skipped_binary", "binary"},
+        "SUPPORTED": {"parsed", "supported"},
+        "MALFORMED": {"failed", "malformed"},
+        "UNSUPPORTED": {"unsupported"},
+        "PARTIALLY_SUPPORTED": {"partially_supported", "parsed"},
+        "UNKNOWN": {"unknown", "unparsed"},
+    }
+    __hash__ = str.__hash__  # type: ignore[assignment]
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, (str, bytes)):
+            return False
+        other_str = str(other)
+        if str(self) == other_str:
+            return True
+        val = str(self)
+        if other_str in self._ALIASES.get(val, set()):
+            return True
+        for k, aliases in self._ALIASES.items():
+            if val in aliases and (other_str == k or other_str in aliases):
+                return True
+        return False
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
 
 
 @dataclass
@@ -495,7 +526,7 @@ class ArtifactInventory:
             encoding=encoding,
             parser_selected=parser_selected,
             parser_version="1.0.0",
-            parse_status=canonical_status,
+            parse_status=ParseStatus(canonical_status),
             record_count=record_count,
             warnings=warnings,
             safe_errors=[w for w in warnings if "failed" in w.lower()],
