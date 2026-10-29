@@ -8707,9 +8707,16 @@ async def model_health():
         elif is_live:
             provider_state = ProviderState.NEBIUS_NVIDIA_DEGRADED.value
 
+    if not reachable:
+        provider_name = "none reachable"
+    elif is_live and any("tokenfactory" in str(p.get("endpoint", "")) for p in reachable):
+        provider_name = "nebius"
+    else:
+        provider_name = "local"
+
     return {
         "status": "healthy" if (provider_state == ProviderState.NEBIUS_NVIDIA_ACTIVE.value or not settings.model_provider_required) else "degraded",
-        "provider": "nebius" if is_live else "local_only",
+        "provider": provider_name,
         "provider_state": provider_state,
         "model_id": exact_model_id,
         "exact_model_id": exact_model_id,
