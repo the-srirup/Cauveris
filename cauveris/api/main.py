@@ -7534,7 +7534,66 @@ async def get_victory_replay(
         "verification_level": verification_level,
         "verification_summary": verification_summary_dict,
         "canonical_invariants": invariants_list,
-        "latency_decomposition": latency_decomp.model_dump(mode="json"),
+        "latency_decomposition": {
+            "mechanism": getattr(plan, "mechanism", "resource_exhaustion") or "resource_exhaustion",
+            "total_measured_latency_ms": latency_decomp.total_latency_ms,
+            "budget_ms": resolved_budget,
+            "control_deadline_ms": control_deadline,
+            "physical_lower_bound_ms": latency_decomp.min_achievable_latency_ms,
+            "repair_physically_feasible": latency_decomp.min_achievable_latency_ms <= resolved_budget,
+            "dominant_compressible_component": latency_decomp.root_cause_component,
+            "recommended_strategy": (
+                latency_decomp.selected_strategy.value
+                if hasattr(latency_decomp.selected_strategy, "value")
+                else str(latency_decomp.selected_strategy)
+            ),
+            "rationale": latency_decomp.explanation,
+            "components": [
+                {
+                    "name": "Batching Wait",
+                    "measured_ms": latency_decomp.batching_wait.value or 0.0,
+                    "physical_minimum_ms": latency_decomp.batching_wait.min_physically_achievable_ms,
+                    "dominant": latency_decomp.root_cause_component == "batching_wait",
+                    "compressible": True,
+                },
+                {
+                    "name": "Queue Wait",
+                    "measured_ms": latency_decomp.queue_wait.value or 0.0,
+                    "physical_minimum_ms": latency_decomp.queue_wait.min_physically_achievable_ms,
+                    "dominant": latency_decomp.root_cause_component == "queue_wait",
+                    "compressible": True,
+                },
+                {
+                    "name": "Dependency Wait",
+                    "measured_ms": latency_decomp.dependency_wait.value or 0.0,
+                    "physical_minimum_ms": latency_decomp.dependency_wait.min_physically_achievable_ms,
+                    "dominant": latency_decomp.root_cause_component == "dependency_wait",
+                    "compressible": False,
+                },
+                {
+                    "name": "Compute Time",
+                    "measured_ms": latency_decomp.compute_time.value or 0.0,
+                    "physical_minimum_ms": latency_decomp.compute_time.min_physically_achievable_ms,
+                    "dominant": latency_decomp.root_cause_component == "compute_time",
+                    "compressible": False,
+                },
+                {
+                    "name": "Network Transport",
+                    "measured_ms": round((latency_decomp.request_transport.value or 0.0) + (latency_decomp.response_transport.value or 0.0), 2),
+                    "physical_minimum_ms": round(latency_decomp.request_transport.min_physically_achievable_ms + latency_decomp.response_transport.min_physically_achievable_ms, 2),
+                    "dominant": latency_decomp.root_cause_component in ("request_transport", "response_transport"),
+                    "compressible": False,
+                },
+                {
+                    "name": "Scheduling Overhead",
+                    "measured_ms": latency_decomp.scheduling_overhead.value or 0.0,
+                    "physical_minimum_ms": latency_decomp.scheduling_overhead.min_physically_achievable_ms,
+                    "dominant": latency_decomp.root_cause_component == "scheduling_overhead",
+                    "compressible": False,
+                },
+            ],
+            **latency_decomp.model_dump(mode="json"),
+        },
         "before_outcome": before_outcome.model_dump(mode="json"),
         "after_outcome": after_outcome.model_dump(mode="json"),
     }

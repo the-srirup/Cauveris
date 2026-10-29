@@ -1079,7 +1079,21 @@ function MissionControlContent() {
               type="text"
               value={newSystemName}
               onChange={(e) => setNewSystemName(e.target.value)}
+              placeholder="e.g. AMR-NAV-04"
               className="w-full p-2 bg-[var(--workspace,#121215)] border border-[var(--divider,#27272a)] rounded-[var(--radius-sm,4px)] text-[var(--text-primary,#f4f4f5)] focus:outline-none focus:border-zinc-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[var(--text-secondary,#a1a1aa)] mb-1 uppercase text-[10.5px]">
+              Description
+            </label>
+            <textarea
+              value={newDescription}
+              onChange={(e) => setNewDescription(e.target.value)}
+              placeholder="e.g. Memory spike during sensor processing caused worker OOM kill"
+              rows={2}
+              className="w-full p-2 bg-[var(--workspace,#121215)] border border-[var(--divider,#27272a)] rounded-[var(--radius-sm,4px)] text-[var(--text-primary,#f4f4f5)] focus:outline-none focus:border-zinc-400 resize-none"
             />
           </div>
 

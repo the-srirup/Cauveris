@@ -833,7 +833,7 @@ function VictoryReplayContent() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--color-border-default)]">
-                          {replayData.canonical_invariants.map((inv, idx) => (
+                          {(replayData?.canonical_invariants ?? []).map((inv, idx) => (
                             <tr key={idx} className="hover:bg-[var(--color-canvas-subtle)]/50 transition-colors">
                               <td className="px-3 py-2 font-mono font-medium text-[var(--color-fg-default)]">{inv.name}</td>
                               <td className="px-3 py-2">
@@ -865,28 +865,28 @@ function VictoryReplayContent() {
                       <div className="p-2.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]">
                         <span className="text-[10px] uppercase font-bold text-[var(--color-fg-muted)] block">Physical Lower Bound</span>
                         <span className="text-sm font-mono font-bold text-[var(--color-fg-default)]">
-                          {replayData.latency_decomposition.physical_lower_bound_ms} ms
+                          {replayData.latency_decomposition?.physical_lower_bound_ms ?? (replayData.latency_decomposition as any)?.min_achievable_latency_ms ?? "—"} ms
                         </span>
                         <span className="text-[10px] text-[var(--color-fg-muted)] block mt-0.5">Absolute hardware limit</span>
                       </div>
                       <div className="p-2.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]">
                         <span className="text-[10px] uppercase font-bold text-[var(--color-fg-muted)] block">Feasibility Status</span>
-                        <span className={`text-sm font-bold ${replayData.latency_decomposition.repair_physically_feasible ? "text-[var(--color-success-fg)]" : "text-[var(--color-danger-fg)]"}`}>
-                          {replayData.latency_decomposition.repair_physically_feasible ? "FEASIBLE" : "INFEASIBLE"}
+                        <span className={`text-sm font-bold ${replayData.latency_decomposition?.repair_physically_feasible ? "text-[var(--color-success-fg)]" : "text-[var(--color-danger-fg)]"}`}>
+                          {replayData.latency_decomposition?.repair_physically_feasible ? "FEASIBLE" : "INFEASIBLE"}
                         </span>
                         <span className="text-[10px] text-[var(--color-fg-muted)] block mt-0.5">Budget &gt; Physical lower bound</span>
                       </div>
                       <div className="p-2.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]">
                         <span className="text-[10px] uppercase font-bold text-[var(--color-fg-muted)] block">Recommended Strategy</span>
                         <span className="text-xs font-mono font-bold text-[var(--color-accent-fg)]">
-                          {replayData.latency_decomposition.recommended_strategy}
+                          {replayData.latency_decomposition?.recommended_strategy ?? (replayData.latency_decomposition as any)?.selected_strategy ?? "—"}
                         </span>
-                        <span className="text-[10px] text-[var(--color-fg-muted)] block mt-0.5">{replayData.latency_decomposition.rationale}</span>
+                        <span className="text-[10px] text-[var(--color-fg-muted)] block mt-0.5">{replayData.latency_decomposition?.rationale ?? (replayData.latency_decomposition as any)?.explanation ?? ""}</span>
                       </div>
                     </div>
 
                     <div className="space-y-1.5">
-                      {replayData.latency_decomposition.components.map((c, i) => (
+                      {(replayData?.latency_decomposition?.components ?? []).map((c, i) => (
                         <div key={i} className="flex items-center justify-between p-2 rounded bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-xs">
                           <div className="flex items-center gap-2">
                             <span className="font-medium text-[var(--color-fg-default)]">{c.name}</span>
@@ -1060,7 +1060,7 @@ function VictoryReplayContent() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--color-border-default)]">
-                          {replayData.verification_summary.checks.map((chk, i) => (
+                          {(replayData?.verification_summary?.checks ?? []).map((chk, i) => (
                             <tr key={i} className="hover:bg-[var(--color-canvas-subtle)]/50 transition-colors">
                               <td className="px-3 py-2 font-mono font-medium text-[var(--color-fg-default)]">{chk.check_name}</td>
                               <td className="px-3 py-2">

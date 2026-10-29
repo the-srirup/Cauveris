@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { tv } from "tailwind-variants";
 import { X, Zap, Loader2, AlertCircle, CheckCircle } from "lucide-react";
 import { api } from "@/lib/api";
@@ -10,17 +11,17 @@ import { useRouter } from "next/navigation";
 
 const modalStyles = tv({
   base: `
-    fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6
-    bg-black/60
+    fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6
+    bg-black/70 backdrop-blur-xs
     animate-fade-in
   `,
 });
 
 const panelStyles = tv({
   base: `
-    w-full max-w-2xl rounded-[var(--radius-lg)] border border-[var(--color-border-default)]
+    relative w-full max-w-2xl rounded-[var(--radius-lg)] border border-[var(--color-border-default)]
     bg-[var(--color-canvas-inset)] shadow-[var(--shadow-xl)]
-    overflow-hidden flex flex-col max-h-[90vh] h-full
+    overflow-hidden flex flex-col max-h-[85vh] my-auto
     animate-scale-in
   `,
 });
@@ -79,7 +80,12 @@ const sectionDividerStyles = tv({
 export function CreateIncidentModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const { addActivity } = useShell();
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [formData, setFormData] = useState({
@@ -198,9 +204,9 @@ export function CreateIncidentModal({ isOpen, onClose }: { isOpen: boolean; onCl
     }
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || !mounted) return null;
 
-  return (
+  return createPortal(
     <div className={modalStyles()} onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="create-incident-title">
       <div className={panelStyles()} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
@@ -452,6 +458,7 @@ export function CreateIncidentModal({ isOpen, onClose }: { isOpen: boolean; onCl
           </div>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

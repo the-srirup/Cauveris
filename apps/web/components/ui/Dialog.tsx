@@ -147,7 +147,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(
 
     const dialogContent = (
       <div
-        className="dialog-overlay"
+        className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-xs animate-fade-in"
         onClick={closeOnOverlayClick ? onClose : undefined}
         role="presentation"
         onKeyDown={(e) => e.stopPropagation()}
@@ -155,9 +155,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(
         <div
           ref={dialogRef}
           onClick={(e) => e.stopPropagation()}
-          className={`
-            dialog ${sizeClasses[size]} ${className}
-          `}
+          className={`relative w-full max-h-[85vh] overflow-y-auto bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] rounded-[var(--radius-xl,10px)] shadow-[var(--shadow-xl)] animate-scale-in my-auto ${sizeClasses[size]} ${className}`}
           role="dialog"
           aria-modal={modal ? "true" : "false"}
           aria-labelledby={title ? "dialog-title" : undefined}
@@ -165,46 +163,9 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(
           aria-label={!title && ariaLabel ? ariaLabel : undefined}
           tabIndex={-1}
         >
-          <style jsx>{`
-            .dialog-overlay {
-              position: fixed;
-              inset: 0;
-              z-index: var(--z-modal);
-              background: rgba(0, 0, 0, 0.5);
-              animation: fade-in var(--duration-fast) var(--easing-standard);
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              padding: var(--space-4);
-            }
-            .dialog {
-              width: 100%;
-              max-height: 85vh;
-              overflow-y: auto;
-              background: var(--color-canvas-inset);
-              border: 1px solid var(--color-border-default);
-              border-radius: var(--radius-xl, 10px);
-              box-shadow: var(--shadow-lg);
-              animation: scale-in var(--duration-normal) var(--easing-emphasized);
-            }
-            @keyframes fade-in {
-              from { opacity: 0; }
-              to { opacity: 1; }
-            }
-            @keyframes scale-in {
-              from {
-                transform: scale(0.95);
-                opacity: 0;
-              }
-              to {
-                transform: scale(1);
-                opacity: 1;
-              }
-            }
-          `}</style>
           <div className="flex flex-col">
             {(title || showCloseButton) && (
-              <div className="flex items-start justify-between gap-3 p-4 border-b border-[var(--color-border-default)]">
+              <div className="flex items-start justify-between gap-3 p-4 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]">
                 <div className="flex-1 min-w-0">
                   {title && (
                     <h2 id="dialog-title" className="text-lg font-semibold text-[var(--color-fg-default)]">
