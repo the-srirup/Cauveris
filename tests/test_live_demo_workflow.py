@@ -339,7 +339,6 @@ def test_three_consecutive_live_demo_runs():
     print("\n" + "=" * 80)
     print(" ALL 3 CONSECUTIVE REHEARSAL RUNS PASSED TRUTHFULLY!")
     print("=" * 80)
-    return results
 
 
 if __name__ == "__main__":

@@ -132,11 +132,17 @@ class NebiusModelGateway(ModelGateway):
         if self._resolved_model and not requested_model:
             return self._resolved_model
 
-        configured_nvidia = self.settings.nebius_model_id or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
-        model_name = requested_model or configured_nvidia
+        fictional_placeholders = {"nemotron-3-nano", "nemotron-3-super", "nemotron-3-ultra"}
+        model_name = (
+            requested_model
+            or (self.settings.model_reasoning if self.settings.model_reasoning and self.settings.model_reasoning != "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF" else None)
+            or self.settings.nebius_model_id
+            or self.settings.model_reasoning
+            or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+        )
 
-        # If it's a real model ID specified by user, use it
-        if model_name and "/" in model_name:
+        # If it's a real model ID specified by user and not a fictional placeholder, use it
+        if model_name and "/" in model_name and model_name not in fictional_placeholders:
             self._resolved_model = model_name
             return model_name
 
@@ -148,16 +154,26 @@ class NebiusModelGateway(ModelGateway):
                 return model_name
 
             # Look for NVIDIA Nemotron models
-            nemotrons = [m for m in available_models if "nemotron" in m.lower()]
-            if nemotrons:
-                self._resolved_model = nemotrons[0]
-                return nemotrons[0]
+            if "nemotron" in (model_name or "").lower():
+                nemotrons = [m for m in available_models if "nemotron" in m.lower()]
+                if nemotrons:
+                    self._resolved_model = nemotrons[0]
+                    return nemotrons[0]
+
+            # Look for Llama 3.1 70B
+            llamas = [m for m in available_models if "llama-3.1-70b" in m.lower()]
+            if llamas:
+                self._resolved_model = llamas[0]
+                return llamas[0]
 
             self._resolved_model = available_models[0]
             return available_models[0]
 
-        self._resolved_model = configured_nvidia
-        return configured_nvidia
+        default_model = self.settings.nebius_model_id or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+        self._resolved_model = default_model
+        return default_model
+
+    _resolve_model = resolve_model
 
     async def generate(
         self,
@@ -182,12 +198,14 @@ class NebiusModelGateway(ModelGateway):
         # Sanitize prompt of all credentials and secrets
         redacted_prompt, redaction_count = redact_secrets(prompt)
 
-        # Check cache
-        cache_key = self.controller.compute_hash(task_id, redacted_prompt)
-        cached_result = self.controller.get_cached(cache_key)
-        if cached_result:
-            logger.info("Returning cached model response for hash %s", cache_key[:12])
-            return ModelResponse(**cached_result)
+        # Check cache if explicitly requested or for registered bounded tasks
+        should_cache = kwargs.get("use_cache", task_id != "GENERIC_REASONING")
+        cache_key = self.controller.compute_hash(f"{incident_id}:{task_id}", redacted_prompt)
+        if should_cache:
+            cached_result = self.controller.get_cached(cache_key)
+            if cached_result:
+                logger.info("Returning cached model response for hash %s", cache_key[:12])
+                return ModelResponse(**cached_result)
 
         client = await self._get_client()
         model_to_use = await self.resolve_model(client)
@@ -242,7 +260,27 @@ class NebiusModelGateway(ModelGateway):
                         self.controller.record_failure()
                         err_msg = f"Nebius authentication failure (HTTP {response.status_code})"
                         logger.error(err_msg)
-                        raise CredentialNotConfigured(err_msg)
+                        req = getattr(response, "request", None) or httpx.Request("POST", "/chat/completions")
+                        sanitized_text, _ = redact_secrets(response.text)
+                        sanitized_resp = httpx.Response(response.status_code, request=req, text=sanitized_text)
+                        raise httpx.HTTPStatusError(
+                            message=err_msg,
+                            request=req,
+                            response=sanitized_resp,
+                        )
+
+                    if response.status_code == 404:
+                        self._cached_available_models = None
+                        self._resolved_model = None
+                        alt_model = await self.resolve_model(client, None)
+                        if alt_model and alt_model != model_to_use:
+                            logger.info(f"404 on model {model_to_use}; retrying with {alt_model}")
+                            request_body["model"] = alt_model
+                            model_to_use = alt_model
+                            continue
+                        else:
+                            logger.error(f"Nebius API model not found: {model_to_use} ({response.text})")
+                            response.raise_for_status()
 
                     if response.status_code == 429:
                         # Rate limited
@@ -312,7 +350,8 @@ class NebiusModelGateway(ModelGateway):
         )
 
         # Store in cache
-        self.controller.set_cached(cache_key, model_resp.model_dump())
+        if should_cache:
+            self.controller.set_cached(cache_key, model_resp.model_dump())
 
         # Generate execution record
         response_hash = f"sha256:{hashlib.sha256(content.encode('utf-8')).hexdigest()}"

@@ -7,6 +7,7 @@ task schemas, deterministic validation, circuit breaker, budget enforcement, and
 from __future__ import annotations
 
 import asyncio
+import uuid
 import pytest
 
 from cauveris.model_gateway.circuit_breaker import (
@@ -315,8 +316,10 @@ def test_validate_repair_strategy():
 def test_execution_records_store():
     """Verify execution records are created, stored, and queryable per incident."""
     store = ModelExecutionStore()
+    inc_id_1 = f"INC-TEST-100-{uuid.uuid4().hex[:8]}"
+    inc_id_2 = f"INC-TEST-200-{uuid.uuid4().hex[:8]}"
     rec1 = ModelExecutionRecord(
-        incident_id="INC-TEST-100",
+        incident_id=inc_id_1,
         task_id="HYPOTHESIS_PROPOSAL",
         provider="nebius",
         provider_state=ProviderState.NEBIUS_NVIDIA_ACTIVE,
@@ -327,7 +330,7 @@ def test_execution_records_store():
         fallback_used=False,
     )
     rec2 = ModelExecutionRecord(
-        incident_id="INC-TEST-200",
+        incident_id=inc_id_2,
         task_id="TERMINOLOGY_MAPPING",
         provider="local",
         provider_state=ProviderState.LOCAL_DETERMINISTIC_ONLY,
@@ -340,7 +343,7 @@ def test_execution_records_store():
     store.add(rec1)
     store.add(rec2)
 
-    inc1_records = store.get_by_incident("INC-TEST-100")
+    inc1_records = store.get_by_incident(inc_id_1)
     assert len(inc1_records) == 1
     assert inc1_records[0].execution_id == rec1.execution_id
     assert inc1_records[0].model_id == "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
