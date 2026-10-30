@@ -175,6 +175,14 @@ class ReportGenerator:
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(incident_report, f, indent=2, default=str)
 
+        # Materialize the per-audience markdown variants as real artifacts, so
+        # the reports inventory only ever lists files that exist on disk.
+        for _variant in ("technical", "executive", "compliance"):
+            try:
+                render_variant_markdown(incident_report, _variant, report_dir)
+            except Exception as exc:
+                logger.warning(f"Could not render report variant '{_variant}': {exc}")
+
         logger.info(f"Report generated at {report_dir}")
         return incident_report
 
@@ -1020,3 +1028,221 @@ echo "Rollback complete. Please verify the system is back to its previous state.
                 f"{t['network_delay_ms']},{t['total_latency_ms']},{int(t['is_stale'])},{int(t['emergency_stop'])}"
             )
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Per-audience report variants
+#
+# Every variant below is rendered from the finished incident report dict —
+# the same evidence, hypotheses, experiments, patches and verification records
+# the full report contains.  Nothing is asserted that the report does not
+# contain.
+# ---------------------------------------------------------------------------
+
+#: The nine invariant gates, in the order the verifier applies them.  Keep in
+#: sync with the keys `_verification_to_dict` emits.
+INVARIANT_GATES: List[tuple] = [
+    ("applies_cleanly", "Patch applies cleanly"),
+    ("regression_test_fails_before", "Regression test fails before the fix"),
+    ("regression_test_passes_after", "Regression test passes after the fix"),
+    ("original_failure_not_reproduced", "Original failure is not reproduced"),
+    ("existing_tests_pass", "Existing tests still pass"),
+    ("safety_invariants_pass", "Safety invariants hold"),
+    ("performance_within_budget", "Performance stays within budget"),
+    ("forbidden_change_scan_passes", "Forbidden-change scan passes"),
+    ("rollback_test_passes", "Rollback restores the original state"),
+]
+
+
+def _enum_val(x: Any) -> Any:
+    """Render enum members by their value, not their repr (StatusLabel.INFERRED)."""
+    return getattr(x, "value", x)
+
+
+def render_executive_markdown(data: Dict[str, Any]) -> str:
+    """Render an executive summary derived from a finished report dict."""
+    inc_id = data.get("incident_id", "UNKNOWN")
+    status = _enum_val(data.get("status", "UNKNOWN"))
+    gen_at = data.get("generated_at", "UNAVAILABLE")
+    summary = data.get("summary") or {}
+    ev = data.get("evidence_summary") or {}
+    hyps = data.get("hypotheses") or []
+    exps = data.get("experiments") or []
+    patches = data.get("patch_candidates") or []
+    verifs = [v for v in (data.get("verification_reports") or []) if v.get("verified")]
+
+    lines: List[str] = []
+    lines.append(f"# Executive Summary — {inc_id}\n")
+    lines.append(f"**Investigation status**: `{status}` | **Generated**: `{gen_at}`\n")
+
+    lines.append("## Key findings\n")
+    if hyps:
+        ranked = sorted(
+            hyps,
+            key=lambda h: (h.get("confidence_posterior") or h.get("confidence_prior") or 0.0),
+            reverse=True,
+        )
+        top = ranked[0]
+        conf = top.get("confidence_posterior") or top.get("confidence_prior") or 0.0
+        lines.append(
+            f"- **Most likely root cause** (`{top.get('hypothesis_id', '?')}`, "
+            f"{conf:.0%} confidence, status {_enum_val(top.get('status', 'UNKNOWN'))}): "
+            f"{top.get('causal_claim', 'UNAVAILABLE')}"
+        )
+        lines.append(
+            f"- **Hypotheses evaluated**: {summary.get('hypotheses', len(hyps))} | "
+            f"**Experiments run**: {summary.get('experiments', len(exps))}"
+        )
+    else:
+        lines.append("- No causal hypotheses were produced for this incident.")
+    lines.append("")
+
+    lines.append("## Evidence\n")
+    lines.append(
+        f"- Evidence items: **{ev.get('total_evidence_items', 0)}** total, "
+        f"**{ev.get('required_evidence_items', 0)}** required"
+    )
+    missing = ev.get("missing_required_evidence") or []
+    lines.append(f"- Missing required evidence: {', '.join(str(m) for m in missing) if missing else 'none'}\n")
+
+    lines.append("## Remediation\n")
+    if verifs:
+        v = verifs[0]
+        gates = sum(1 for key, _label in INVARIANT_GATES if v.get(key))
+        lines.append(
+            f"- **Verified patch** `{v.get('patch_candidate_id', 'unknown')}` passed "
+            f"**{gates}/9** invariant gates (verification level `{_enum_val(v.get('verification_level', 'UNVERIFIED'))}`)."
+        )
+        if data.get("patch_package_checksum_sha256"):
+            lines.append(f"- Repair package SHA-256: `{data['patch_package_checksum_sha256']}`")
+    elif patches:
+        lines.append(
+            f"- **No verified remediation exists**: {len(patches)} patch candidate(s) were "
+            "produced, but none cleared all nine invariant gates."
+        )
+    else:
+        lines.append("- No patch candidate could be derived for this incident.")
+    lines.append("")
+
+    lines.append("## Model assistance\n")
+    execs = data.get("model_executions") or []
+    if execs:
+        lines.append(
+            f"- {len(execs)} external model execution(s) were recorded; see the full report's "
+            "transparency section for provider, model and token usage."
+        )
+    else:
+        lines.append("- No external model calls were made; analysis ran on the deterministic local pipeline.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_compliance_markdown(data: Dict[str, Any]) -> str:
+    """Render a compliance/audit-trail document derived from a report dict."""
+    inc_id = data.get("incident_id", "UNKNOWN")
+    status = _enum_val(data.get("status", "UNKNOWN"))
+    gen_at = data.get("generated_at", "UNAVAILABLE")
+    ev = data.get("evidence_summary") or {}
+    verifs = data.get("verification_reports") or []
+    execs = data.get("model_executions") or []
+    stages = data.get("stage_outcomes") or []
+
+    lines: List[str] = []
+    lines.append(f"# Compliance & Audit Report — {inc_id}\n")
+    lines.append(f"**Generated**: `{gen_at}` | **Investigation status**: `{status}`\n")
+
+    lines.append("## 1. Pipeline stage outcomes\n")
+    if stages:
+        lines.append("| Stage | Status | Error |")
+        lines.append("|---|---|---|")
+        for s in stages:
+            err = (s.get("error") or "").replace("|", "\\|") or "—"
+            lines.append(f"| `{s.get('id', s.get('stage_id', '?'))}` | {_enum_val(s.get('status', 'UNKNOWN'))} | {err} |")
+        lines.append("")
+    else:
+        lines.append("No per-stage outcomes were recorded for this report.\n")
+
+    lines.append("## 2. Evidence grounding\n")
+    lines.append(f"- Total evidence items: **{ev.get('total_evidence_items', 0)}**")
+    lines.append(f"- Required evidence items: **{ev.get('required_evidence_items', 0)}**")
+    missing = ev.get("missing_required_evidence") or []
+    lines.append(f"- Missing required evidence: {', '.join(str(m) for m in missing) if missing else 'none'}\n")
+
+    lines.append("## 3. Verification gates\n")
+    if verifs:
+        for v in verifs:
+            gates = sum(1 for key, _label in INVARIANT_GATES if v.get(key))
+            lines.append(
+                f"### `{v.get('patch_candidate_id', 'unknown')}` — verified: `{v.get('verified')}`, "
+                f"level `{_enum_val(v.get('verification_level', 'UNVERIFIED'))}`, gates passed **{gates}/9**"
+            )
+            lines.append("| Gate | Result |")
+            lines.append("|---|---|")
+            for key, label in INVARIANT_GATES:
+                lines.append(f"| {label} | {'PASS' if v.get(key) else 'FAIL'} |")
+            lines.append("")
+            reasons = (v.get("verification_summary") or {}).get("rejection_reasons") or []
+            if reasons:
+                lines.append("**Rejection reasons**:")
+                for r in reasons:
+                    lines.append(f"- {r}")
+                lines.append("")
+    else:
+        lines.append("NOT_PERFORMED: No atomic verification checks were executed.\n")
+
+    lines.append("## 4. Remediation package & provenance\n")
+    if data.get("selected_repair_id") and data.get("patch_package_zip_path"):
+        lines.append(f"- Selected repair candidate: `{data['selected_repair_id']}`")
+        lines.append(f"- Package ZIP: `{data['patch_package_zip_path']}`")
+        lines.append(f"- Package SHA-256: `{data.get('patch_package_checksum_sha256') or 'UNAVAILABLE'}`")
+    else:
+        lines.append("NOT_PERFORMED: No verified repair package has been built or staged.\n")
+    lines.append("")
+
+    lines.append("## 5. Model execution provenance\n")
+    if execs:
+        lines.append("| Execution | Provider | Model | Task | Tokens |")
+        lines.append("|---|---|---|---|---|")
+        for m in execs:
+            usage = m.get("usage") or {}
+            tokens = m.get("total_tokens") or ((usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0))
+            lines.append(
+                f"| `{str(m.get('execution_id', ''))[:16]}` | {m.get('provider', '?')} | "
+                f"{m.get('model_name') or m.get('model_id') or '?'} | {m.get('task_type', m.get('task_id', '?'))} | {tokens} |"
+            )
+        lines.append("")
+    else:
+        lines.append("NOT_PERFORMED: No external model provider executions recorded for this incident.\n")
+
+    lines.append("## 6. Artifact paths\n")
+    lines.append(f"- JSON report: `{data.get('report_json_path') or 'UNAVAILABLE'}`")
+    lines.append(f"- Markdown report: `{data.get('report_markdown_path') or 'UNAVAILABLE'}`")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_variant_markdown(report: Dict[str, Any], variant: str, report_dir: Path) -> Optional[Path]:
+    """Materialize a per-type markdown artifact from a finished report dict.
+
+    The ``investigation`` variant is the JSON report itself and needs no extra
+    file.  ``technical`` reuses the report's own markdown.  ``executive`` and
+    ``compliance`` are rendered from ``report`` and written next to it, so the
+    reports inventory only ever lists files that actually exist.
+    """
+    variant = (variant or "investigation").strip().lower()
+    report_dir = Path(report_dir)
+    if variant == "executive":
+        path = report_dir / "incident_report_executive.md"
+        text = render_executive_markdown(report)
+    elif variant == "compliance":
+        path = report_dir / "incident_report_compliance.md"
+        text = render_compliance_markdown(report)
+    elif variant == "technical":
+        path = report_dir / "incident_report.md"
+        text = report.get("report_markdown")
+        if not text:
+            return None
+    else:
+        return None
+    path.write_text(text, encoding="utf-8")
+    return path

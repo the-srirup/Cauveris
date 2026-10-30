@@ -119,6 +119,26 @@ def _report_path(*parts: str) -> Path:
     """Resolve report artifacts through the configured isolated report store."""
     return Path(get_settings().report_store_path).joinpath(*parts)
 
+
+#: Report artifacts the store can hold, mapped to stable report ids.  The
+#: inventory endpoint only ever lists artifacts whose file actually exists
+#: on disk — a report entry is never invented for a file that was not written.
+#: (filename, id suffix, title, format, report type)
+REPORT_ARTIFACTS: tuple = (
+    ("incident_report.json", "001", "Full Investigation Report", "json", "investigation"),
+    ("incident_report.md", "002", "Investigation Report (Markdown)", "md", "technical"),
+    ("incident_report_executive.md", "003", "Executive Summary", "md", "executive"),
+    ("incident_report_compliance.md", "004", "Compliance & Audit Report", "md", "compliance"),
+)
+
+
+def _report_artifact_for_id(incident_id: str, report_id: str) -> Optional[tuple]:
+    """Map a report id to its on-disk artifact descriptor, or None."""
+    for fname, suffix, title, fmt, rtype in REPORT_ARTIFACTS:
+        if report_id in (f"rpt-{incident_id}-{suffix}", f"report-{fname}"):
+            return (fname, suffix, title, fmt, rtype)
+    return None
+
 app = FastAPI(title="Cauveris API", version="0.1.0")
 
 
@@ -8533,7 +8553,8 @@ async def list_incident_reports(
     )
 
     reports = []
-    report_file = _report_path(incident_id, "incident_report.json")
+    report_dir = _report_path(incident_id)
+    report_file = report_dir / "incident_report.json"
 
     # If report file doesn't exist on disk, check if context has it in memory and persist it
     if not report_file.exists():
@@ -8546,59 +8567,28 @@ async def list_incident_reports(
             except Exception as e:
                 logger.warning(f"Could not persist in-memory report to {report_file}: {e}")
 
-    # Return report inventory. Client-side rendering provides dedicated views
-    # for each report type derived from real investigation evidence.
-    if report_file.exists():
-        stat = report_file.stat()
+    # Inventory lists only artifacts that actually exist on disk, with their
+    # real size and modification time.  Nothing is invented for a report file
+    # that was never written.
+    for fname, suffix, title, fmt, rtype in REPORT_ARTIFACTS:
+        artifact = report_dir / fname
+        if not artifact.is_file():
+            continue
+        stat = artifact.stat()
         gen_time = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
         reports.append(
             {
-                "id": f"rpt-{incident_id}-001",
+                "id": f"rpt-{incident_id}-{suffix}",
                 "incident_id": incident_id,
-                "title": "Full Investigation Report",
+                "title": title,
                 "generated_at": gen_time,
                 "size_bytes": stat.st_size,
-                "format": "json",
+                "format": fmt,
                 "status": "ready",
-                "type": "investigation",
+                "type": rtype,
             }
         )
-        reports.append(
-            {
-                "id": f"rpt-{incident_id}-002",
-                "incident_id": incident_id,
-                "title": "Executive Summary",
-                "generated_at": gen_time,
-                "size_bytes": max(int(stat.st_size * 0.4), 1024),
-                "format": "pdf",
-                "status": "ready",
-                "type": "executive",
-            }
-        )
-        reports.append(
-            {
-                "id": f"rpt-{incident_id}-003",
-                "incident_id": incident_id,
-                "title": "Technical Deep Dive",
-                "generated_at": gen_time,
-                "size_bytes": stat.st_size,
-                "format": "json",
-                "status": "ready",
-                "type": "technical",
-            }
-        )
-        reports.append(
-            {
-                "id": f"rpt-{incident_id}-004",
-                "incident_id": incident_id,
-                "title": "Compliance & Audit Report",
-                "generated_at": gen_time,
-                "size_bytes": max(int(stat.st_size * 0.6), 2048),
-                "format": "html",
-                "status": "ready",
-                "type": "compliance",
-            }
-        )
+    reports.sort(key=lambda r: r["id"])
     return {"reports": reports}
 
 
@@ -8681,6 +8671,18 @@ async def generate_incident_report(
             if ctx:
                 ctx.final_report = report_data
 
+    # Materialize the requested report type as a real artifact on disk, so the
+    # inventory only ever lists files that exist.  Variants are rendered from
+    # the finished report data itself, never templated without it.
+    requested_type = (payload or {}).get("type") or "investigation"
+    if report_data:
+        try:
+            from cauveris.report.generator import render_variant_markdown
+
+            render_variant_markdown(report_data, requested_type, report_file.parent)
+        except Exception as e:
+            logger.warning(f"Could not render report variant '{requested_type}': {e}")
+
     # Return refreshed list of reports plus the report data
     reports_res = await list_incident_reports(request=request, incident_id=incident_id, user_data=user_data)
     return {
@@ -8717,12 +8719,8 @@ async def get_incident_report_by_id(
 
     await check_incident_access(incident, user, "report:read", "report.read", request, auth_store)
 
-    expected_id = f"rpt-{incident_id}-001"
-    if (
-        report_id != expected_id
-        and not report_id.startswith(f"rpt-{incident_id}-")
-        and not report_id.startswith("report-")
-    ):
+    artifact = _report_artifact_for_id(incident_id, report_id)
+    if artifact is None:
         raise HTTPException(
             status_code=404,
             detail={
@@ -8733,20 +8731,37 @@ async def get_incident_report_by_id(
             },
         )
 
+    fname, _suffix, _title, artifact_format, _rtype = artifact
+    artifact_path = _report_path(incident_id, fname)
+
+    # Markdown artifacts are served as the real text stored on disk.
+    if artifact_format == "md":
+        if artifact_path.is_file():
+            return Response(content=artifact_path.read_text(encoding="utf-8"), media_type="text/markdown")
+        ctx = pipeline_contexts.get(incident_id)
+        md_text = None
+        if ctx and isinstance(getattr(ctx, "final_report", None), dict):
+            md_text = ctx.final_report.get("report_markdown")
+        if not md_text:
+            base_md = _report_path(incident_id, "incident_report.md")
+            if base_md.is_file():
+                md_text = base_md.read_text(encoding="utf-8")
+        if md_text:
+            return Response(content=md_text, media_type="text/markdown")
+        raise HTTPException(status_code=404, detail=f"Report '{report_id}' not found for incident '{incident_id}'")
+
     ctx = pipeline_contexts.get(incident_id)
     report_data = None
     if ctx and ctx.final_report:
         if isinstance(ctx.final_report, dict) and ctx.final_report.get("incident_id") and str(ctx.final_report.get("incident_id")) != str(incident_id):
             raise HTTPException(status_code=404, detail="Report does not belong to requested incident")
         report_data = ctx.final_report
-    else:
-        report_file = _report_path(incident_id, "incident_report.json")
-        if report_file.exists():
-            with open(report_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and data.get("incident_id") and str(data.get("incident_id")) != str(incident_id):
-                    raise HTTPException(status_code=404, detail="Report file belongs to different incident")
-                report_data = data
+    if not report_data and artifact_path.is_file():
+        with open(artifact_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("incident_id") and str(data.get("incident_id")) != str(incident_id):
+            raise HTTPException(status_code=404, detail="Report file belongs to different incident")
+        report_data = data
 
     if not report_data:
         raise HTTPException(status_code=404, detail=f"Report '{report_id}' not found for incident '{incident_id}'")
@@ -8783,12 +8798,8 @@ async def delete_incident_report(
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    expected_id = f"rpt-{incident_id}-001"
-    if (
-        report_id != expected_id
-        and not report_id.startswith(f"rpt-{incident_id}-")
-        and not report_id.startswith("report-")
-    ):
+    artifact = _report_artifact_for_id(incident_id, report_id)
+    if artifact is None:
         raise HTTPException(
             status_code=404,
             detail={
@@ -8838,7 +8849,31 @@ async def delete_incident_report(
         )
     )
 
-    return {"message": f"Report {report_id} deleted successfully", "id": report_id}
+    # Actually delete the artifact this id maps to.  A success message is only
+    # returned when something was really removed from disk or from memory.
+    fname = artifact[0]
+    artifact_path = _report_path(incident_id, fname)
+    deleted = False
+    if artifact_path.is_file():
+        artifact_path.unlink()
+        deleted = True
+    elif fname == "incident_report.json":
+        ctx = pipeline_contexts.get(incident_id)
+        if ctx is not None and getattr(ctx, "final_report", None) is not None:
+            ctx.final_report = None
+            deleted = True
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "report_not_found",
+                "message": f"Report '{report_id}' not found for incident '{incident_id}'.",
+                "incident_id": incident_id,
+                "report_id": report_id,
+            },
+        )
+
+    return {"message": f"Report {report_id} deleted successfully", "id": report_id, "deleted": True}
 
 
 def mask_api_key(key: Optional[str]) -> str:

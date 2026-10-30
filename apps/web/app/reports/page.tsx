@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   PageHeader,
@@ -48,7 +48,7 @@ export interface Report {
   title: string;
   generated_at: string;
   size_bytes: number;
-  format: "json" | "pdf" | "html";
+  format: "json" | "md" | "pdf" | "html";
   status: "ready" | "generating" | "failed";
   type: "investigation" | "executive" | "technical" | "compliance";
 }
@@ -139,25 +139,36 @@ function ReportsPageContent() {
 
   const [incidentsList, setIncidentsList] = useState<Array<{ id: string; title?: string; system_name?: string }>>([]);
 
-  // Fetch available incidents if needed to support incident selection
+  // Fetch available incidents if needed to support incident selection.
+  // NOTE: setIncidentId from useActiveIncident is a fresh function identity on
+  // every render, so it must live in a ref — putting it in the deps array would
+  // re-run this effect (and its setState) after every render, looping forever.
+  const setIncidentIdRef = useRef(setIncidentId);
+  useEffect(() => {
+    setIncidentIdRef.current = setIncidentId;
+  }, [setIncidentId]);
+
   useEffect(() => {
     let mounted = true;
-    if (typeof api?.listIncidents === "function") {
-      api.listIncidents()
-        .then((items) => {
-          if (mounted && Array.isArray(items)) {
-            setIncidentsList(items);
-            if (!incidentId && items.length > 0 && typeof setIncidentId === "function") {
-              setIncidentId(items[0].id);
-            }
-          }
-        })
-        .catch(() => {});
-    }
+    const load = async () => {
+      try {
+        const res = typeof api?.list === "function" ? await api.list() : null;
+        const items = Array.isArray(res?.incidents) ? res.incidents : [];
+        if (!mounted) return;
+        setIncidentsList(items);
+        const setId = setIncidentIdRef.current;
+        if (!incidentId && items.length > 0 && typeof setId === "function") {
+          setId(items[0].id);
+        }
+      } catch {
+        // incident list is best-effort; the reports list below is authoritative
+      }
+    };
+    load();
     return () => {
       mounted = false;
     };
-  }, [incidentId, setIncidentId]);
+  }, [incidentId]);
 
   useEffect(() => {
     const currentId = incidentId || incident?.id;
@@ -510,7 +521,11 @@ function ReportsPageContent() {
       let mimeType = "application/json";
       let extension = "json";
 
-      if (report.format === "html") {
+      if (report.format === "md") {
+        content = await api.getReportMarkdown(report.incident_id);
+        mimeType = "text/markdown;charset=utf-8";
+        extension = "md";
+      } else if (report.format === "html") {
         content = generateHtmlDocument(report, data);
         mimeType = "text/html;charset=utf-8";
         extension = "html";
@@ -590,6 +605,22 @@ function ReportsPageContent() {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
   };
+
+  // Everything below is derived from the loaded report payload only.  Nothing
+  // is asserted that the server's verification records do not contain.
+  const verifiedReport = Array.isArray(viewingReportData?.verification_reports)
+    ? viewingReportData.verification_reports.find((v: any) => v?.verified)
+    : undefined;
+  const gatesPassed = verifiedReport
+    ? INVARIANT_CHECKS.filter((c) => verifiedReport?.[c.key]).length
+    : 0;
+  const selectedPatchId =
+    verifiedReport?.patch_candidate_id || viewingReportData?.selected_repair_id || null;
+  const selectedPatch = Array.isArray(viewingReportData?.patch_candidates)
+    ? viewingReportData.patch_candidates.find((p: any) => p?.candidate_id === selectedPatchId)
+    : undefined;
+  const missingEvidence: string[] =
+    viewingReportData?.evidence_summary?.missing_required_evidence ?? [];
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -1118,12 +1149,12 @@ function ReportsPageContent() {
                         title="Incident Overview"
                         subtitle={
                           <Badge tone="primary" className="text-[10px] font-mono">
-                            {viewingReportData?.system_name || "warehouse-amr-01"}
+                            {viewingReportData?.system_name || "Unavailable"}
                           </Badge>
                         }
                       />
                       <PanelSection dividerBefore={false} className="text-sm text-[var(--color-fg-muted)]">
-                        {viewingReportData?.description || "Investigation of root causes and verified counterfactual remediations."}
+                        {viewingReportData?.description || "No description recorded for this incident."}
                       </PanelSection>
                       <PanelSection dividerBefore={true} className="grid grid-cols-2 sm:grid-cols-3 gap-[var(--space-3)] pt-[var(--space-2)] border-t border-[var(--color-border-default)] text-xs">
                         <div>
@@ -1133,7 +1164,9 @@ function ReportsPageContent() {
                         <div>
                           <span className="text-[var(--color-fg-muted)] block">Evidence Items</span>
                           <span className="font-mono text-[var(--color-success-fg)]">
-                            {viewingReportData?.evidence_summary?.total_evidence_items || 18} Verified
+                            {viewingReportData?.evidence_summary
+                              ? `${viewingReportData.evidence_summary.total_evidence_items ?? 0} recorded`
+                              : "—"}
                           </span>
                         </div>
                         <div>
@@ -1180,14 +1213,28 @@ function ReportsPageContent() {
                       </div>
                     </div>
 
-                    {/* Verification Summary */}
-                    <Panel variant="inset" padding="md" className="border border-[var(--color-success-muted)] bg-[var(--color-success-muted)]/5">
+                    {/* Verification Summary — rendered from the server's own verification records */}
+                    <Panel
+                      variant="inset"
+                      padding="md"
+                      className={
+                        verifiedReport
+                          ? "border border-[var(--color-success-muted)] bg-[var(--color-success-muted)]/5"
+                          : "border border-[var(--color-danger-muted)] bg-[var(--color-danger-muted)]/5"
+                      }
+                    >
                       <PanelSection dividerBefore={false} className="flex items-start gap-3">
-                        <Shield className="h-5 w-5 text-[var(--color-success-fg)] mt-0.5 flex-shrink-0" />
+                        <Shield
+                          className={`h-5 w-5 mt-0.5 flex-shrink-0 ${verifiedReport ? "text-[var(--color-success-fg)]" : "text-[var(--color-danger-fg)]"}`}
+                        />
                         <div>
-                          <h4 className="text-sm font-semibold text-[var(--color-fg-default)]">Verification Engine Certified</h4>
+                          <h4 className="text-sm font-semibold text-[var(--color-fg-default)]">
+                            {verifiedReport ? "Verified Remediation Available" : "No Verified Remediation"}
+                          </h4>
                           <p className="text-xs text-[var(--color-fg-muted)] mt-1 leading-relaxed">
-                            Digital twin simulation validated candidate patch against all 20 historical edge-case tests with zero deadline misses.
+                            {verifiedReport
+                              ? `Verified patch ${selectedPatchId} passed ${gatesPassed} of ${INVARIANT_CHECKS.length} invariant gates in digital-twin verification.`
+                              : "No patch candidate cleared all nine invariant gates; no verified remediation is available for this incident."}
                           </p>
                         </div>
                       </PanelSection>
@@ -1208,14 +1255,14 @@ function ReportsPageContent() {
                       </div>
                       <h3 className="text-lg font-bold text-[var(--color-fg-default)] mt-1">{viewingReport.title}</h3>
                       <p className="text-xs text-[var(--color-fg-muted)] font-mono mt-[var(--space-1)]">
-                        Target: {viewingReportData?.system_name || "warehouse-amr-01"} • Generated: {formatDate(viewingReport.generated_at)}
+                        Target: {viewingReportData?.system_name || "Unavailable"} • Generated: {formatDate(viewingReport.generated_at)}
                       </p>
                     </div>
 
                     <div className="space-y-[var(--space-2)]">
                       <h5 className="text-xs font-bold text-[var(--color-fg-muted)] uppercase">Executive Summary</h5>
                       <p className="text-xs leading-relaxed text-[var(--color-fg-muted)]">
-                        {viewingReportData?.description || "Incident investigation completed successfully with full deterministic reproducibility."}
+                        {viewingReportData?.description || "No description recorded for this incident."}
                       </p>
                     </div>
 
@@ -1224,15 +1271,17 @@ function ReportsPageContent() {
                       <Panel variant="inset" padding="md" className="text-xs space-y-[var(--space-2)]">
                         <div className="flex justify-between">
                           <span className="text-[var(--color-fg-muted)]">Total Evidence Items:</span>
-                          <span className="text-[var(--color-fg-default)] font-mono">{viewingReportData?.evidence_summary?.total_evidence_items || 18}</span>
+                          <span className="text-[var(--color-fg-default)] font-mono">{viewingReportData?.evidence_summary?.total_evidence_items ?? 0}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-[var(--color-fg-muted)]">Required Evidence Items:</span>
-                          <span className="text-[var(--color-fg-default)] font-mono">{viewingReportData?.evidence_summary?.required_evidence_items || 14}</span>
+                          <span className="text-[var(--color-fg-default)] font-mono">{viewingReportData?.evidence_summary?.required_evidence_items ?? 0}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-[var(--color-fg-muted)]">Missing Evidence:</span>
-                          <span className="text-[var(--color-success-fg)] font-mono">None (0)</span>
+                          <span className={missingEvidence.length ? "text-[var(--color-danger-fg)] font-mono" : "text-[var(--color-success-fg)] font-mono"}>
+                            {missingEvidence.length ? missingEvidence.join(", ") : "None"}
+                          </span>
                         </div>
                       </Panel>
                     </div>
@@ -1240,7 +1289,15 @@ function ReportsPageContent() {
                     <div className="space-y-[var(--space-2)]">
                       <h5 className="text-xs font-bold text-[var(--color-fg-muted)] uppercase">Verified Resolution</h5>
                       <p className="text-xs leading-relaxed text-[var(--color-fg-muted)]">
-                        Deploy patch candidate <code className="text-[var(--color-accent-fg)] font-mono">patch-001</code> to reset inference batching window to 100ms.
+                        {selectedPatchId ? (
+                          <>
+                            Deploy verified patch candidate{" "}
+                            <code className="text-[var(--color-accent-fg)] font-mono">{selectedPatchId}</code>
+                            {selectedPatch?.target_file ? ` (${selectedPatch.target_file})` : ""}.
+                          </>
+                        ) : (
+                          "No verified remediation is available for this incident."
+                        )}
                       </p>
                     </div>
                   </Panel>

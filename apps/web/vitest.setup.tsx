@@ -137,7 +137,7 @@ vi.mock('@/lib/api', async () => {
       getTemporalAnalysis: vi.fn(),
       health: vi.fn(),
       modelHealth: vi.fn(),
-      list: vi.fn(),
+      list: vi.fn().mockResolvedValue({ incidents: [], count: 0 }),
       simulateCustom: vi.fn(),
       exportReport: vi.fn().mockResolvedValue({}),
       listReports: vi.fn().mockResolvedValue({ reports: [] }),

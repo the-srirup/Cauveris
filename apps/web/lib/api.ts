@@ -1265,6 +1265,28 @@ class ApiClient {
     return this.request<IncidentReport>(`/incidents/${incidentId}/report`);
   }
 
+  // Fetch the rendered Markdown report (text/markdown) as raw text
+  async getReportMarkdown(incidentId: string): Promise<string> {
+    const { accessToken } = useAuthStore.getState();
+    const headers: Record<string, string> = {};
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+    const response = await fetch(`${this.baseUrl}/incidents/${incidentId}/report?format=markdown`, { headers });
+    if (!response.ok) {
+      const errorText = await response.text();
+      let message = errorText;
+      try {
+        const parsed = JSON.parse(errorText);
+        message = parsed?.detail?.message || parsed?.detail || parsed?.message || errorText;
+      } catch {
+        // use raw text
+      }
+      throw new Error(`Failed to fetch markdown report: ${response.status} ${message}`);
+    }
+    return response.text();
+  }
+
   // List reports for an incident
   async listReports(incidentId: string): Promise<{ reports: Array<{ id: string; incident_id: string; title: string; generated_at: string; size_bytes: number; format: string; status: string; type: string }> }> {
     return this.request<{ reports: Array<{ id: string; incident_id: string; title: string; generated_at: string; size_bytes: number; format: string; status: string; type: string }> }>(`/incidents/${incidentId}/reports`);

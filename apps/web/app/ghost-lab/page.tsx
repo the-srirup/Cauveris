@@ -177,11 +177,12 @@ function GhostLabContent() {
     if (match) setSelectedBranch(match.experiment_id || match.id || wanted);
   }, [deepLink.experimentId, experiments]);
 
-  // While the real experiments load, show the typed fallback so the UI
-  // isn't blank and accessibility tests that query immediately find content.
-  // Once loaded, the real data takes over completely.
-  const activeExperiments = experiments.length > 0 ? experiments : fallbackExperiments;
-  const usingFallback = experiments.length === 0;
+  // The typed fallback is shown ONLY while the real request is in flight (and
+  // only when an incident is selected).  Once the load settles — even with an
+  // empty result — the real (possibly empty) data is what renders; a finished
+  // incident must never display a fabricated experiment branch.
+  const activeExperiments = !experimentsLoaded && incidentId ? fallbackExperiments : experiments;
+  const usingFallback = !experimentsLoaded && !!incidentId;
 
   const selectedExp =
     activeExperiments.find((e) => (e.experiment_id || e.id) === selectedBranch) ||
