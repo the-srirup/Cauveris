@@ -1,0 +1,25 @@
+{
+  "deployment_id": "v17",
+  "timestamp": "2026-10-24T17:45:00Z",
+  "service": "payments-gateway",
+  "image": "payments-gateway:v17",
+  "changes": [
+    {
+      "file": "config/payments.toml",
+      "change": "cache.ttl_seconds increased from 60 to 300 (flash-sale banner caching)",
+      "old_value": 60,
+      "new_value": 300
+    },
+    {
+      "file": "src/gateway/banner.py",
+      "change": "flash-sale banner enabled",
+      "old_value": false,
+      "new_value": true
+    }
+  ],
+  "config": {
+    "cache.ttl_seconds": {"from": 60, "to": 300}
+  },
+  "author": "growth-team@example.com",
+  "note": "Database section untouched by v17; database.max_connections has been 10 since v9. The flash-sale campaign started at 17:55 UTC."
+}

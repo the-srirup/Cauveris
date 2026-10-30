@@ -1,0 +1,40 @@
+# payments-gateway runtime configuration
+# Snapshot captured during incident CAU-9001 (2026-10-24 ~18:00 UTC).
+# NOTE: deployment v17 (17:45 UTC) changed ONLY [cache].ttl_seconds in this
+# file. The [database] section is unchanged since v9 - the pool limit of 10
+# predates the flash sale and was never resized for the traffic regime.
+
+[server]
+host = "0.0.0.0"
+port = 8443
+worker_count = 4
+request_timeout_ms = 3000
+
+[database]
+driver = "postgresql+psycopg"
+host = "pg-orders.internal"
+port = 5432
+name = "orders"
+user = "gateway_svc"
+# ^^ THE CONFIGURABLE ENVELOPE. Peak concurrent demand measured during the
+# incident was 35 active connections, so this limit is the knob the repair
+# patch must raise (10 -> 53, i.e. ceil(35 * 1.5)).
+max_connections = 10
+# How long a request waits to check out a connection before giving up.
+connection_timeout_ms = 5000
+# Budget for a single SQL statement (renamed from *_timeout_ms to keep the
+# pipeline's deadline taxonomy unambiguous - see parameter_registry).
+statement_budget_ms = 8000
+# Budget for leaving a transaction idle before the DB rolls it back.
+idle_session_budget_ms = 30000
+
+[cache]
+# Changed by deployment v17 at 17:45 UTC (60 -> 300). A red herring: it does
+# not touch the pool, which is exactly the kind of correlation the model is
+# asked to weigh and dismiss when proposing a causal hypothesis.
+ttl_seconds = 300
+max_entries = 5000
+
+[observability]
+metrics_interval_seconds = 1
+log_level = "info"

@@ -1,0 +1,9 @@
+{"ts": "2026-10-24T17:59:57Z", "level": "info", "msg": "request served in 36 ms", "path": "/v1/orders", "status": 200, "db_wait_ms": 9}
+{"ts": "2026-10-24T17:59:59Z", "level": "info", "msg": "arrival rate 850 requests/s exceeds sustained capacity estimate 620 requests/s", "component": "ingress"}
+{"ts": "2026-10-24T18:00:00Z", "level": "warn", "msg": "db checkout wait climbing: 1200 ms average over the last 10 requests", "db_wait_ms": 1200}
+{"ts": "2026-10-24T18:00:02Z", "level": "error", "msg": "connection pool exhausted: active connections 35 exceeded pool capacity 10 (remaining connection slots 0)", "active_connections": 35, "pool_capacity": 10}
+{"ts": "2026-10-24T18:00:02Z", "level": "error", "msg": "connection checkout timeout after 5000 ms; cannot get connection from pool", "db_wait_ms": 5000, "path": "/v1/charge", "status": 503}
+{"ts": "2026-10-24T18:00:05Z", "level": "error", "msg": "db pool exhausted (HikariPool-1 unavailable); too many connections already held by in-flight transactions"}
+{"ts": "2026-10-24T18:00:06Z", "level": "error", "msg": "request failed: 503 returned to client after connection pool exhaustion propagated", "path": "/v1/charge", "status": 503}
+{"ts": "2026-10-24T18:00:20Z", "level": "warn", "msg": "error rate 41 percent of traffic over the last minute; all failures are 503 from pool checkout"}
+{"ts": "2026-10-24T18:00:45Z", "level": "info", "msg": "request served in 52 ms after manual headroom window; pool pressure easing", "status": 200}

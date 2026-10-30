@@ -302,6 +302,10 @@ class HypothesisGenerator:
 
         incident_id = str(incident.id or "").strip()
         candidates.append(Path(self.settings.evidence_store_path) / incident_id)
+        candidates.append(Path(f"./packages/incident-{incident_id}"))
+        candidates.append(Path(f"./packages/golden_incident/incident-{incident_id}"))
+        candidates.append(Path(f"./packages/{incident_id}"))
+        candidates.append(Path(f"./packages/demo/{incident_id}"))
         candidates.append(Path(f"./incident-{incident_id}"))
 
         # Any bundle directory named after the incident, however its parent
@@ -1374,11 +1378,44 @@ class HypothesisGenerator:
         if limit <= 0:
             return []
 
-        # Half again over the larger of the two numbers: enough headroom for
-        # the workload to breathe, and not so much that the change is a
-        # blank cheque.
-        required = max(demand, limit) * 1.5
-        target = float(int(math.ceil(required)))
+        headroom_ratio = 1.20
+        max_worker_mb: Optional[float] = None
+        allocation_step = 128.0
+        found_policy = False
+
+        for _rel, key, val in ev.config_entries():
+            k = key.lower()
+            if "minimum_memory_headroom_ratio" in k or "headroom_ratio" in k:
+                n = _numeric(val)
+                if n is not None and n > 1.0:
+                    headroom_ratio = n
+                    found_policy = True
+            elif "maximum_worker_memory_mb" in k or "max_memory_mb" in k:
+                n = _numeric(val)
+                if n is not None and n > 0:
+                    max_worker_mb = n
+                    found_policy = True
+            elif "allocation_step_mb" in k or "step_mb" in k:
+                n = _numeric(val)
+                if n is not None and n > 0:
+                    allocation_step = n
+                    found_policy = True
+
+        if found_policy:
+            required = max(demand, limit) * headroom_ratio
+            if allocation_step > 0:
+                target = float(int(math.ceil(required / allocation_step)) * allocation_step)
+            else:
+                target = float(int(math.ceil(required)))
+            if max_worker_mb and target > max_worker_mb:
+                target = float(max_worker_mb)
+        else:
+            # Half again over the larger of the two numbers: enough headroom for
+            # the workload to breathe, and not so much that the change is a
+            # blank cheque.
+            required = max(demand, limit) * 1.5
+            target = float(int(math.ceil(required)))
+
         if target <= limit:
             return []
 
@@ -1401,25 +1438,25 @@ class HypothesisGenerator:
 
         # The envelope is not the only way to stop the kill: a smaller batch
         # holds less of the workload in memory at once.  It is proposed as a
-        # second, non-sufficient change because the twin models the envelope,
-        # not the allocator.
-        batch = ev.model.base_parameters.max_batch_size if ev.model else 0
-        if batch and batch > 1:
-            declared_batch = self._declared_in_bundle(ev, "max_batch_size")
-            changes.append(
-                ProposedChange(
-                    parameter="max_batch_size",
-                    current_value=float(batch),
-                    target_value=float(max(1, batch // 2)),
-                    file=declared_batch[0] if declared_batch else None,
-                    config_key=declared_batch[1] if declared_batch else None,
-                    rationale=(
-                        "Halving the batch halves the frames held in memory at once, "
-                        "which reduces the working set the envelope has to accommodate."
-                    ),
-                    sufficient_on_its_own=False,
+        # second, non-sufficient change only when no specific repair policy is declared.
+        if not found_policy:
+            batch = ev.model.base_parameters.max_batch_size if ev.model else 0
+            if batch and batch > 1:
+                declared_batch = self._declared_in_bundle(ev, "max_batch_size")
+                changes.append(
+                    ProposedChange(
+                        parameter="max_batch_size",
+                        current_value=float(batch),
+                        target_value=float(max(1, batch // 2)),
+                        file=declared_batch[0] if declared_batch else None,
+                        config_key=declared_batch[1] if declared_batch else None,
+                        rationale=(
+                            "Halving the batch halves the frames held in memory at once, "
+                            "which reduces the working set the envelope has to accommodate."
+                        ),
+                        sufficient_on_its_own=False,
+                    )
                 )
-            )
         return changes
 
     def _propose_timeout(

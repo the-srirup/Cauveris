@@ -319,7 +319,7 @@ def run_single_demo_workflow(run_index: int) -> Dict[str, Any]:
         shutil.rmtree(run_dir, ignore_errors=True)
 
 
-def test_three_consecutive_live_demo_runs():
+def run_three_consecutive_live_demo_runs():
     """Execute 3 consecutive clean rehearsal runs against live HTTP stack."""
     results = []
     print("\n" + "=" * 80)
@@ -339,9 +339,14 @@ def test_three_consecutive_live_demo_runs():
     print("\n" + "=" * 80)
     print(" ALL 3 CONSECUTIVE REHEARSAL RUNS PASSED TRUTHFULLY!")
     print("=" * 80)
+    return results
+
+
+def test_three_consecutive_live_demo_runs():
+    run_three_consecutive_live_demo_runs()
 
 
 if __name__ == "__main__":
-    res = test_three_consecutive_live_demo_runs()
+    res = run_three_consecutive_live_demo_runs()
     for r in res:
         print(json.dumps(r, indent=2))

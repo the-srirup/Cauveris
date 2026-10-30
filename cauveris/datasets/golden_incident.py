@@ -23,7 +23,17 @@ class GoldenIncidentGenerator:
         if bundle_path is not None:
             self.bundle_path = Path(bundle_path)
         else:
-            self.bundle_path = Path("./incident-CAU-0001")
+            for candidate in [
+                Path("./packages/golden_incident/incident-CAU-0001"),
+                Path("./packages/incident-CAU-0001"),
+                Path("./golden_incident/incident-CAU-0001"),
+                Path("./incident-CAU-0001"),
+            ]:
+                if candidate.exists():
+                    self.bundle_path = candidate
+                    break
+            else:
+                self.bundle_path = Path("./packages/golden_incident/incident-CAU-0001")
         self.bundle_path.mkdir(parents=True, exist_ok=True)
 
     def generate(self) -> Incident:

@@ -1,0 +1,27 @@
+incident_id: DEMO-PERCEPTION-MEMORY-002
+title: Perception Worker Memory Exhaustion
+description: >
+  The perception worker was terminated after its working set exceeded
+  the deployment memory limit during a dense inference workload.
+system_name: perception-pipeline
+affected_components:
+  - perception-worker
+expected_artifacts:
+  - config/worker.yaml
+  - config/component_aliases.yaml
+  - telemetry/oom-events.log
+  - telemetry/heap.csv
+  - telemetry/runtime-metrics.jsonl
+  - traces/inference-spans.jsonl
+  - source/worker.py
+  - notes/operator-observations.md
+  - unknown/diagnostic-context.bin
+required_evidence:
+  - config/worker.yaml
+  - telemetry/oom-events.log
+  - telemetry/heap.csv
+expected_capability:
+  family: memory_or_resource_exhaustion
+  mechanism: resource_exhaustion
+  control_target: resources.memory_limit_mb
+  target_file: config/worker.yaml

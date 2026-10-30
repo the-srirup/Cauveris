@@ -164,6 +164,10 @@ def _guessed_candidates(
     if incident_id:
         if evidence_store_path:
             candidates.append(Path(evidence_store_path) / incident_id)
+        candidates.append(Path(f"./packages/incident-{incident_id}"))
+        candidates.append(Path(f"./packages/golden_incident/incident-{incident_id}"))
+        candidates.append(Path(f"./packages/{incident_id}"))
+        candidates.append(Path(f"./packages/demo/{incident_id}"))
         candidates.append(Path(f"./incident-{incident_id}"))
         # The pipeline's own scratch store, where an uploaded bundle lands
         # before it is filed under its incident id.
@@ -175,7 +179,9 @@ def _guessed_candidates(
             try:
                 candidates.extend(sorted(root.glob(f"incident-{incident_id}")))
                 candidates.extend(sorted(root.glob(f"*/incident-{incident_id}")))
+                candidates.extend(sorted(root.glob(f"*/*/incident-{incident_id}")))
                 candidates.extend(sorted(root.glob(f"*/{incident_id}")))
+                candidates.extend(sorted(root.glob(f"*/*/{incident_id}")))
             except OSError:
                 pass
         try:
@@ -184,6 +190,13 @@ def _guessed_candidates(
             pass
         try:
             candidates.extend(sorted(root.glob("golden_incident/incident-*")))
+        except OSError:
+            pass
+        try:
+            candidates.extend(sorted(root.glob("packages/incident-*")))
+            candidates.extend(sorted(root.glob("packages/golden_incident/incident-*")))
+            candidates.extend(sorted(root.glob("packages/*")))
+            candidates.extend(sorted(root.glob("packages/*/*")))
         except OSError:
             pass
 

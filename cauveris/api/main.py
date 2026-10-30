@@ -1200,7 +1200,15 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
     evidence_path = Path(settings.evidence_store_path) / incident_id
     if not evidence_path.exists():
         # Also check common incident folder patterns
-        for pattern in [f"./incident-{incident_id}", f"./incident-{incident_id.lower()}"]:
+        for pattern in [
+            f"./packages/incident-{incident_id}",
+            f"./packages/incident-{incident_id.lower()}",
+            f"./packages/{incident_id}",
+            f"./packages/{incident_id.lower()}",
+            f"./packages/demo/{incident_id}",
+            f"./incident-{incident_id}",
+            f"./incident-{incident_id.lower()}",
+        ]:
             p = Path(pattern)
             if p.exists():
                 evidence_path = p
@@ -2563,9 +2571,10 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
                             }
                         )
 
-            for p in Path(".").glob("incident-*"):
-                if p.is_dir():
-                    inc_id = p.name.replace("incident-", "")
+            for glob_pattern in ("incident-*", "packages/incident-*", "packages/golden_incident/incident-*", "packages/*"):
+                for p in Path(".").glob(glob_pattern):
+                    if p.is_dir() and (p / "manifest.yaml").exists():
+                        inc_id = p.name.replace("incident-", "")
                     if inc_id not in seen:
                         seen.add(inc_id)
                         results.append(

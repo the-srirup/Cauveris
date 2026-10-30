@@ -716,6 +716,11 @@ async def get_boundary_layers(
 # message and the search itself must not drift apart.
 _BUNDLE_SEARCH_TEMPLATES = (
     str(Path("evidence_store") / "{incident_id}"),
+    "./packages/incident-{incident_id}",
+    "./packages/{incident_id}",
+    "./packages/golden_incident/incident-{incident_id}",
+    "./packages/golden_incident/{incident_id}",
+    "./packages/demo/{incident_id}",
     "./incident-{incident_id}",
     "./{incident_id}",
     "./golden_incident/incident-{incident_id}",

@@ -1,0 +1,47 @@
+{
+  "traceId": "9f1c2a7b4e5d6f8091a2b3c4d5e6f708",
+  "spans": [
+    {
+      "traceId": "9f1c2a7b4e5d6f8091a2b3c4d5e6f708",
+      "spanId": "11aa22bb33cc44dd",
+      "name": "POST /v1/charge",
+      "timestamp": 1761328802000000000,
+      "duration": 5012000000,
+      "status": {"code": 2, "message": "upstream call returned 503 after pool checkout was denied"},
+      "attributes": {
+        "http.method": "POST",
+        "http.route": "/v1/charge",
+        "http.status_code": 503,
+        "server.worker_count": 4,
+        "server.request_timeout_ms": 3000
+      }
+    },
+    {
+      "traceId": "9f1c2a7b4e5d6f8091a2b3c4d5e6f708",
+      "spanId": "55ee66ff77aa88bb",
+      "name": "db.checkout",
+      "timestamp": 1761328802000000000,
+      "duration": 5000000000,
+      "status": {"code": 2, "message": "connection pool exhausted: active connections 35 exceeded pool capacity 10"},
+      "attributes": {
+        "db.system": "postgresql",
+        "db.pool.active_connections": 35,
+        "db.pool.capacity": 10,
+        "db.checkout_wait_ms": 5000,
+        "db.connection_timeout_ms": 5000
+      }
+    },
+    {
+      "traceId": "9f1c2a7b4e5d6f8091a2b3c4d5e6f708",
+      "spanId": "99bb00cc11dd22ee",
+      "name": "db.query SELECT orders",
+      "timestamp": 1761328802100000000,
+      "duration": 38000000,
+      "status": {"code": 1},
+      "attributes": {
+        "db.statement": "SELECT id, total FROM orders WHERE customer_id = $1",
+        "db.pool.wait_ms": 0
+      }
+    }
+  ]
+}

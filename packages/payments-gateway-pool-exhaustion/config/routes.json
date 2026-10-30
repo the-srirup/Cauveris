@@ -1,0 +1,8 @@
+{
+  "routes": {
+    "/v1/charge": {"retry": {"max_attempts": 2, "backoff_ms": 100}, "cacheable": false},
+    "/v1/orders": {"retry": {"max_attempts": 1, "backoff_ms": 50}, "cacheable": true},
+    "/v1/health": {"retry": {"max_attempts": 0}, "cacheable": false}
+  },
+  "defaults": {"read_from_cache_first": true}
+}

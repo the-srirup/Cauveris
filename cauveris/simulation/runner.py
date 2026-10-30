@@ -782,11 +782,18 @@ class SimulationRunner:
         candidates: List[Path] = []
         for exp in experiments:
             if exp.incident_id:
+                candidates.append(Path(f"./packages/incident-{exp.incident_id}"))
+                candidates.append(Path(f"./packages/golden_incident/incident-{exp.incident_id}"))
+                candidates.append(Path(f"./packages/{exp.incident_id}"))
                 candidates.append(Path(f"./incident-{exp.incident_id}"))
                 candidates.append(Path(self.settings.evidence_store_path) / exp.incident_id)
         try:
             candidates.extend(sorted(Path(".").glob("incident-*")))
             candidates.extend(sorted(Path(".").glob("golden_incident/incident-*")))
+            candidates.extend(sorted(Path(".").glob("packages/incident-*")))
+            candidates.extend(sorted(Path(".").glob("packages/golden_incident/incident-*")))
+            candidates.extend(sorted(Path(".").glob("packages/*")))
+            candidates.extend(sorted(Path(".").glob("packages/*/*")))
             candidates.extend(sorted(Path(self.settings.evidence_store_path).glob("*")))
         except Exception:
             pass

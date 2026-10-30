@@ -103,8 +103,13 @@ class SandboxController:
                 # A bundle in the working directory says which incident it
                 # belongs to.  The demo bundle is one of those bundles, not a
                 # special one - what matters is what the bundle declares.
-                for p in sorted(Path(".").glob("incident-*")) + sorted(
-                    Path(".").glob("golden_incident/incident-*")
+                for p in (
+                    sorted(Path(".").glob("incident-*"))
+                    + sorted(Path(".").glob("golden_incident/incident-*"))
+                    + sorted(Path(".").glob("packages/incident-*"))
+                    + sorted(Path(".").glob("packages/golden_incident/incident-*"))
+                    + sorted(Path(".").glob("packages/*"))
+                    + sorted(Path(".").glob("packages/*/*"))
                 ):
                     if not p.is_dir():
                         continue

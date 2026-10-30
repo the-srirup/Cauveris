@@ -1,0 +1,8 @@
+timestamp,component,working_set_mb,heap_used_mb,memory_limit_mb,host_available_mb,restart_count
+2026-10-29T14:31:40Z,perception-worker,410,342,512,4210,0
+2026-10-29T14:31:44Z,perception-worker,445,368,512,4170,0
+2026-10-29T14:31:48Z,perception-worker,482,401,512,4130,0
+2026-10-29T14:31:52Z,perception-worker,535,447,512,4060,0
+2026-10-29T14:31:55Z,perception-worker,580,492,512,3995,0
+2026-10-29T14:31:58Z,perception-worker,620,528,512,3890,0
+2026-10-29T14:32:02Z,perception-worker,164,130,512,4320,1

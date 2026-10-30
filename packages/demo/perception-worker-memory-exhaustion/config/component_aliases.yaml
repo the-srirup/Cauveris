@@ -1,0 +1,6 @@
+aliases:
+  perception-worker:
+    - perception_worker
+    - perception-worker-7d4f
+    - worker.perception
+    - perception_runtime

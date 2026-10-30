@@ -1,0 +1,36 @@
+incident_id: CAU-9001
+title: Payments gateway 503 outage - PostgreSQL connection pool exhausted during flash sale
+description: >-
+  The payments-gateway service began returning 503 errors at 18:00 UTC during a
+  flash-sale traffic spike. Application logs show the database connection pool
+  exhausted (active connections 35 against a configured pool of 10) with
+  connection checkout timeouts; the database itself reports "remaining
+  connection slots are 0" / "too many connections". The deployment that landed
+  15 minutes earlier (v17) changed only cache TTL and a banner - it did not
+  touch the pool. Host metrics stay healthy (CPU ~41%, memory ~1.4 GB of 8 GB),
+  so the box was not OOM-killed and the link was not lossy. The patchable root
+  cause is configuration: database.max_connections is too small for the
+  observed peak concurrent demand.
+system_name: payments-gateway
+approximate_time: '2026-10-24T18:00:00Z'
+component_aliases:
+  gateway: payments-gateway
+  payments: payments-gateway
+  api: payments-gateway
+  db: pg-orders.internal
+  postgres: pg-orders.internal
+  database: pg-orders.internal
+required_evidence:
+  - config/payments.toml
+  - logs/gateway.log
+  - logs/api-events.jsonl
+  - logs/postgres.log
+  - metrics/connections.csv
+  - metrics/http.csv
+  - traces/otel.json
+  - deployments/events.json
+e2e:
+  family: database_storage
+  expected_mechanism: connection_pool_exhaustion
+  expected_hypothesis: h_connection_pool_exhaustion
+  expected_key: database.max_connections
