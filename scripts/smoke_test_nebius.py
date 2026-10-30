@@ -36,13 +36,13 @@ for _candidate in [
         except ImportError:
             sys.exit(subprocess.call([str(_candidate)] + sys.argv))
 
-from cauveris.config import get_settings
-from cauveris.model_gateway.enums import ModelTaskType
-from cauveris.model_gateway.nebius import NebiusModelGateway
-from cauveris.model_gateway.records import get_execution_store
-from cauveris.model_gateway.security import redact_secrets
-from cauveris.model_gateway.tasks import TerminologyMappingOutput
-from cauveris.model_gateway.validators import validate_terminology_mapping
+from cauveris.config import get_settings  # noqa: E402
+from cauveris.model_gateway.enums import ModelTaskType  # noqa: E402
+from cauveris.model_gateway.nebius import NebiusModelGateway  # noqa: E402
+from cauveris.model_gateway.records import get_execution_store  # noqa: E402
+from cauveris.model_gateway.security import redact_secrets  # noqa: E402
+from cauveris.model_gateway.tasks import TerminologyMappingOutput  # noqa: E402
+from cauveris.model_gateway.validators import validate_terminology_mapping  # noqa: E402
 
 
 def print_banner() -> None:

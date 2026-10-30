@@ -17,7 +17,6 @@ and reports so the demonstration starts in a completely clean, pristine state:
 from __future__ import annotations
 
 import asyncio
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -118,7 +117,7 @@ def reset_state() -> None:
     from cauveris.auth import init_auth_store, get_auth_store, User, UserRole, Organization
     from cauveris.config import get_settings
 
-    settings = get_settings()
+    get_settings()
     auth_db_path = data_dir / "cauveris_auth.db"
     init_auth_store(backend="sqlite", db_path=str(auth_db_path))
     store = get_auth_store()

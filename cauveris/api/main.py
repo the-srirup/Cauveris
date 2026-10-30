@@ -47,6 +47,7 @@ from cauveris.state_machine.orchestrator import PipelineOrchestrator, PipelineCo
 from cauveris.ingestion.controller import IngestionController, extract_zip_safely
 from cauveris.security import scan_for_secrets, compute_file_hash, safe_join
 from cauveris.patch.generator import PatchGenerator
+from cauveris.report.generator import ReportGenerator
 from cauveris.logging_config import get_logger, bind_request_context
 from cauveris.auth import (
     init_auth_store,

@@ -460,6 +460,8 @@ class RedisRateLimiter(RateLimiter):
     def _get_script(self):
         """Return the (lazily registered) atomic rate limit script."""
         if self._script is None:
+            if self._redis is None:
+                raise RuntimeError("Redis connection not initialized")
             self._script = self._redis.register_script(_SLIDING_WINDOW_SCRIPT)
         return self._script
 
@@ -755,7 +757,8 @@ class SyncRateLimiter:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         result = loop.run_until_complete(self._limiter.check_limit(key, policy))
-        return result.allowed, result.current_count, result.retry_after if not result.allowed else 0
+        retry_after = int(result.retry_after or 0) if not result.allowed else 0
+        return result.allowed, result.current_count, retry_after
 
 
 # Alias for backwards compatibility
