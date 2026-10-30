@@ -49,7 +49,21 @@ from cauveris.simulation.mapping import TWIN_PARAMETERS
 from cauveris.schemas.incident import Incident
 
 ROOT = Path(__file__).resolve().parents[1]
-GOLDEN = ROOT / "golden_incident" / "incident-CAU-0001"
+
+
+def _resolve_golden_path() -> Path:
+    for candidate in [
+        ROOT / "packages" / "golden_incident" / "incident-CAU-0001",
+        ROOT / "packages" / "incident-CAU-0001",
+        ROOT / "golden_incident" / "incident-CAU-0001",
+        ROOT / "incident-CAU-0001",
+    ]:
+        if candidate.exists():
+            return candidate
+    return ROOT / "packages" / "golden_incident" / "incident-CAU-0001"
+
+
+GOLDEN = _resolve_golden_path()
 
 
 # ---------------------------------------------------------------------------

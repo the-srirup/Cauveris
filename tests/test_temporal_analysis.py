@@ -18,12 +18,27 @@ from cauveris.temporal.evidence import RawSignalExtractor, extract_from_timeline
 from cauveris.temporal.clock import ClockSkewAnalyzer
 
 
+def _resolve_golden_bundle_path() -> Path:
+    for candidate in [
+        Path("./packages/golden_incident/incident-CAU-0001"),
+        Path("./packages/incident-CAU-0001"),
+        Path("./golden_incident/incident-CAU-0001"),
+        Path("./incident-CAU-0001"),
+    ]:
+        if candidate.exists():
+            return candidate
+    return Path("./packages/golden_incident/incident-CAU-0001")
+
+
+GOLDEN_BUNDLE_PATH = _resolve_golden_bundle_path()
+
+
 @pytest.fixture
 def golden_incident_bundle(tmp_path: Path):
     """Generate the golden incident bundle and build its timeline."""
     # Use the standard golden_incident directory to ensure timeline builder
     # can find the bundle (it has fallbacks in _locate_bundle_path)
-    generator = GoldenIncidentGenerator(bundle_path=Path("./golden_incident/incident-CAU-0001"))
+    generator = GoldenIncidentGenerator(bundle_path=GOLDEN_BUNDLE_PATH)
     incident = generator.generate()
     # Build the timeline so tests have real data
     builder = TimelineBuilder()
@@ -45,7 +60,7 @@ async def test_temporal_analyzer_with_golden_incident(golden_incident_bundle):
     assert len(incident.timeline_events) > 0
 
     # Run the analyzer
-    analyzer = TemporalAnalyzer(bundle_path=Path("./golden_incident/incident-CAU-0001"))
+    analyzer = TemporalAnalyzer(bundle_path=GOLDEN_BUNDLE_PATH)
     result = analyzer.analyze_incident(incident)
 
     # Basic sanity checks
@@ -64,7 +79,7 @@ async def test_temporal_analyzer_with_golden_incident(golden_incident_bundle):
 
 def test_raw_signal_extraction(golden_incident_bundle):
     """Test that raw signals are extracted from the bundle files."""
-    bundle_path = Path("./golden_incident/incident-CAU-0001")
+    bundle_path = GOLDEN_BUNDLE_PATH
     extractor = RawSignalExtractor(bundle_path)
     raw_signals = extractor.extract_all()
 
@@ -82,7 +97,7 @@ def test_raw_signal_extraction(golden_incident_bundle):
 
 def test_co_temporal_ambiguity_detection(golden_incident_bundle):
     """Test that co-temporal ambiguities are detected."""
-    bundle_path = Path("./golden_incident/incident-CAU-0001")
+    bundle_path = GOLDEN_BUNDLE_PATH
     analyzer = ClockSkewAnalyzer()
 
     # Build evidence from timeline
@@ -98,7 +113,7 @@ def test_co_temporal_ambiguity_detection(golden_incident_bundle):
 
 def test_system_log_domain_mixing(golden_incident_bundle):
     """Test that system.log domain mixing is detected."""
-    bundle_path = Path("./golden_incident/incident-CAU-0001")
+    bundle_path = GOLDEN_BUNDLE_PATH
     extractor = RawSignalExtractor(bundle_path)
     raw_signals = extractor.extract_all()
 
@@ -114,7 +129,7 @@ def test_system_log_domain_mixing(golden_incident_bundle):
 
 def test_temporal_confidence_calculation(golden_incident_bundle):
     """Test that temporal confidence score is properly computed."""
-    analyzer = TemporalAnalyzer(bundle_path=Path("./golden_incident/incident-CAU-0001"))
+    analyzer = TemporalAnalyzer(bundle_path=GOLDEN_BUNDLE_PATH)
     result = analyzer.analyze_incident(golden_incident_bundle)
 
     score = result.get("temporal_confidence_score", 1.0)
@@ -151,7 +166,7 @@ def test_clock_skew_analyzer_synthetic():
     """
     # This test uses the actual golden data and verifies no false positives
     # for clock skew (since manifest indicates synchronized clocks).
-    bundle_path = Path("./golden_incident/incident-CAU-0001")
+    bundle_path = GOLDEN_BUNDLE_PATH
     analyzer = ClockSkewAnalyzer(skew_threshold_ms=10.0)
 
     incident = GoldenIncidentGenerator(bundle_path=bundle_path).generate()

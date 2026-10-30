@@ -458,6 +458,15 @@ def build_zip() -> Path:
     return OUTPUT_ZIP
 
 
+def build() -> tuple[Path, int, str]:
+    """Deterministically create, validate, and build the demonstration ZIP."""
+    create_package_files()
+    validate_source_files()
+    zip_path = build_zip()
+    raw = zip_path.read_bytes()
+    return zip_path, len(raw), hashlib.sha256(raw).hexdigest()
+
+
 def main() -> None:
     print("Step 1: Creating package source files...")
     create_package_files()

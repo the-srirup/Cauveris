@@ -14,10 +14,27 @@ import asyncio
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Optional
 
 # Ensure project root is in python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import subprocess  # noqa: E402
+
+# Auto-reexec into project virtualenv if running under an unconfigured python environment
+for _candidate in [
+    ROOT / ".venv311" / "Scripts" / "python.exe",
+    ROOT / ".venv" / "Scripts" / "python.exe",
+    ROOT / ".venv311" / "bin" / "python",
+    ROOT / ".venv" / "bin" / "python",
+]:
+    if _candidate.exists() and Path(sys.executable).resolve() != _candidate.resolve():
+        try:
+            import jwt  # noqa: F401
+        except ImportError:
+            sys.exit(subprocess.call([str(_candidate)] + sys.argv))
 
 from cauveris.config import get_settings
 from cauveris.model_gateway.enums import ModelTaskType

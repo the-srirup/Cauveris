@@ -141,26 +141,24 @@ class NebiusModelGateway(ModelGateway):
             or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
         )
 
-        # If it's a real model ID specified by user and not a fictional placeholder, use it
-        if model_name and "/" in model_name and model_name not in fictional_placeholders:
-            self._resolved_model = model_name
-            return model_name
-
         available_models = await self._get_available_models(client)
         if available_models:
-            # Look for exact match
+            # 1. Exact match
             if model_name in available_models:
                 self._resolved_model = model_name
                 return model_name
 
-            # Look for NVIDIA Nemotron models
+            # 2. Look for NVIDIA Nemotron models, prioritizing Lightning
             if "nemotron" in (model_name or "").lower():
-                nemotrons = [m for m in available_models if "nemotron" in m.lower()]
+                nemotrons = (
+                    [m for m in available_models if "lightning" in m.lower()]
+                    or [m for m in available_models if "nemotron" in m.lower()]
+                )
                 if nemotrons:
                     self._resolved_model = nemotrons[0]
                     return nemotrons[0]
 
-            # Look for Llama 3.1 70B
+            # 3. Look for Llama 3.1 70B
             llamas = [m for m in available_models if "llama-3.1-70b" in m.lower()]
             if llamas:
                 self._resolved_model = llamas[0]
@@ -168,6 +166,11 @@ class NebiusModelGateway(ModelGateway):
 
             self._resolved_model = available_models[0]
             return available_models[0]
+
+        # If it's a real model ID specified by user and not a fictional placeholder, use it
+        if model_name and "/" in model_name and model_name not in fictional_placeholders:
+            self._resolved_model = model_name
+            return model_name
 
         default_model = self.settings.nebius_model_id or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
         self._resolved_model = default_model
@@ -321,7 +324,9 @@ class NebiusModelGateway(ModelGateway):
 
         latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
         result = response.json()
-        content = result["choices"][0]["message"]["content"]
+        choice = (result.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        content = msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content") or ""
         usage = result.get("usage", {}) or {}
         prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         completion_tokens = int(usage.get("completion_tokens", 0) or 0)

@@ -344,7 +344,7 @@ async def test_the_health_endpoint_reports_what_is_actually_reachable():
 
 
 @pytest.mark.asyncio
-async def test_the_model_test_endpoint_probes_local_servers_for_real(test_user):
+async def test_the_model_test_endpoint_probes_local_servers_for_real(test_user, monkeypatch):
     """
     The connectivity test has to be a connectivity test.
 
@@ -354,6 +354,10 @@ async def test_the_model_test_endpoint_probes_local_servers_for_real(test_user):
     from httpx import ASGITransport, AsyncClient
 
     from cauveris.api.main import app
+    from cauveris.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "nebius_api_key", None)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

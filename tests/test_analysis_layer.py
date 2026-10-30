@@ -24,7 +24,21 @@ from cauveris.analysis.system_model import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-BUNDLE = ROOT / "golden_incident" / "incident-CAU-0001"
+
+
+def _resolve_bundle_path() -> Path:
+    for candidate in [
+        ROOT / "packages" / "golden_incident" / "incident-CAU-0001",
+        ROOT / "packages" / "incident-CAU-0001",
+        ROOT / "golden_incident" / "incident-CAU-0001",
+        ROOT / "incident-CAU-0001",
+    ]:
+        if candidate.exists():
+            return candidate
+    return ROOT / "packages" / "golden_incident" / "incident-CAU-0001"
+
+
+BUNDLE = _resolve_bundle_path()
 
 
 @pytest.fixture(scope="module")

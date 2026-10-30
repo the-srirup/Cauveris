@@ -25,7 +25,15 @@ async def test_golden_incident_generator():
     assert incident.evidence_count >= 14
     assert len(incident.missing_required_evidence) == 0
 
-    bundle_dir = Path("./incident-CAU-0001")
+    bundle_dir = (
+        Path(incident.bundle_path)
+        if incident.bundle_path and Path(incident.bundle_path).exists()
+        else (
+            Path("./packages/golden_incident/incident-CAU-0001")
+            if Path("./packages/golden_incident/incident-CAU-0001").exists()
+            else Path("./incident-CAU-0001")
+        )
+    )
     assert (bundle_dir / "manifest.yaml").exists()
     assert (bundle_dir / "config" / "inference.yaml").exists()
     assert (bundle_dir / "traces" / "otel.json").exists()

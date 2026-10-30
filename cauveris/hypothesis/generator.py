@@ -303,18 +303,18 @@ class HypothesisGenerator:
         incident_id = str(incident.id or "").strip()
         candidates.append(Path(self.settings.evidence_store_path) / incident_id)
         candidates.append(Path(f"./packages/incident-{incident_id}"))
-        candidates.append(Path(f"./packages/golden_incident/incident-{incident_id}"))
         candidates.append(Path(f"./packages/{incident_id}"))
         candidates.append(Path(f"./packages/demo/{incident_id}"))
         candidates.append(Path(f"./incident-{incident_id}"))
 
         # Any bundle directory named after the incident, however its parent
         # directory is called: ``incident-<id>`` in the working directory or
-        # one level below it.
+        # one or two levels below it (e.g. inside packages/ or root).
         if incident_id:
             try:
                 candidates.extend(sorted(Path(".").glob(f"incident-{incident_id}")))
                 candidates.extend(sorted(Path(".").glob(f"*/incident-{incident_id}")))
+                candidates.extend(sorted(Path("packages").glob(f"*/incident-{incident_id}")))
             except OSError:
                 pass
 

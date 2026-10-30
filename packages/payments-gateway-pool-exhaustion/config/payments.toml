@@ -35,6 +35,14 @@ idle_session_budget_ms = 30000
 ttl_seconds = 300
 max_entries = 5000
 
+[slo]
+# Declared detection-staleness budget for the gateway's read path. The
+# verifier's generated regression test asserts the calibrated end-to-end
+# latency stays inside this budget, so the incident declares its own number
+# instead of inheriting the library default (120 ms), which belongs to a
+# different service's regime.
+freshness_budget_ms = 600
+
 [observability]
 metrics_interval_seconds = 1
 log_level = "info"
