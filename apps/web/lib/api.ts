@@ -1270,6 +1270,21 @@ class ApiClient {
     return this.request<{ reports: Array<{ id: string; incident_id: string; title: string; generated_at: string; size_bytes: number; format: string; status: string; type: string }> }>(`/incidents/${incidentId}/reports`);
   }
 
+  // Generate or retrieve reports on-demand for an incident
+  async generateReport(
+    incidentId: string,
+    type: string = "investigation",
+    format: string = "json"
+  ): Promise<{ status: string; reports: any[]; report?: any }> {
+    return this.request<{ status: string; reports: any[]; report?: any }>(
+      `/incidents/${incidentId}/reports`,
+      {
+        method: "POST",
+        body: JSON.stringify({ type, format }),
+      }
+    );
+  }
+
   // Delete an incident report
   async deleteReport(incidentId: string, reportId: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/incidents/${incidentId}/reports/${reportId}`, {

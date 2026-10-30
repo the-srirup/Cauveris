@@ -317,3 +317,18 @@ def test_report_api_endpoints(test_user, tmp_path, monkeypatch):
     assert resp_by_id_md.status_code == 200
     assert resp_by_id_md.headers["content-type"].startswith("text/markdown")
     assert "# Incident Investigation Report: INC-RPT-API-TEST" in resp_by_id_md.text
+
+    # 5. List reports inventory
+    resp_list = client.get(f"/api/v1/incidents/{inc_id}/reports", headers=headers)
+    assert resp_list.status_code == 200
+    reports = resp_list.json().get("reports", [])
+    assert len(reports) >= 1
+    assert any(r["id"] == f"rpt-{inc_id}-001" for r in reports)
+
+    # 6. Generate report on-demand endpoint (POST)
+    resp_post = client.post(f"/api/v1/incidents/{inc_id}/reports", json={"type": "investigation"}, headers=headers)
+    assert resp_post.status_code == 200
+    post_data = resp_post.json()
+    assert post_data["status"] == "ready"
+    assert "reports" in post_data
+    assert post_data["report"]["incident_id"] == inc_id

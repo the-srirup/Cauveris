@@ -324,7 +324,12 @@ class NebiusModelGateway(ModelGateway):
 
         latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
         result = response.json()
-        choice = (result.get("choices") or [{}])[0]
+        # A 200 with a non-conformant body (missing/empty choices) must raise
+        # rather than fabricate an empty response.
+        choices = result["choices"]
+        if not choices:
+            raise IndexError(f"Nebius returned HTTP 200 with no choices: {result!r:.500}")
+        choice = choices[0]
         msg = choice.get("message") or {}
         content = msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content") or ""
         usage = result.get("usage", {}) or {}

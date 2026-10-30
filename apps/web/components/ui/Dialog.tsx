@@ -77,61 +77,79 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(
       }
     }, [ref]);
 
-    // Handle Escape key
+    // Save previous active element when dialog opens, restore on close
     useEffect(() => {
-      if (!open) return;
-      function handleKeyDown(event: KeyboardEvent) {
-        if (event.key === "Escape" && closeOnEscape) {
-          onClose();
-        }
+      if (open) {
+        previousActiveElement.current = document.activeElement as HTMLElement;
+      } else {
+        returnFocusRef?.current?.focus() ?? previousActiveElement.current?.focus();
       }
+    }, [open, returnFocusRef]);
 
-      document.addEventListener("keydown", handleKeyDown);
-      previousActiveElement.current = document.activeElement as HTMLElement;
-      // Focus the dialog
-      setTimeout(() => dialogRef.current?.focus(), 0);
-      return () => document.removeEventListener("keydown", handleKeyDown);
-    }, [open, closeOnEscape]);
-
-    // Handle focus trap
+    // Handle Escape key, Tab focus trap, and initial focus
     useEffect(() => {
       if (!open || !dialogRef.current) return;
 
       const dialog = dialogRef.current;
-      const focusableElements = dialog.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
-      const firstElement = focusableElements[0];
-      const lastElement = focusableElements[focusableElements.length - 1];
 
-      function handleTabKey(event: KeyboardEvent) {
-        if (event.key !== "Tab") return;
+      function handleKeyDown(event: KeyboardEvent) {
+        if (event.key === "Escape" && closeOnEscape) {
+          onClose();
+          return;
+        }
 
-        if (event.shiftKey) {
-          if (document.activeElement === firstElement) {
-            event.preventDefault();
-            lastElement?.focus();
-          }
-        } else {
-          if (document.activeElement === lastElement) {
-            event.preventDefault();
-            firstElement?.focus();
+        if (event.key === "Tab") {
+          const focusableElements = dialog.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          );
+          if (focusableElements.length === 0) return;
+
+          const firstElement = focusableElements[0];
+          const lastElement = focusableElements[focusableElements.length - 1];
+
+          if (event.shiftKey) {
+            if (document.activeElement === firstElement) {
+              event.preventDefault();
+              lastElement?.focus();
+            }
+          } else {
+            if (document.activeElement === lastElement) {
+              event.preventDefault();
+              firstElement?.focus();
+            }
           }
         }
       }
 
-      dialog.addEventListener("keydown", handleTabKey);
-      firstElement?.focus();
+      document.addEventListener("keydown", handleKeyDown);
 
-      return () => dialog.removeEventListener("keydown", handleTabKey);
-    }, [open, children]);
+      // Focus management: initial focus on modal open only (never re-focus on child typing/re-renders)
+      const focusTimer = setTimeout(() => {
+        if (!dialog.contains(document.activeElement)) {
+          const autoFocusElement = dialog.querySelector<HTMLElement>("[autofocus], [data-autofocus]");
+          if (autoFocusElement) {
+            autoFocusElement.focus();
+          } else {
+            const firstInput = dialog.querySelector<HTMLElement>(
+              'input:not([disabled]), textarea:not([disabled]), select:not([disabled])'
+            );
+            if (firstInput) {
+              firstInput.focus();
+            } else {
+              const firstFocusable = dialog.querySelector<HTMLElement>(
+                'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+              );
+              (firstFocusable || dialog).focus();
+            }
+          }
+        }
+      }, 0);
 
-    // Return focus on close
-    useEffect(() => {
-      if (!open) {
-        returnFocusRef?.current?.focus() ?? previousActiveElement.current?.focus();
-      }
-    }, [open]);
+      return () => {
+        clearTimeout(focusTimer);
+        document.removeEventListener("keydown", handleKeyDown);
+      };
+    }, [open, closeOnEscape, onClose]);
 
     // Prevent body scroll when open
     useEffect(() => {

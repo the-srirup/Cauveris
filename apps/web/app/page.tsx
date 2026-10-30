@@ -1059,10 +1059,11 @@ function MissionControlContent() {
       >
         <div className="space-y-4 p-4 font-mono text-xs">
           <div>
-            <label className="block text-[var(--text-secondary,#a1a1aa)] mb-1 uppercase text-[10.5px]">
+            <label htmlFor="new-incident-title" className="block text-[var(--text-secondary,#a1a1aa)] mb-1 uppercase text-[10.5px]">
               Incident Title
             </label>
             <input
+              id="new-incident-title"
               type="text"
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
@@ -1072,10 +1073,11 @@ function MissionControlContent() {
           </div>
 
           <div>
-            <label className="block text-[var(--text-secondary,#a1a1aa)] mb-1 uppercase text-[10.5px]">
+            <label htmlFor="new-incident-system" className="block text-[var(--text-secondary,#a1a1aa)] mb-1 uppercase text-[10.5px]">
               System Identifier
             </label>
             <input
+              id="new-incident-system"
               type="text"
               value={newSystemName}
               onChange={(e) => setNewSystemName(e.target.value)}
@@ -1085,10 +1087,11 @@ function MissionControlContent() {
           </div>
 
           <div>
-            <label className="block text-[var(--text-secondary,#a1a1aa)] mb-1 uppercase text-[10.5px]">
+            <label htmlFor="new-incident-description" className="block text-[var(--text-secondary,#a1a1aa)] mb-1 uppercase text-[10.5px]">
               Description
             </label>
             <textarea
+              id="new-incident-description"
               value={newDescription}
               onChange={(e) => setNewDescription(e.target.value)}
               placeholder="e.g. Memory spike during sensor processing caused worker OOM kill"
