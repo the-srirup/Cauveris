@@ -107,7 +107,7 @@ export function SystemPulse({
         <span className="text-[var(--color-border-default,#d9e0e7)]">|</span>
         <span className="flex items-center gap-1.5">
           <span className={`w-2 h-2 rounded-full ${getDot(status.nebiusProvider)}`} />
-          <span className="font-medium" title={status.nebiusModel || "NVIDIA Nemotron"}>
+          <span className="font-medium" title={status.nebiusModel || "Model provider details"}>
             LLM: {formatModelLabel(status.nebiusProvider)}
           </span>
         </span>
@@ -116,7 +116,7 @@ export function SystemPulse({
   }
 
   const modelTooltip = [
-    status.nebiusModel ? `Model: ${status.nebiusModel}` : "Model: nvidia/Llama-3.1-Nemotron-70B-Instruct-HF",
+    status.nebiusModel ? `Model: ${status.nebiusModel}` : "Model: not reported by backend",
     `State: ${status.nebiusProvider}`,
     status.circuitBreakerState ? `Circuit: ${status.circuitBreakerState}` : null,
     status.dailyBudgetUsed !== undefined ? `Daily Cost: $${status.dailyBudgetUsed.toFixed(4)}` : null,

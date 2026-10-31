@@ -165,7 +165,7 @@ function RealityRewindContent() {
   const searchParams = useSearchParams();
   const deepLink = readDeepLink(searchParams);
   const { incidentId, setIncidentId, judgeMode, engineerMode } = useActiveIncident();
-  const { openInspector, addActivity, setIncidentContext } = useShell();
+  const { openInspector, addActivity, setIncidentContext, state: shellState } = useShell();
 
   // A link from the reconstruction view names the incident it belongs to.
   // localStorage is same-tab only, so without this a pasted or bookmarked link
@@ -283,7 +283,7 @@ function RealityRewindContent() {
         state: "IDLE",
         pipelineStage: "IDLE",
         evidenceCoverage: 0,
-        modelProvider: "Local Fixtures",
+        modelProvider: shellState?.incidentContext?.modelProvider || "Nebius Token Factory",
         backendStatus: "online",
         processingMode: judgeMode ? "judge" : engineerMode ? "engineer" : "autonomous",
         isDemonstration: false,

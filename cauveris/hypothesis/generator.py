@@ -87,6 +87,47 @@ def _numeric(value: Any) -> Optional[float]:
         return None
 
 
+# Markers that leaked chain-of-thought preambles start with when a model
+# emits its reasoning inline instead of structured fields.
+_COT_MARKERS = (
+    "here's a thinking process",
+    "here is a thinking process",
+    "thinking process:",
+    "chain-of-thought:",
+    "chain of thought:",
+    "step-by-step reasoning:",
+    "let me think through this",
+)
+
+
+def _strip_cot_preamble(text: str) -> str:
+    """Remove a leaked chain-of-thought preamble from model-emitted text.
+
+    Some providers prepend reasoning like "Here's a thinking process: ..."
+    to fields that should hold only the conclusion. Keep the conclusion,
+    drop the reasoning trace.
+    """
+    if not text:
+        return text
+    cleaned = text.strip()
+    low = cleaned.lower()
+    for marker in _COT_MARKERS:
+        idx = low.find(marker)
+        if idx != -1 and idx <= 60:
+            rest = cleaned[idx + len(marker):].lstrip(":- \t\n")
+            if rest:
+                cleaned = rest
+            break
+    # Even without a marker, drop leading bullet/numbered reasoning lines
+    # when a plain declarative line follows.
+    lines = cleaned.splitlines()
+    if len(lines) > 1 and all(
+        ln.strip().lower().startswith(("1.", "2.", "3.", "-", "*", "step ")) for ln in lines[:2]
+    ):
+        cleaned = lines[-1].strip()
+    return " ".join(cleaned.split())[:500]
+
+
 @dataclass
 class _Evidence:
     """Everything a rule needs in order to decide whether a hypothesis holds."""
@@ -2091,6 +2132,13 @@ class HypothesisGenerator:
             data.setdefault(
                 "intervention", "Tune configuration to the pre-incident baseline parameters"
             )
+            # Never persist a leaked reasoning trace as the causal claim.
+            if isinstance(data.get("causal_claim"), str):
+                data["causal_claim"] = _strip_cot_preamble(data["causal_claim"])
+            if isinstance(data.get("confidence_rationale"), str):
+                data["confidence_rationale"] = _strip_cot_preamble(
+                    data["confidence_rationale"]
+                )[:300]
             try:
                 hyp = Hypothesis(**data)
                 self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_ACCEPTED
@@ -2102,7 +2150,7 @@ class HypothesisGenerator:
                 self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_REJECTED
 
         if response.content:
-            first_line = response.content.strip().split("\n")[0][:250]
+            first_line = _strip_cot_preamble(response.content.strip().split("\n")[0][:250])
             self.last_assistance_status = ModelAssistanceStatus.MODEL_ASSISTANCE_PARTIAL
             return Hypothesis(
                 hypothesis_id=f"hyp-{incident.id}-{response.provider}",

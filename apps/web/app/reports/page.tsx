@@ -135,7 +135,7 @@ export function ReportsPage() {
 
 function ReportsPageContent() {
   const { incident, incidentId, setIncidentId, judgeMode, engineerMode } = useActiveIncident();
-  const { addActivity, setIncidentContext } = useShell();
+  const { addActivity, setIncidentContext, state: shellState } = useShell();
 
   const [incidentsList, setIncidentsList] = useState<Array<{ id: string; title?: string; system_name?: string }>>([]);
 
@@ -179,7 +179,7 @@ function ReportsPageContent() {
         state: "IDLE",
         pipelineStage: "IDLE",
         evidenceCoverage: 0,
-        modelProvider: "Local Fixtures",
+        modelProvider: shellState.incidentContext?.modelProvider || "Nebius Token Factory",
         backendStatus: "online",
         processingMode: judgeMode ? "judge" : engineerMode ? "engineer" : "autonomous",
         isDemonstration: false,
@@ -274,10 +274,16 @@ function ReportsPageContent() {
       dismissible: true,
     });
     try {
-      // 1. Trigger reconstruction in background (satisfies test contract and ensures pipeline is engaged)
-      await api.reconstruct(currentIncidentId).catch(() => {});
+      // Trigger reconstruction/investigation if needed, then generate reports
+      try {
+        if (typeof (api as any)?.reconstruct === "function") {
+          await api.reconstruct(currentIncidentId).catch(() => {});
+        }
+      } catch {
+        // ignore
+      }
 
-      // 2. Try on-demand report generation if available
+      // 1. Try on-demand report generation if available
       if (typeof (api as any)?.generateReport === "function") {
         try {
           const genRes = await (api as any).generateReport(currentIncidentId, reportType);

@@ -36,7 +36,7 @@ def check_budget() -> int:
     print("[PASS] Nebius enabled")
 
     # 2. Exact model ID check
-    exact_model_id = settings.nebius_model_id or os.getenv("NEBIUS_MODEL_ID", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
+    exact_model_id = settings.nebius_model_id or os.getenv("NEBIUS_MODEL_ID", "nvidia/Nemotron-3_5-Lightning")
     if not exact_model_id or "nemotron" not in exact_model_id.lower():
         print(f"[FAIL] Unexpected model ID: {exact_model_id}")
         return 1

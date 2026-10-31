@@ -3,10 +3,9 @@
  * Section 3.1 & Day 7-8 of Holographic Reconstruction Plan
  */
 
-import React, { useRef, useState, useMemo, useCallback, useEffect, useLayoutEffect } from "react";
+import React, { useRef, useState, useMemo, useCallback } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
-import { Html } from "@react-three/drei";
 import { CausalNode, CausalLink } from "../types";
 import { getNodeColor, getLinkColor } from "../utils/colorPalettes";
 
@@ -16,6 +15,78 @@ import { getNodeColor, getLinkColor } from "../utils/colorPalettes";
 // every render.
 const EMISSIVE_SELECTED = new THREE.Color("#38bdf8");
 const EMISSIVE_NONE = new THREE.Color(0x000000);
+
+interface NodeLabelSpriteProps {
+  text: string;
+  isSelected: boolean;
+  isHovered: boolean;
+  yOffset: number;
+}
+
+const NodeLabelSprite = React.memo(function NodeLabelSprite({
+  text,
+  isSelected,
+  isHovered,
+  yOffset,
+}: NodeLabelSpriteProps) {
+  const texture = useMemo(() => {
+    if (typeof document === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = 384;
+    canvas.height = 72;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.clearRect(0, 0, 384, 72);
+
+    const x = 8, y = 8, w = 368, h = 56, r = 12;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+
+    ctx.fillStyle = isSelected
+      ? "rgba(24, 24, 27, 0.95)"
+      : isHovered
+      ? "rgba(15, 23, 42, 0.92)"
+      : "rgba(2, 6, 23, 0.75)";
+    ctx.fill();
+
+    ctx.lineWidth = isSelected ? 3 : 2;
+    ctx.strokeStyle = isSelected
+      ? "#38bdf8"
+      : isHovered
+      ? "#64748b"
+      : "rgba(51, 65, 85, 0.5)";
+    ctx.stroke();
+
+    ctx.font = isSelected ? "bold 24px monospace" : "20px monospace";
+    ctx.fillStyle = isSelected ? "#38bdf8" : isHovered ? "#f1f5f9" : "#cbd5e1";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    let display = text;
+    if (display.length > 24) {
+      display = display.slice(0, 22) + "…";
+    }
+    ctx.fillText(display, 192, 36);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    return tex;
+  }, [text, isSelected, isHovered]);
+
+  if (!texture) return null;
+
+  const scaleX = isSelected ? 22 : 18;
+  const scaleY = isSelected ? 4.4 : 3.6;
+
+  return (
+    <sprite position={[0, yOffset, 0]} scale={[scaleX, scaleY, 1]}>
+      <spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} />
+    </sprite>
+  );
+});
 
 interface NodeMeshProps {
   node: CausalNode;
@@ -83,28 +154,12 @@ const NodeMesh = React.memo(function NodeMesh({ node, isSelected, isHovered, onS
       )}
 
       {/* Node label */}
-      <Html
-        distanceFactor={200}
-        position={[0, (node.radius || 10) + 10, 0]}
-        style={{
-          pointerEvents: "none",
-          transform: "translate3d(-50%, -50%, 0)",
-          whiteSpace: "nowrap",
-          userSelect: "none",
-        }}
-      >
-        <div
-          className={`px-2 py-0.5 rounded text-[11px] font-mono transition-all ${
-            isSelected
-              ? "bg-zinc-800 text-white font-bold shadow-lg border border-zinc-500 scale-110"
-              : isHovered
-              ? "bg-zinc-900/90 text-zinc-200 border border-zinc-700"
-              : "bg-slate-950/70 text-slate-300 border border-slate-700/40 opacity-75"
-          }`}
-        >
-          {node.label || node.name || node.id}
-        </div>
-      </Html>
+      <NodeLabelSprite
+        text={node.label || node.name || node.id}
+        isSelected={isSelected}
+        isHovered={isHovered}
+        yOffset={(node.radius || 10) + 7}
+      />
     </group>
   );
 });

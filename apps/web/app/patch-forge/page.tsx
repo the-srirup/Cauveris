@@ -19,7 +19,7 @@ function PatchForgeContent() {
   const searchParams = useSearchParams();
   const deepLink = readDeepLink(searchParams);
   const { incidentId, setIncidentId, judgeMode, engineerMode } = useActiveIncident();
-  const { openInspector, setIncidentContext } = useShell();
+  const { openInspector, setIncidentContext, state: shellState } = useShell();
 
   // A link from the reconstruction view names the incident it belongs to.
   // localStorage is same-tab only, so without this a pasted or bookmarked link
@@ -38,7 +38,7 @@ function PatchForgeContent() {
         state: "IDLE",
         pipelineStage: "IDLE",
         evidenceCoverage: 0,
-        modelProvider: "Local Fixtures",
+        modelProvider: shellState?.incidentContext?.modelProvider || "Nebius Token Factory",
         backendStatus: "online",
         processingMode: judgeMode ? "judge" : engineerMode ? "engineer" : "autonomous",
         isDemonstration: false,

@@ -8,6 +8,7 @@ import time
 import uuid
 import json
 import secrets
+import yaml
 import os
 import zipfile
 import re
@@ -88,7 +89,7 @@ from cauveris.packaging.api_router import router as packaging_router
 class CreateIncidentRequest(BaseModel):
     title: Optional[str] = "Uploaded Incident"
     description: Optional[str] = "Incident created via API"
-    system_name: Optional[str] = "warehouse-amr-01"
+    system_name: Optional[str] = None
     golden: bool = False
     custom_id: Optional[str] = None
 
@@ -1236,7 +1237,11 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
                 evidence_path = p
                 break
 
-    if not evidence_path.exists() or not (evidence_path / "manifest.yaml").exists():
+    has_manifest = evidence_path.exists() and any(
+        (evidence_path / name).is_file()
+        for name in ("manifest.yaml", "manifest.yml", "manifest.json")
+    )
+    if not has_manifest:
         # Implicit demo hydration only in demo mode — real deployments must
         # load incidents from the evidence store or an explicit golden load.
         settings = get_settings()
@@ -1270,13 +1275,30 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
             id=incident_id,
             title=f"Incident {incident_id}",
             description="Loaded from evidence store",
-            system_name="physical-ai-system",
+            system_name="unknown-system",
             status="OBSERVED",
             bundle_path=str(evidence_path),
         )
     if incident.manifest is None:
         incident.manifest = {}
     incident.manifest["bundle_path"] = str(evidence_path)
+
+    # Restore persisted ownership so authorization checks survive restarts.
+    owner_user = incident.manifest.get("owner_user_id")
+    owner_org = incident.manifest.get("owner_org_id")
+    if (owner_user is None and owner_org is None) and evidence_path.is_dir():
+        try:
+            sidecar = evidence_path / ".cauveris-owner.json"
+            if sidecar.is_file():
+                owner_data = json.loads(sidecar.read_text(encoding="utf-8"))
+                owner_user = owner_data.get("owner_user_id", owner_user)
+                owner_org = owner_data.get("owner_org_id", owner_org)
+        except Exception:
+            pass
+    if owner_user:
+        incident._owner_user_id = owner_user
+    if owner_org:
+        incident._owner_org_id = owner_org
 
     incidents[incident_id] = incident
 
@@ -2527,6 +2549,63 @@ async def submit_job(request: Request, user_data: tuple = Depends(get_current_us
     return {"job_id": job.id, "status": "queued"}
 
 
+def _bundle_manifest_data(bundle: Path) -> Dict[str, Any]:
+    """Read a bundle manifest (manifest.yaml/.yml/.json) if present. Never raises."""
+    for name in ("manifest.yaml", "manifest.yml", "manifest.json"):
+        mf = bundle / name
+        if mf.is_file():
+            try:
+                if name.endswith(".json"):
+                    data = json.loads(mf.read_text(encoding="utf-8"))
+                else:
+                    data = yaml.safe_load(mf.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                logger.debug(f"Could not parse manifest at {mf}")
+    return {}
+
+
+def _disk_incident_summary(dir_path: Path, seen: set) -> Optional[Dict[str, Any]]:
+    """Build a list-entry for an on-disk incident bundle, deriving every field
+    from the bundle's own manifest instead of fixed placeholder values."""
+    if not dir_path.is_dir():
+        return None
+    manifest = _bundle_manifest_data(dir_path)
+    if not manifest:
+        return None
+    inc_id = str(manifest.get("incident_id") or dir_path.name.replace("incident-", ""))
+    if inc_id in seen:
+        return None
+    seen.add(inc_id)
+    try:
+        evidence_count = len([
+            p for p in dir_path.rglob("*")
+            if p.is_file() and p.name not in ("manifest.yaml", "manifest.yml", "manifest.json", ".cauveris-owner.json")
+        ])
+    except Exception:
+        evidence_count = 0
+    approx = manifest.get("approximate_time")
+    created = manifest.get("extraction_timestamp") or manifest.get("created_at")
+    if not created:
+        try:
+            created = datetime.fromtimestamp(dir_path.stat().st_mtime, tz=timezone.utc).isoformat()
+        except Exception:
+            created = None
+    return {
+        "id": inc_id,
+        "title": manifest.get("title") or f"Incident {inc_id}",
+        "system_name": manifest.get("system_name") or "unknown-system",
+        "status": "OBSERVED",
+        "pipeline_state": "OBSERVED",
+        "evidence_count": evidence_count,
+        "timeline_events_count": 0,
+        "is_demonstration": bool(manifest.get("is_demonstration", inc_id == "CAU-0001")),
+        "approximate_time": str(approx) if approx else None,
+        "created_at": str(created) if created else None,
+    }
+
+
 @app.get("/api/v1/incidents")
 async def list_incidents(request: Request, user_data: tuple = Depends(get_optional_user)):
     """List incidents filtered by user/org ownership."""
@@ -2538,9 +2617,9 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
     is_admin = user_id is not None and role in ("admin", "super_admin")
 
     for inc_id, inc in incidents.items():
-        seen.add(inc_id)
-
-        # Check ownership for non-admin users
+        # Check ownership for non-admin users.  Only mark as seen when the
+        # entry is actually returned — a filtered-out in-memory incident can
+        # still be discovered on disk below via its persisted manifest.
         owner_user = getattr(inc, "_owner_user_id", None)
         owner_org = getattr(inc, "_owner_org_id", None)
         _ = getattr(inc, "_is_anonymous", False)  # is_anon
@@ -2548,6 +2627,7 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
         if not is_admin and user_id is not None:
             if owner_user != user_id and owner_org != org_id:
                 continue  # Skip incidents not owned by this user/org
+        seen.add(inc_id)
 
         orch_state = pipeline_progress.get(inc_id, {}).get(
             "state", getattr(inc, "status", "OBSERVED")
@@ -2567,6 +2647,9 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
                 "approximate_time": inc.approximate_time.isoformat()
                 if inc.approximate_time
                 else None,
+                "created_at": inc.created_at.isoformat()
+                if getattr(inc, "created_at", None)
+                else None,
             }
         )
 
@@ -2576,44 +2659,49 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
             settings = get_settings()
             store = Path(settings.evidence_store_path)
             if store.exists():
-                for d in store.iterdir():
-                    if d.is_dir() and d.name not in seen:
+                for d in sorted(store.iterdir()):
+                    if not d.is_dir():
+                        continue
+                    entry = _disk_incident_summary(d, seen)
+                    if entry:
+                        results.append(entry)
+                    elif d.name not in seen:
+                        # Bundle lives in the evidence store but carries no
+                        # manifest of its own: still list it under its folder id.
                         seen.add(d.name)
+                        try:
+                            evidence_count = len([p for p in d.rglob("*") if p.is_file()])
+                        except Exception:
+                            evidence_count = 0
                         results.append(
                             {
                                 "id": d.name,
                                 "title": f"Incident {d.name}",
-                                "system_name": "embedded-system",
+                                "system_name": "unknown-system",
                                 "status": "OBSERVED",
                                 "pipeline_state": "OBSERVED",
-                                "evidence_count": len(list(d.glob("**/*.*"))),
+                                "evidence_count": evidence_count,
                                 "timeline_events_count": 0,
                                 "is_demonstration": False,
                                 "approximate_time": None,
+                                "created_at": datetime.fromtimestamp(
+                                    d.stat().st_mtime, tz=timezone.utc
+                                ).isoformat()
+                                if d.exists()
+                                else None,
                             }
                         )
 
             for glob_pattern in ("incident-*", "packages/incident-*", "packages/golden_incident/incident-*", "packages/*"):
-                for p in Path(".").glob(glob_pattern):
-                    if p.is_dir() and (p / "manifest.yaml").exists():
-                        inc_id = p.name.replace("incident-", "")
-                    if inc_id not in seen:
-                        seen.add(inc_id)
-                        results.append(
-                            {
-                                "id": inc_id,
-                                "title": f"Incident {inc_id}",
-                                "system_name": "physical-ai-system",
-                                "status": "OBSERVED",
-                                "pipeline_state": "OBSERVED",
-                                "evidence_count": len(list(p.glob("**/*.*"))),
-                                "timeline_events_count": 0,
-                                "is_demonstration": (inc_id == "CAU-0001"),
-                                "approximate_time": None,
-                            }
-                        )
+                for p in sorted(Path(".").glob(glob_pattern)):
+                    entry = _disk_incident_summary(p, seen)
+                    if entry:
+                        results.append(entry)
         except Exception as e:
             logger.debug(f"Error scanning disk for incidents: {e}")
+
+    # Most recently created first, so clients can auto-select the newest incident.
+    results.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
 
     return {"incidents": results, "count": len(results)}
 
@@ -2717,7 +2805,7 @@ async def create_incident(
     incident_id = body.custom_id if body and body.custom_id else str(uuid.uuid4())
     title = body.title if body and body.title else "Uploaded Incident"
     desc = body.description if body and body.description else "Incident uploaded via API"
-    sys_name = body.system_name if body and body.system_name else "warehouse-amr-01"
+    sys_name = (body.system_name if body and body.system_name else None) or "unknown-system"
 
     incident = Incident(
         id=incident_id, title=title, description=desc, system_name=sys_name, status="OBSERVED"
@@ -2841,13 +2929,16 @@ async def upload_and_create_incident(
 
     short_uuid = uuid.uuid4().hex[:8].upper()
     incident_id = f"INC-{short_uuid}"
-    resolved_title = title or file.filename.replace(".zip", "").replace("-", " ").replace("_", " ").title()
+    # Keep placeholders so the ingestion controller can apply the uploaded
+    # package's manifest (title/system_name/approximate_time); when the ZIP has
+    # no manifest, the controller derives a title from the uploaded filename.
+    resolved_title = title or "Uploaded Incident"
 
     incident = Incident(
         id=incident_id,
         title=resolved_title,
         description=description or "Uploaded incident bundle",
-        system_name=system_name or "robotic-worker",
+        system_name=system_name,
         is_demonstration=False,
     )
     incident._owner_user_id = user_id
@@ -8913,7 +9004,7 @@ async def model_health():
 
     settings = get_settings()
     is_live = bool(settings.nebius_api_key and settings.nebius_enabled)
-    exact_model_id = settings.nebius_model_id or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+    exact_model_id = settings.nebius_model_id or "nvidia/Nemotron-3_5-Lightning"
 
     probes: List[Dict[str, Any]] = []
     gateway_error = None
@@ -9285,8 +9376,34 @@ async def get_status_center():
     """Get orchestration and system health status center."""
     started = time.perf_counter()
     settings = get_settings()
-    # If no incident exists, find any available incident in memory or demo
-    active_inc = next(iter(incidents.values()), None)
+    # Pick the most relevant active incident: prefer one with pipeline activity,
+    # otherwise the most recently registered.  If the in-memory registry is empty
+    # (e.g. right after a backend restart), hydrate the newest on-disk bundle
+    # from the evidence store so the status center reflects real incidents, not
+    # a hardcoded demo id.  The demo golden incident is only a demo-mode fallback.
+    active_inc = None
+    if incidents:
+        def _activity_rank(inc_id: str) -> int:
+            state = pipeline_progress.get(inc_id, {}).get("state", "IDLE")
+            return 0 if state in ("RUNNING", "SUCCESS", "FAILED", "DEGRADED", "CANCELLED") else 1
+
+        active_id = sorted(incidents.keys(), key=_activity_rank)[0]
+        active_inc = incidents.get(active_id)
+    if active_inc is None and not settings.demo_mode:
+        try:
+            store = Path(settings.evidence_store_path)
+            if store.exists():
+                candidates = [
+                    d for d in store.iterdir()
+                    if d.is_dir() and any(
+                        (d / n).is_file() for n in ("manifest.yaml", "manifest.yml", "manifest.json")
+                    )
+                ]
+                if candidates:
+                    latest = max(candidates, key=lambda d: d.stat().st_mtime)
+                    active_inc = _ensure_incident(latest.name)
+        except Exception as e:
+            logger.debug(f"status-center: could not hydrate latest incident from disk: {e}")
     if not active_inc and settings.demo_mode:
         active_inc = _ensure_incident("CAU-0001")
     incident_count = len(incidents)
@@ -10816,8 +10933,16 @@ async def get_incident_temporal_visualization(
 
     from cauveris.temporal.visualization import build_timeline_visualization_data
 
+    incident_obj = incidents[incident_id]
+    bundle_path = getattr(incident_obj, "bundle_path", None)
+    if not bundle_path:
+        candidate = Path(get_settings().evidence_store_path) / incident_id
+        if candidate.is_dir():
+            bundle_path = str(candidate)
     return build_timeline_visualization_data(
-        temporal_result, incidents[incident_id].timeline_events
+        temporal_result,
+        incident_obj.timeline_events or [],
+        bundle_path=Path(bundle_path) if bundle_path else None,
     )
 
 

@@ -70,7 +70,7 @@ class NebiusModelGateway(ModelGateway):
         )
         self.controller = get_controller()
         self.provider_id = "nebius"
-        self.model_id = self.settings.nebius_model_id or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+        self.model_id = self.settings.nebius_model_id or "nvidia/Nemotron-3_5-Lightning"
 
     def is_available(self) -> bool:
         """Check if Nebius credentials and provider are active."""
@@ -135,10 +135,10 @@ class NebiusModelGateway(ModelGateway):
         fictional_placeholders = {"nemotron-3-nano", "nemotron-3-super", "nemotron-3-ultra"}
         model_name = (
             requested_model
-            or (self.settings.model_reasoning if self.settings.model_reasoning and self.settings.model_reasoning != "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF" else None)
+            or (self.settings.model_reasoning if self.settings.model_reasoning and self.settings.model_reasoning not in ("nvidia/Nemotron-3_5-Lightning", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF") else None)
             or self.settings.nebius_model_id
             or self.settings.model_reasoning
-            or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+            or "nvidia/Nemotron-3_5-Lightning"
         )
 
         available_models = await self._get_available_models(client)
@@ -172,7 +172,7 @@ class NebiusModelGateway(ModelGateway):
             self._resolved_model = model_name
             return model_name
 
-        default_model = self.settings.nebius_model_id or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+        default_model = self.settings.nebius_model_id or "nvidia/Nemotron-3_5-Lightning"
         self._resolved_model = default_model
         return default_model
 
@@ -215,13 +215,17 @@ class NebiusModelGateway(ModelGateway):
 
         messages = []
         if schema is not None:
-            schema_json = json.dumps(schema.model_json_schema(), indent=2)
+            raw_schema = schema.model_json_schema()
+            schema_json = json.dumps(raw_schema, indent=2)
             system_msg = (
                 "You are an expert root cause analysis and systems engineering AI.\n"
                 "Analyze the provided system telemetry, incident events, and latency metrics.\n"
-                "You MUST respond ONLY with a valid JSON object matching the following schema:\n"
+                "You MUST respond ONLY with a valid raw JSON data object conforming to the following schema:\n"
                 f"{schema_json}\n"
-                "Do NOT include conversational preamble, markdown backticks, or trailing commentary. Only output raw JSON."
+                "CRITICAL INSTRUCTIONS:\n"
+                "1. Output ONLY the raw JSON data object (e.g. {\"mappings\": [...]}).\n"
+                "2. Do NOT output $defs, title, or schema definition metadata.\n"
+                "3. Keep any internal reasoning concise and output the complete JSON object."
             )
             messages.append({"role": "system", "content": system_msg})
 
@@ -331,7 +335,9 @@ class NebiusModelGateway(ModelGateway):
             raise IndexError(f"Nebius returned HTTP 200 with no choices: {result!r:.500}")
         choice = choices[0]
         msg = choice.get("message") or {}
-        content = msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content") or ""
+        content = msg.get("content") or ""
+        if not content and (msg.get("reasoning") or msg.get("reasoning_content")):
+            content = msg.get("reasoning") or msg.get("reasoning_content") or ""
         usage = result.get("usage", {}) or {}
         prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
         completion_tokens = int(usage.get("completion_tokens", 0) or 0)
@@ -419,7 +425,7 @@ class NebiusModelGateway(ModelGateway):
         redacted_prompt, redactions = redact_secrets(raw_prompt)
 
         execution_id = str(uuid.uuid4())
-        model_name = self.settings.nebius_model_id or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+        model_name = self.settings.nebius_model_id or "nvidia/Nemotron-3_5-Lightning"
 
         try:
             resp = await self.generate(
@@ -523,7 +529,7 @@ class NebiusModelGateway(ModelGateway):
         """
         started = time.perf_counter()
         base_url = self._get_base_url()
-        configured_nvidia = self.settings.nebius_model_id or "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+        configured_nvidia = self.settings.nebius_model_id or "nvidia/Nemotron-3_5-Lightning"
 
         if not self.is_available():
             return {

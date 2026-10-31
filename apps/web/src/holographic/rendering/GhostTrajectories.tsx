@@ -6,8 +6,60 @@
 import React, { useRef, useMemo, useEffect } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
-import { Html } from "@react-three/drei";
 import { CausalNode, CounterfactualResult } from "../types";
+
+interface GhostLabelSpriteProps {
+  isIntervened: boolean;
+  delta: number;
+  position: [number, number, number];
+}
+
+const GhostLabelSprite = React.memo(function GhostLabelSprite({
+  isIntervened,
+  delta,
+  position,
+}: GhostLabelSpriteProps) {
+  const texture = useMemo(() => {
+    if (typeof document === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.clearRect(0, 0, 256, 64);
+    const x = 6, y = 6, w = 244, h = 52, r = 8;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.92)";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#475569";
+    ctx.stroke();
+
+    ctx.font = "bold 20px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = delta > 0 ? "#38bdf8" : "#94a3b8";
+
+    const label = `${isIntervened ? "do(X):" : "CF:"} ${delta > 0 ? "+" : ""}${(delta * 100).toFixed(0)}%`;
+    ctx.fillText(label, 128, 32);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    return tex;
+  }, [isIntervened, delta]);
+
+  if (!texture) return null;
+
+  return (
+    <sprite position={position} scale={[16, 4, 1]}>
+      <spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} />
+    </sprite>
+  );
+});
 
 export interface GhostTrajectoriesProps {
   nodes: CausalNode[];
@@ -116,23 +168,11 @@ export function GhostTrajectories({
             />
 
             {/* Ghost delta label */}
-            <Html
-              distanceFactor={180}
+            <GhostLabelSprite
+              isIntervened={isIntervened}
+              delta={delta}
               position={[ghostPos.x, ghostPos.y + (node.radius || 10) + 12, ghostPos.z]}
-              style={{
-                pointerEvents: "none",
-                transform: "translate3d(-50%, -50%, 0)",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <div className="px-1.5 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-[10px] font-mono text-white shadow-md flex items-center gap-1">
-                <span>{isIntervened ? "do(X):" : "CF:"}</span>
-                <span className={delta > 0 ? "text-zinc-200 font-bold" : "text-zinc-400 font-bold"}>
-                  {delta > 0 ? "+" : ""}
-                  {(delta * 100).toFixed(0)}%
-                </span>
-              </div>
-            </Html>
+            />
           </group>
         );
       })}

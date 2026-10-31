@@ -23,6 +23,28 @@ from cauveris.discovery.repo_discovery import RepositoryDiscovery
 logger = logging.getLogger(__name__)
 
 
+def _parse_datetime_value(value: Any) -> Optional[datetime]:
+    """Parse a manifest timestamp (ISO-8601 string or epoch seconds) into a datetime."""
+    if value is None or isinstance(value, datetime):
+        return value if isinstance(value, datetime) else None
+    try:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        text = str(value).strip()
+        if not text:
+            return None
+        # YAML may already have parsed the value into a datetime
+        if isinstance(value, datetime):
+            return value
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except Exception:
+            logger.warning(f"Could not parse approximate_time value: {value!r}")
+            return None
+
+
 def extract_zip_safely(zip_path: Path, extract_to: Path) -> List[Path]:
     """
     Safely extract a ZIP file preventing path traversal attacks.
@@ -157,14 +179,26 @@ class IngestionController:
                         incident.manifest = manifest_data
                         if not incident.title or incident.title in ("Uploaded Incident", "New Incident"):
                             incident.title = manifest_data.get("title", incident.title)
-                        if not incident.description:
+                        if not incident.description or incident.description in (
+                            "Uploaded incident bundle",
+                            "Incident uploaded via API",
+                        ):
                             incident.description = manifest_data.get(
                                 "description", incident.description
                             )
-                        if not incident.system_name:
-                            incident.system_name = manifest_data.get(
-                                "system_name", incident.system_name
+                        # "unknown-system" is a placeholder, not a real value: the
+                        # manifest's system_name must win over it so an uploaded
+                        # package's real target system propagates everywhere.
+                        if not incident.system_name or incident.system_name == "unknown-system":
+                            manifest_system = manifest_data.get("system_name")
+                            if manifest_system:
+                                incident.system_name = manifest_system
+                        if not incident.approximate_time:
+                            approx_parsed = _parse_datetime_value(
+                                manifest_data.get("approximate_time")
                             )
+                            if approx_parsed is not None:
+                                incident.approximate_time = approx_parsed
                         if not incident.source_repositories:
                             incident.source_repositories = manifest_data.get(
                                 "source_repositories", []
@@ -265,6 +299,47 @@ class IngestionController:
                                     is_required=False,
                                 )
                             )
+
+        # Persist a canonical manifest.yaml into bundles that live in the
+        # evidence store, so the incident can be rehydrated from disk after a
+        # backend restart even when the uploaded ZIP shipped no manifest of its
+        # own (previously the synthesized manifest lived only in memory and the
+        # incident 404'd after restart).  Bundles outside the store (e.g. repo
+        # demo packages) are treated as read-only and never written to.
+        if bundle_path and bundle_path.exists() and isinstance(incident.manifest, dict):
+            try:
+                store_root = Path(self.settings.evidence_store_path).resolve()
+                inside_store = bundle_path.resolve().is_relative_to(store_root)
+            except Exception:
+                inside_store = False
+            if inside_store:
+                canonical = bundle_path / "manifest.yaml"
+                if not canonical.exists():
+                    try:
+                        canonical.write_text(
+                            yaml.safe_dump(incident.manifest, sort_keys=False, default_flow_style=False),
+                            encoding="utf-8",
+                        )
+                        logger.info(f"Persisted canonical manifest.yaml for incident {incident.id}")
+                    except Exception as e:
+                        logger.warning(f"Could not persist synthesized manifest for {incident.id}: {e}")
+                # Persist ownership in a sidecar (never mutating an original
+                # manifest that shipped inside the ZIP) so a rehydrated
+                # incident after a backend restart keeps its owner and is not
+                # filtered out of list_incidents by the ownership check.
+                owner_user = getattr(incident, "_owner_user_id", None)
+                owner_org = getattr(incident, "_owner_org_id", None)
+                if owner_user is not None or owner_org is not None:
+                    try:
+                        (bundle_path / ".cauveris-owner.json").write_text(
+                            json.dumps(
+                                {k: v for k, v in (("owner_user_id", owner_user), ("owner_org_id", owner_org)) if v is not None},
+                                indent=2,
+                            ),
+                            encoding="utf-8",
+                        )
+                    except Exception as e:
+                        logger.warning(f"Could not persist owner sidecar for {incident.id}: {e}")
 
         # Process each evidence item
         for evidence in incident.evidence_items:
@@ -392,15 +467,20 @@ class IngestionController:
             extract_dir = target_dir
 
         extracted_files = extract_zip_safely(zip_path, extract_dir)
-        manifest_file = extract_dir / "manifest.yaml"
 
         manifest_data = {}
-        if manifest_file.exists():
-            try:
-                with open(manifest_file, "r", encoding="utf-8") as f:
-                    manifest_data = yaml.safe_load(f) or {}
-            except Exception as e:
-                logger.warning(f"Failed to parse manifest: {e}")
+        for manifest_name in ("manifest.yaml", "manifest.yml", "manifest.json"):
+            manifest_file = extract_dir / manifest_name
+            if manifest_file.exists():
+                try:
+                    with open(manifest_file, "r", encoding="utf-8") as f:
+                        if manifest_name.endswith(".json"):
+                            manifest_data = json.load(f) or {}
+                        else:
+                            manifest_data = yaml.safe_load(f) or {}
+                    break
+                except Exception as e:
+                    logger.warning(f"Failed to parse manifest: {e}")
 
         incident_id = manifest_data.get("incident_id", zip_path.stem)
         incident = Incident(
@@ -443,21 +523,25 @@ class IngestionController:
         Returns:
             Validated Incident object
         """
-        manifest_file = store_path / "manifest.yaml"
-
         manifest_data = {}
-        if manifest_file.exists():
-            try:
-                with open(manifest_file, "r", encoding="utf-8") as f:
-                    manifest_data = yaml.safe_load(f) or {}
-            except Exception as e:
-                logger.warning(f"Failed to parse manifest: {e}")
+        for manifest_name in ("manifest.yaml", "manifest.yml", "manifest.json"):
+            manifest_file = store_path / manifest_name
+            if manifest_file.exists():
+                try:
+                    with open(manifest_file, "r", encoding="utf-8") as f:
+                        if manifest_name.endswith(".json"):
+                            manifest_data = json.load(f) or {}
+                        else:
+                            manifest_data = yaml.safe_load(f) or {}
+                    break
+                except Exception as e:
+                    logger.warning(f"Failed to parse manifest: {e}")
 
         incident = Incident(
             id=incident_id,
             title=manifest_data.get("title", f"Incident {incident_id}"),
             description=manifest_data.get("description", "Loaded from evidence store"),
-            system_name=manifest_data.get("system_name", "physical-ai-system"),
+            system_name=manifest_data.get("system_name", "unknown-system"),
             approximate_time=manifest_data.get("approximate_time"),
             source_repositories=manifest_data.get("source_repositories", []),
             commit_hash=manifest_data.get("commit_hash", ""),
@@ -468,7 +552,7 @@ class IngestionController:
 
         # Build evidence items from all files in the store
         for file_path in store_path.rglob("*"):
-            if file_path.is_file() and file_path.name != "manifest.yaml":
+            if file_path.is_file() and file_path.name not in ("manifest.yaml", "manifest.yml", "manifest.json", ".cauveris-owner.json"):
                 rel_path = str(file_path.relative_to(store_path)).replace("\\", "/")
                 is_req = rel_path in manifest_data.get("required_evidence", [])
                 evidence = EvidenceItem(

@@ -5,11 +5,61 @@
 
 import React, { useMemo } from "react";
 import * as THREE from "three";
-import { Html } from "@react-three/drei";
 import { CausalGraph, GraphMutation } from "../types";
 import { applyPatch } from "../layout/patchMutations";
 
 export { applyPatch };
+
+interface PatchLabelSpriteProps {
+  delta: number;
+  position: [number, number, number];
+}
+
+const PatchLabelSprite = React.memo(function PatchLabelSprite({
+  delta,
+  position,
+}: PatchLabelSpriteProps) {
+  const texture = useMemo(() => {
+    if (typeof document === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.clearRect(0, 0, 320, 64);
+    const x = 6, y = 6, w = 308, h = 52, r = 8;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+    ctx.fillStyle = "rgba(24, 24, 27, 0.95)";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#52525b";
+    ctx.stroke();
+
+    ctx.font = "bold 18px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#e4e4e7";
+
+    const label = `Patch: ${delta > 0 ? "+" : ""}${(delta * 100).toFixed(0)}% weight`;
+    ctx.fillText(label, 160, 32);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    return tex;
+  }, [delta]);
+
+  if (!texture) return null;
+
+  return (
+    <sprite position={position} scale={[18, 3.6, 1]}>
+      <spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} />
+    </sprite>
+  );
+});
 
 export interface PatchMutationsProps {
   mutations: GraphMutation[];
@@ -62,20 +112,7 @@ export function PatchMutations({ mutations, nodes, visible = true }: PatchMutati
 
           return (
             <group key={`patch-mod-${idx}`}>
-              <Html
-                distanceFactor={160}
-                position={[midX, midY + 10, midZ]}
-                style={{
-                  pointerEvents: "none",
-                  transform: "translate3d(-50%, -50%, 0)",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <div className="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-[10px] font-mono text-zinc-200 shadow">
-                  Patch: {delta > 0 ? "+" : ""}
-                  {(delta * 100).toFixed(0)}% causal weight
-                </div>
-              </Html>
+              <PatchLabelSprite delta={delta} position={[midX, midY + 10, midZ]} />
             </group>
           );
         }

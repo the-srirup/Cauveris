@@ -33,6 +33,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env")
+except ImportError:
+    pass
+
 # Auto-reexec into project virtualenv if running under an unconfigured python environment
 for _candidate in [
     ROOT / ".venv311" / "Scripts" / "python.exe",
@@ -108,6 +114,9 @@ def start_live_demo(foreground: bool = True):
     print(" Cauveris Live Hackathon Demonstration Startup")
     print("=" * 80)
 
+    from cauveris.config import get_settings
+    settings = get_settings()
+
     # 1. Prepare environment
     env = os.environ.copy()
     env["CAUVERIS_RUNTIME_MODE"] = "production-demo"
@@ -120,9 +129,15 @@ def start_live_demo(foreground: bool = True):
     env["CAUVERIS_JOB_QUEUE_EMBEDDED_WORKER"] = "true"
     env["CAUVERIS_HOST"] = "127.0.0.1"
     env["CAUVERIS_PORT"] = "8000"
+    env["NEXT_PUBLIC_API_URL"] = "http://127.0.0.1:8000/api/v1"
+    env["NEXT_PUBLIC_BACKEND_URL"] = "http://127.0.0.1:8000/api/v1"
 
     # Consolidate Nebius environment variables
-    nebius_key = env.get("CAUVERIS_NEBIUS_API_KEY") or env.get("NEBIUS_API_KEY")
+    nebius_key = (
+        env.get("CAUVERIS_NEBIUS_API_KEY")
+        or env.get("NEBIUS_API_KEY")
+        or settings.nebius_api_key
+    )
     if nebius_key:
         env["CAUVERIS_NEBIUS_API_KEY"] = nebius_key
         env["NEBIUS_API_KEY"] = nebius_key
@@ -131,8 +146,24 @@ def start_live_demo(foreground: bool = True):
     else:
         print("[*] Nebius Key: Not set in environment (will run truthful local deterministic reasoning)")
 
-    model_id = env.get("NEBIUS_MODEL_ID", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
-    print(f"[*] Configured NVIDIA Model:  {model_id}")
+    model_id = env.get("NEBIUS_MODEL_ID") or settings.nebius_model_id or "nvidia/Nemotron-3_5-Lightning"
+    env["NEBIUS_MODEL_ID"] = model_id
+    env["CAUVERIS_NEBIUS_MODEL_ID"] = model_id
+    if settings.model_fast:
+        env["NEBIUS_MODEL_FAST"] = settings.model_fast
+    if settings.model_reasoning:
+        env["NEBIUS_MODEL_REASONING"] = settings.model_reasoning
+    if settings.model_escalation:
+        env["NEBIUS_MODEL_ESCALATION"] = settings.model_escalation
+    if settings.nebius_base_url:
+        env["NEBIUS_BASE_URL"] = settings.nebius_base_url
+        env["CAUVERIS_NEBIUS_BASE_URL"] = settings.nebius_base_url
+
+    print(f"[*] Active NVIDIA Model:      {model_id}")
+    print(f"[*] Fast/Triage Tier:         {env.get('NEBIUS_MODEL_FAST', model_id)}")
+    print(f"[*] Reasoning Tier:           {env.get('NEBIUS_MODEL_REASONING', model_id)}")
+    print(f"[*] Escalation Tier:          {env.get('NEBIUS_MODEL_ESCALATION', model_id)}")
+    print(f"[*] Nebius Base URL:          {env.get('NEBIUS_BASE_URL', 'https://api.tokenfactory.nebius.com/v1')}")
 
     # 2. Ensure demonstration package & persisted user
     print("\n[*] Checking demonstration incident package...")

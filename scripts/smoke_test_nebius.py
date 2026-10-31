@@ -56,7 +56,11 @@ async def run_checks(live: bool, model_id_override: Optional[str] = None) -> int
     settings = get_settings()
     api_key = os.environ.get("NEBIUS_API_KEY") or getattr(settings, "nebius_api_key", "")
     base_url = os.environ.get("NEBIUS_BASE_URL") or getattr(settings, "nebius_base_url", "https://api.tokenfactory.nebius.com/v1")
-    model_id = model_id_override or os.environ.get("NEBIUS_MODEL_ID") or getattr(settings, "nebius_model_id", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
+    model_id = (
+        model_id_override
+        or os.environ.get("NEBIUS_MODEL_ID")
+        or getattr(settings, "nebius_model_id", "nvidia/Nemotron-3_5-Lightning")
+    )
 
     print(f"[*] Base URL:  {base_url}")
     print(f"[*] Model ID:  {model_id}")

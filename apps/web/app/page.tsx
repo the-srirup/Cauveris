@@ -97,7 +97,8 @@ function MissionControlContent() {
   const [backendLatency, setBackendLatency] = useState<number | null>(null);
   const [modelProviderOnline, setModelProviderOnline] = useState<boolean>(true);
   const [modelProviderName, setModelProviderName] = useState<string>("LOCAL_DETERMINISTIC_ONLY");
-  const [modelId, setModelId] = useState<string>("nvidia/Llama-3.1-Nemotron-70B-Instruct-HF");
+  // Populated from /model-health on load; empty means "not reported yet".
+  const [modelId, setModelId] = useState<string>("");
   const [circuitBreakerState, setCircuitBreakerState] = useState<string>("CLOSED");
   const [dailyBudgetUsed, setDailyBudgetUsed] = useState<number>(0.0);
   const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
@@ -125,7 +126,7 @@ function MissionControlContent() {
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [showEvidenceDrawer, setShowEvidenceDrawer] = useState<boolean>(false);
   const [newTitle, setNewTitle] = useState<string>("");
-  const [newSystemName, setNewSystemName] = useState<string>("warehouse-amr-01");
+  const [newSystemName, setNewSystemName] = useState<string>("");
   const [newDescription, setNewDescription] = useState<string>("");
 
   // Engineer mode interactive simulation state
@@ -560,19 +561,27 @@ function MissionControlContent() {
   }, [pipelineStages]);
 
   // Transformed Capability Map
+  // Every capability is derived from what the backend actually produced for
+  // this incident — nothing is marked capable just because the page is open.
   const capabilities: CapabilityItem[] = useMemo(() => {
     const capRep = reportData?.capability_report;
+    const evidenceCount = evidenceSummary?.evidence_count ?? incidentData?.evidence_count ?? 0;
+    const hypCount = reportData?.hypotheses?.length ?? 0;
+    const expCount = reportData?.experiments?.length ?? 0;
+    const patchCount = reportData?.patch_candidates?.length ?? 0;
+    const verCount = reportData?.verification_reports?.length ?? 0;
+    const verified = (reportData?.verification_reports ?? []).some((v: any) => v?.verified);
     return [
-      { key: "ingestion", name: "Ingestion", capable: true },
-      { key: "extraction", name: "Extraction", capable: (evidenceSummary?.evidence_count ?? 0) > 0 },
-      { key: "diagnosis", name: "Diagnosis", capable: capRep ? capRep.diagnosis?.capable !== false : true },
-      { key: "simulation", name: "Simulation", capable: capRep ? capRep.simulation?.capable !== false : true },
-      { key: "repair", name: "Repair Forge", capable: capRep ? capRep.repair?.capable !== false : true },
-      { key: "editing", name: "Config Patch", capable: capRep ? capRep.repair?.editable_controls_count > 0 : true },
-      { key: "verification", name: "Verification", capable: capRep ? capRep.verification?.capable !== false : true },
-      { key: "export", name: "Package Export", capable: true },
+      { key: "ingestion", name: "Ingestion", capable: evidenceCount > 0 },
+      { key: "extraction", name: "Extraction", capable: evidenceCount > 0 },
+      { key: "diagnosis", name: "Diagnosis", capable: capRep ? capRep.diagnosis?.capable !== false : hypCount > 0 },
+      { key: "simulation", name: "Simulation", capable: capRep ? capRep.simulation?.capable !== false : expCount > 0 },
+      { key: "repair", name: "Repair Forge", capable: capRep ? capRep.repair?.capable !== false : patchCount > 0 },
+      { key: "editing", name: "Config Patch", capable: capRep ? (capRep.repair?.editable_controls_count ?? 0) > 0 : patchCount > 0 },
+      { key: "verification", name: "Verification", capable: capRep ? capRep.verification?.capable !== false : verCount > 0 },
+      { key: "export", name: "Package Export", capable: verified },
     ];
-  }, [reportData, evidenceSummary]);
+  }, [reportData, evidenceSummary, incidentData]);
 
   // Incident columns for recent investigations
   const incidentColumns: Column<Incident>[] = useMemo(
@@ -937,9 +946,9 @@ function MissionControlContent() {
 
             <TraceValue
               label="Verification Gate"
-              value={reportData?.verification_report?.achieved_level || "RUNTIME_VERIFIED"}
+              value={reportData?.verification_report?.achieved_level ?? "PENDING"}
               unit="level"
-              provenance="VERIFIED"
+              provenance={reportData?.verification_report?.achieved_level ? "VERIFIED" : "PENDING"}
               source="Verification Engine"
               onSelect={() =>
                 openInspector("patch", {
@@ -952,20 +961,35 @@ function MissionControlContent() {
 
             <TraceValue
               label="Reconstruction Confidence"
-              value={reportData?.diagnosis?.confidence ? `${Math.round(reportData.diagnosis.confidence * 100)}` : "98"}
+              value={
+                reportData?.diagnosis?.confidence != null
+                  ? `${Math.round(reportData.diagnosis.confidence * 100)}`
+                  : "—"
+              }
               unit="%"
-              provenance="CALIBRATED"
+              provenance={reportData?.diagnosis?.confidence != null ? "CALIBRATED" : "PENDING"}
               source="Digital Twin Simulator"
-              uncertainty="2.4"
+              uncertainty={reportData?.diagnosis?.uncertainty ?? undefined}
             />
           </div>
 
-          {/* Capability Map */}
-          <CapabilityMap
-            capabilities={capabilities}
-            decision={reportData?.capability_report?.honest_repair_decision || "PROCEED"}
-            decisionReason={reportData?.capability_report?.decision_reason || "Deterministic model calibration supported"}
-          />
+          {/* Capability Map — a decision is only shown when the backend actually produced one */}
+          {reportData?.capability_report ? (
+            <CapabilityMap
+              capabilities={capabilities}
+              decision={reportData.capability_report.honest_repair_decision || "PARTIAL"}
+              decisionReason={reportData.capability_report.decision_reason || "No decision recorded for this incident"}
+            />
+          ) : (
+            <div className="rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)]">
+                Capability Map
+              </div>
+              <p className="mt-1 text-xs text-[var(--color-fg-muted)]">
+                No capability evaluation for this incident yet — start the investigation pipeline.
+              </p>
+            </div>
+          )}
 
           {/* Stage Rail Execution Stepper */}
           {stageRailSteps.length > 0 && (
@@ -1012,7 +1036,7 @@ function MissionControlContent() {
                 step="10"
                 value={simBatchWindow}
                 onChange={(e) => setSimBatchWindow(Number(e.target.value))}
-                className="w-full accent-zinc-400"
+                className="w-full accent-[var(--color-accent-fg)] h-1.5 bg-[var(--color-border-default)] rounded cursor-pointer"
               />
             </div>
 
@@ -1028,7 +1052,7 @@ function MissionControlContent() {
                 step="1"
                 value={simQosDepth}
                 onChange={(e) => setSimQosDepth(Number(e.target.value))}
-                className="w-full accent-zinc-400"
+                className="w-full accent-[var(--color-accent-fg)] h-1.5 bg-[var(--color-border-default)] rounded cursor-pointer"
               />
             </div>
 
@@ -1044,7 +1068,7 @@ function MissionControlContent() {
                 step="5"
                 value={simClockSkew}
                 onChange={(e) => setSimClockSkew(Number(e.target.value))}
-                className="w-full accent-zinc-400"
+                className="w-full accent-[var(--color-accent-fg)] h-1.5 bg-[var(--color-border-default)] rounded cursor-pointer"
               />
             </div>
           </div>

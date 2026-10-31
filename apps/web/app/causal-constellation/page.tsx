@@ -86,7 +86,7 @@ const PROVENANCE_LABELS: Record<string, string> = {
 };
 
 function CausalConstellationContent() {
-  const { incidentId } = useActiveIncident();
+  const { incidentId, incident } = useActiveIncident();
 
   const [loading, setLoading] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -128,6 +128,49 @@ function CausalConstellationContent() {
       setError(e.message || "Failed to load causal data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const [starting, setStarting] = useState(false);
+
+  // Start the backend investigation pipeline for the active incident (same
+  // action as the overview page's Start Investigation), then poll until the
+  // temporal graph and hypotheses materialize or a timeout elapses.
+  const runInvestigation = async () => {
+    if (!incidentId || starting) return;
+    setStarting(true);
+    setError(null);
+    try {
+      await api.reconstruct(incidentId).catch((e: any) => {
+        // 409 means an investigation is already running — just keep polling.
+        if (!/409|already running/i.test(String(e?.message || e))) {
+          throw e;
+        }
+      });
+      notify("Investigation started — computing causal topology...", "info");
+      const deadline = Date.now() + 180_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const [hypRes, visRes] = await Promise.all([
+          api.getHypotheses(incidentId).catch(() => null),
+          api.getTemporalVisualization(incidentId).catch(() => null),
+        ]);
+        if (hypRes) {
+          setHypotheses(hypRes.hypotheses ?? []);
+          if (hypRes.hypotheses?.length) {
+            setSelectedNode((prev) => prev || hypRes.hypotheses[0].hypothesis_id || hypRes.hypotheses[0].id);
+          }
+        }
+        if (visRes) setGraph(visRes);
+        const events = visRes?.summary?.total_events ?? 0;
+        if ((hypRes?.hypotheses?.length ?? 0) > 0 && events > 0) break;
+      }
+      await loadData(incidentId);
+    } catch (e: any) {
+      setError(e?.message || "Failed to start investigation");
+      notify(e?.message || "Failed to start investigation", "error");
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -469,7 +512,11 @@ function CausalConstellationContent() {
       <PageHeader
         title="Hypotheses"
         ariaLabel="Causal Constellation"
-        subtitle="Causal graph topology & hypothesis evaluation for robotic system failures"
+        subtitle={
+          incident
+            ? `Causal graph topology & hypothesis evaluation for ${incident.title || incident.system_name || incident.id}`
+            : "Causal graph topology & hypothesis evaluation for the active incident"
+        }
         breadcrumbs={[{ label: "Overview", href: "/" }, { label: "Hypotheses" }]}
         badge={
           <div className="flex items-center gap-2">
@@ -728,13 +775,44 @@ function CausalConstellationContent() {
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
             >
+              {graph && laneNodes.length > 0 && hypotheses.length === 0 && (
+                <div className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-default,#ffffff)]/95 px-2 py-1.5">
+                  <span className="text-[10px] text-[var(--text-tertiary,#71717a)]">
+                    Evidence inventory view — timeline not yet computed
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={starting}
+                    onClick={runInvestigation}
+                    className="h-6 text-[10px] px-2 gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                  >
+                    <Play className="h-3 w-3" />
+                    {starting ? "Running…" : "Run Investigation"}
+                  </Button>
+                </div>
+              )}
               {laneNodes.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full min-h-[460px] p-6 text-center">
                   <GitBranch className="w-8 h-8 text-zinc-500 mb-2.5" />
                   <span className="text-xs font-bold uppercase text-zinc-200">Causal Topology Ingestion Standby</span>
                   <p className="text-[11px] text-[var(--text-tertiary,#71717a)] max-w-sm mt-1">
-                    No causal DAG data loaded for this incident yet. Start investigation to compute temporal cross-domain pathways.
+                    {error
+                      ? error
+                      : "No causal DAG data loaded for this incident yet. Start the investigation to compute temporal cross-domain pathways."}
                   </p>
+                  {incidentId && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={starting}
+                      onClick={runInvestigation}
+                      className="mt-3 h-8 text-xs gap-1.5"
+                    >
+                      <Play className="h-3.5 w-3.5" />
+                      {starting ? "Investigation running…" : "Run Investigation"}
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <svg

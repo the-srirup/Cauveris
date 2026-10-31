@@ -377,6 +377,77 @@ def _is_safety_outcome(
     return any(k in message for k in keywords)
 
 
+_SOURCE_TYPE_BY_SUFFIX = {
+    ".log": "text_log",
+    ".jsonl": "jsonl_log",
+    ".json": "deployment_json",
+    ".csv": "csv_metrics",
+    ".mcap": "mcap_recording",
+    ".bag": "mcap_recording",
+    ".yaml": "deployment_json",
+    ".yml": "deployment_json",
+    ".toml": "deployment_json",
+    ".md": "operator_note",
+    ".txt": "text_log",
+}
+
+_MANIFEST_NAMES = {"manifest.yaml", "manifest.yml", "manifest.json", "checksums.sha256"}
+
+
+def _synthesize_graph_from_bundle(bundle_path: Path) -> Dict[str, Any]:
+    """
+    Build an evidence graph directly from a bundle's files.
+
+    Used when the incident has no timeline events yet (fresh upload, pipeline
+    not started): one node per file, grouped into a lane per top-level
+    directory, chained in sorted package order.  Every node is real evidence
+    from the uploaded package — nothing is invented.
+    """
+    try:
+        files = sorted(
+            (p for p in bundle_path.rglob("*") if p.is_file() and p.name not in _MANIFEST_NAMES),
+            key=lambda p: str(p.relative_to(bundle_path)).replace("\\", "/"),
+        )
+    except Exception:
+        logger.exception("Failed to list bundle files for synthesized graph")
+        return {"nodes": [], "edges": []}
+
+    nodes: List[Dict[str, Any]] = []
+    for idx, fpath in enumerate(files):
+        rel = str(fpath.relative_to(bundle_path)).replace("\\", "/")
+        parts = rel.split("/")
+        lane = parts[0] if len(parts) > 1 else "bundle"
+        node = {
+            "evidence_id": f"file-{idx:04d}",
+            "timestamp_ns": idx * 1_000_000_000,  # spaced 1s apart for layout only
+            "relative_ts_s": float(idx),
+            "lane": lane,
+            "source": fpath.name,
+            "source_type": _SOURCE_TYPE_BY_SUFFIX.get(fpath.suffix.lower(), "text_log"),
+            "message": rel,
+            "clock_domain": "unknown",
+            "confidence": 1.0,
+            "status": "OBSERVED",
+            "attributes": {"file_size": fpath.stat().st_size if fpath.exists() else 0},
+        }
+        nodes.append(node)
+
+    edges: List[Dict[str, Any]] = []
+    # Chain files in sorted package order. Consecutive files frequently sit in
+    # different top-level lanes, so this yields real cross-lane edges (the
+    # lane topology drops same-lane edges), plus the within-lane ordering.
+    for a, b in zip(nodes, nodes[1:]):
+        edges.append(
+            {
+                "source": a["evidence_id"],
+                "target": b["evidence_id"],
+                "provenance": "ingestion_order",
+            }
+        )
+
+    return {"nodes": nodes, "edges": edges}
+
+
 def _resolve_evidence_graph(
     temporal_result: Dict[str, Any],
     original_events: List[Dict[str, Any]],
@@ -394,6 +465,13 @@ def _resolve_evidence_graph(
         return graph
 
     if not original_events:
+        # No timeline yet (freshly uploaded incident, pipeline not run): derive
+        # a real graph from the bundle's own files so the constellation shows
+        # the evidence inventory instead of a blank canvas.
+        if bundle_path and Path(bundle_path).is_dir():
+            synthesized = _synthesize_graph_from_bundle(Path(bundle_path))
+            if synthesized.get("nodes"):
+                return synthesized
         return {"nodes": [], "edges": []}
 
     try:

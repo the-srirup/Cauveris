@@ -1,0 +1,2928 @@
+{
+ "steps": [
+  {
+   "step": "root-redirect",
+   "url": "http://localhost:3000/login?redirect=%2F",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair"
+  },
+  {
+   "step": "after-login",
+   "url": "http://localhost:3000/",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair"
+  },
+  {
+   "step": "home",
+   "url": "http://localhost:3000/",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair",
+   "bodyChars": 1959,
+   "text": "STANDBY\nNo Incident Selected\nSTANDBY\nSearch evidence, events, or hypotheses...\n⌘K\nJudge\nEngineer\nUpload Package\nNew\nAutonomous\nLocal Fixtures\nonline\nCreate new incident\nLoad golden incident\nUpload evidence bundle\nDemo User\nCauveris\nIncident Engineering\nReality Debugger\nINVESTIGATION\nOverview\nTimeline\nHypotheses\nANALYSIS\nDigital Twin\nExperiments\nPatch\nOPERATIONS\nVerification\nEvidence\nReports\nSystem Status\nSystems Nominal\nv2.4.0\nOverview\nOverview\nSTANDBY\n\nOperational entry point & autonomous reality debugger for robotic systems\n\nCreate Incident\nUpload incident package\nLoad Golden\nValidate Evidence\nStart Investigation\nAPI\nonline (72ms)\nWORKER\nIdle\nSTORAGE\nHealthy\nMODEL GATEWAY\nNebius NVIDIA\nPIPELINE QUEUE\nIdle\nWelcome to Cauveris Reality Debugger\nForensic archive ingestion & security perimeter\nDrop Incident Package Archive (.zip, .tar.gz)\n\nCauveris securely inspects magic bytes, calculates SHA-256 hashes, normalizes telemetry signals with strict provenance, and refuses unsupported repairs safely.\n\nUpload incident package\nCreate Incident Workspace\nLoad Sample Incident\nLimit: 50MB\nFormats: ZIP, TAR, MCAP, JSONL\nExecution: Sandboxed / No untrusted code execution\nIncident Directory & Prov",
+   "svgs": [
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 2,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 4,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 5,
+     "w": 24,
+     "h": 24
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    }
+   ],
+   "canvas": 0
+  },
+  {
+   "step": "constellation",
+   "url": "http://localhost:3000/causal-constellation",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair",
+   "bodyChars": 1071,
+   "text": "STANDBY\nNo Incident Selected\nSTANDBY\nSearch evidence, events, or hypotheses...\n⌘K\nJudge\nEngineer\nUpload Package\nNew\nAutonomous\nLocal Fixtures\nonline\nCreate new incident\nLoad golden incident\nUpload evidence bundle\nDemo User\nCauveris\nIncident Engineering\nReality Debugger\nINVESTIGATION\nOverview\nTimeline\nHypotheses\nANALYSIS\nDigital Twin\nExperiments\nPatch\nOPERATIONS\nVerification\nEvidence\nReports\nSystem Status\nSystems Nominal\nv2.4.0\nOverview\nHypotheses\nHypotheses\nINFERRED\n0 Evaluated\n\nCausal graph topology & hypothesis evaluation for robotic system failures\n\nConfidence:\n50%\nState:\nALL\nSUPPORTED\nCONTRADICTED\nUNKNOWN\nFalsifiable Causal Hypotheses\nRanked by Bayesian prior confidence. Test in twin to verify.\nNo hypotheses match current confidence and evidence filters.\nInteractive Causal Topology DAG\nDerived cross-domain propagation paths with verified timebounds\nCAUSAL TOPOLOGY INGESTION STANDBY\n\nNo causal DAG data loaded for this incident yet. Start the investigation to compute temporal cross-domain pathways.\n\nDomain Lane\nSafety Outcome Terminal\nTemporal Proximity",
+   "svgs": [
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 1,
+     "lines": 3,
+     "edges": 0,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 2,
+     "edges": 0,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 4,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 9,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 32,
+     "h": 32
+    }
+   ],
+   "canvas": 0
+  },
+  {
+   "step": "reports",
+   "url": "http://localhost:3000/reports",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair",
+   "bodyChars": 2023,
+   "text": "INC-60F368BD\nReports\nIDLE\nSearch evidence, events, or hypotheses...\n⌘K\nJudge\nEngineer\nUpload Package\nNew\nIDLE\nJudge Mode\nLocal Fixtures\nonline\nCreate new incident\nLoad golden incident\nUpload evidence bundle\nDemo User\nCauveris\nIncident Engineering\nReality Debugger\nINVESTIGATION\nOverview\nTimeline\nHypotheses\nANALYSIS\nDigital Twin\nExperiments\nPatch\nOPERATIONS\nVerification\nEvidence\nReports\nSystem Status\nSystems Nominal\nv2.4.0\nOverview\nReports\nReports\n4 reports\n\nGenerated investigation reports and exports\n\nDownload Full Report\nGenerate Report\nGenerate New Report\n\nCreate an automated investigation report for INC-60F368BD\n\nIncident\nINC-60F368BD\nCAU-9001\nDEMO-PERCEPTION-MEMORY-002\nCAU-0001\nCAU-7777\nDEMO-PERCEPTION-MEMORY-001\nInvestigation\nExecutive\nTechnical\nCompliance\nReport Inventory\n\n4 of 4 reports indexed\n\n4 Ready\nSearch reports\nFilter by report type\nAll Types (4)\nInvestigation\nExecutive\nTechnical\nCompliance\nQuick Filter:\nAll\n(4)\nInvestigation\n(1)\nExecutive\n(1)\nTechnical\n(1)\nCompliance\n(1)\nREPORT\tINCIDENT\tTYPE\tFORMAT\tSIZE\tGENERATED\tSTATUS\tACTIONS\n\nFull Investigation Report\nrpt-INC-60F368BD-001\n\tINC-60F368BD\tInvestigation\tJSON\t388.0KB\t31 Oct, 11:19\t\nReady\t\n\n\nInvestigation Report (Markdow",
+   "svgs": [
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 18,
+     "h": 18
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 18,
+     "h": 18
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 18,
+     "h": 18
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 18,
+     "h": 18
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    }
+   ],
+   "canvas": 0
+  },
+  {
+   "step": "evidence",
+   "url": "http://localhost:3000/evidence-vault",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair",
+   "bodyChars": 2531,
+   "text": "INC-60F368BD\nEvidence Vault\nIDLE\nSearch evidence, events, or hypotheses...\n⌘K\nJudge\nEngineer\nUpload Package\nNew\nIDLE\nJudge Mode\nLocal Fixtures\nonline\nCreate new incident\nLoad golden incident\nUpload evidence bundle\nDemo User\nCauveris\nIncident Engineering\nReality Debugger\nINVESTIGATION\nOverview\nTimeline\nHypotheses\nANALYSIS\nDigital Twin\nExperiments\nPatch\nOPERATIONS\nVerification\nEvidence\nReports\nSystem Status\nSystems Nominal\nv2.4.0\nOverview\nEvidence\nEvidence\nOBSERVED\n26 Artifacts Indexed\n\nComplete provenance-linked artifact repository & forensic evidence explorer\n\nExport Report\nDownload Patch Package\napply_patch.py\nIndexed Evidence Items\nOBSERVED\n20\nartifacts\n±0\nsrc: Artifact Ingestion Layer\nCausal Hypotheses Synthesized\nINFERRED\n2\nclaims\nsrc: Mechanism Detectors\nVerified Reversible Patches\nVERIFIED\n0\ncandidates\nsrc: Verification Ladder\nFilter by artifact type\nAll Types (26)\nEvidence Files (20)\nHypotheses (2)\nExperiments (2)\nPatches (1)\nReports (1)\nFilter by status\nAll Statuses\nOBSERVED\nVERIFIED\nPENDING\nCONFIRMED\nchecksums.sha256\n142 recs\n1.6 KB\nOBSERVED\nconfig/payments.toml\nEDITABLE\n142 recs\n1.8 KB\nOBSERVED\nconfig/routes.json\n142 recs\n314 B\nOBSERVED\ndeployments/events.json\n142 recs\n73",
+   "svgs": [
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 14,
+     "h": 14
+    }
+   ],
+   "canvas": 0
+  },
+  {
+   "step": "ghostlab",
+   "url": "http://localhost:3000/ghost-lab",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair",
+   "bodyChars": 3020,
+   "text": "INC-60F368BD\nGhost Lab\nIDLE\nSearch evidence, events, or hypotheses...\n⌘K\nJudge\nEngineer\nUpload Package\nNew\nIDLE\nJudge Mode\nLocal Fixtures\nonline\nCreate new incident\nLoad golden incident\nUpload evidence bundle\nDemo User\nCauveris\nIncident Engineering\nReality Debugger\nINVESTIGATION\nOverview\nTimeline\nHypotheses\nANALYSIS\nDigital Twin\nExperiments\nPatch\nOPERATIONS\nVerification\nEvidence\nReports\nSystem Status\nSystems Nominal\nv2.4.0\nOverview\nExperiments\nExperiments\nRoot Cause Fix Discovered\n\nControlled experiment execution & counterfactual branch simulation\n\nRun Twin Simulations\nExport Experiment Data\n0% Failure Rate\nExperiment Branches\n\nSelect a counterfactual branch to inspect\n\nBranch: H Connection Pool Exhaustion\n(0% fail)\nBranch: Hyp-Inc-60F368Bd-Nebius\n(100% fail)\nActive Branch: H Connection Pool Exhaustion\n\n2 experiment branches available\n\nTRIALS EXECUTED\n12\nDigital twin trials\nREPRODUCTION RATE\n0%\n0/12 emergency stops\nAVERAGE LATENCY\n348.58ms\nWithin 600ms budget\nSAFETY OUTCOME\nCLEAR\nHypothesis supported by twin\nDigital Twin Trajectory Replay\n\nRecorded twin path — 165 control cycles from the 12-trial simulation\n\nTwin route: 0.0 → 24.0 m corridor\n12/12 trials reached goal\nSTART\nGOAL\nGoa",
+   "svgs": [
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 1,
+     "edges": 3,
+     "w": 657,
+     "h": 220
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    }
+   ],
+   "canvas": 0
+  },
+  {
+   "step": "settings",
+   "url": "http://localhost:3000/settings",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair",
+   "bodyChars": 1197,
+   "text": "INC-60F368BD\nSettings & Configuration\nIDLE\nSearch evidence, events, or hypotheses...\n⌘K\nJudge\nEngineer\nUpload Package\nNew\nIDLE\nJudge Mode\nNebius Token Factory\nonline\nCreate new incident\nLoad golden incident\nUpload evidence bundle\nDemo User\nCauveris\nIncident Engineering\nReality Debugger\nINVESTIGATION\nOverview\nTimeline\nHypotheses\nANALYSIS\nDigital Twin\nExperiments\nPatch\nOPERATIONS\nVerification\nEvidence\nReports\nSystem Status\nSystems Nominal\nv2.4.0\nOverview\nSystem Status\nSystem Status & Preferences\n\nDiagnostic telemetry, model gateway configuration, and user preferences\n\nAppearance\nNotifications\nCommands & Shortcuts\nPrivacy & Security\nData & Sync\nAdvanced\nTheme\nLight\n\nClean bright theme for daytime\n\nDark\n\nHigh-contrast dark reality debugger\n\nSystem\n\nFollow operating system preference\n\nAccent Color\nMonochrome Charcoal\nSlate Neutral\nMonochrome Zinc\nHigh Contrast\nLayout Density\nCompact\n\nMaximum information density, tight margins\n\nComfortable\n\nOptimal balance of spacing and focus\n\nSpacious\n\nRelaxed breathing room for large displays\n\nMotion & Transitions\n\nAnimations\n\nEnable micro-interactions and smooth sidebar resizing\n\nReduced Motion\n\nDisable all non-essential movement for accessibility",
+   "svgs": [
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 4,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 4,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 8,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 2,
+     "edges": 0,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 9,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 2,
+     "edges": 0,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 2,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 2,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 2,
+     "edges": 0,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 2,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 9,
+     "w": 0,
+     "h": 0
+    }
+   ],
+   "canvas": 0
+  },
+  {
+   "step": "holographic",
+   "url": "http://localhost:3000/holographic-reconstruction",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair",
+   "bodyChars": 2373,
+   "text": "INC-60F368BD\nCausal State Reconstruction\nACTIVE\nSearch evidence, events, or hypotheses...\n⌘K\nJudge\nEngineer\nUpload Package\nNew\nSTATE_RECONSTRUCTION\nJudge Mode\nCUDA GPU (C++/pybind11)\nonline\nCreate new incident\nLoad golden incident\nUpload evidence bundle\nDemo User\nCauveris\nIncident Engineering\nReality Debugger\nINVESTIGATION\nOverview\nTimeline\nHypotheses\nANALYSIS\nDigital Twin\nExperiments\nPatch\nOPERATIONS\nVerification\nEvidence\nReports\nSystem Status\nSystems Nominal\nv2.4.0\nHolographic Reconstruction Engine\nReconstruction Online\n\nIncident: INC-60F368BD • Boundary-to-Bulk State Inversion\n\nEvidence provenance unavailable\n\nThis payload does not declare where its evidence came from, so the graph on screen cannot be traced back to an incident bundle. Treat it as illustrative until the backend reports provenance.\n\nReconstruction Controls\n\nView modes, field visualizations, and GPU configuration\n\n3D Reconstruction Volume\nCausal Topology\nIncident Timeline\nConfidence Field\nCoverage Gaps\nTime Window Slice\nRaw Inversion\nGhost Trajectories ON\nPatch Forge Preview\nGPU ON\nExp Decay\nGamma\nBi-Exp\nPower Law\nStretched Exp\nL1 Norm\nL2 Norm\nMax Norm\nDisplay Gain:\n1.0x\nReconstruct\nFetching holographic data from ",
+   "svgs": [
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 12,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 4,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 4,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 48,
+     "h": 48
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 4,
+     "w": 17,
+     "h": 17
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 12,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 32,
+     "h": 32
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    }
+   ],
+   "canvas": 0
+  },
+  {
+   "step": "rewind",
+   "url": "http://localhost:3000/reality-rewind",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair",
+   "bodyChars": 19361,
+   "text": "INC-60F368BD\nIncident Timeline\nIDLE\nSearch evidence, events, or hypotheses...\n⌘K\nJudge\nEngineer\nUpload Package\nNew\nIDLE\nJudge Mode\nLocal Fixtures\nonline\nCreate new incident\nLoad golden incident\nUpload evidence bundle\nDemo User\nCauveris\nIncident Engineering\nReality Debugger\nINVESTIGATION\nOverview\nTimeline\nHypotheses\nANALYSIS\nDigital Twin\nExperiments\nPatch\nOPERATIONS\nVerification\nEvidence\nReports\nSystem Status\nSystems Nominal\nv2.4.0\nOverview\nTimeline\nTimeline\n173 Synchronized Events (33112845.150s span)\n\nSynchronized multi-source timeline reconstruction & causal event playback\n\nJudge Mode: Formal Causal Verification Active\nEngineer Mode: Standard\nPlay\nPause\n0.25×\n0.5×\n1.0×\n2.0×\n5.0×\nJump to Failure\nExport\nFit\nClock Domains OFF\nClock Correction OFF\nWindow:\n→\nSynchronized Multi-Lane Reality Timeline\nMulti-source temporal registration with Kalman phase alignment\nBASE: +0.000s\n|\nFINAL: +33112845.150s\n|\nSPAN: 33112845.150s\nPLAYHEAD:\nt = +0.000s\nSIGNAL DOMAIN LANE\n8 Lanes\n+0.000s\n+8278211.287s\n+16556422.575s\n+24834633.862s\n+33112845.150s\n+0.000s\nDeployment Changes\n0/1\nConfiguration Changes\n0/0\nApplication Logs\n0/0\nDistributed Traces\n2/3\nSystem Metrics\n0/141\nRobotic Messages\n0/0\nOperator Ob",
+   "svgs": [
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 2,
+     "edges": 0,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 3,
+     "edges": 0,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 4,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 2,
+     "edges": 0,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    }
+   ],
+   "canvas": 0
+  },
+  {
+   "step": "victory",
+   "url": "http://localhost:3000/victory-replay",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair",
+   "bodyChars": 5464,
+   "text": "INC-60F368BD\nVictory Replay\nIDLE\nSearch evidence, events, or hypotheses...\n⌘K\nJudge\nEngineer\nUpload Package\nNew\nIDLE\nJudge Mode\nLocal Fixtures\nonline\nCreate new incident\nLoad golden incident\nUpload evidence bundle\nDemo User\nCauveris\nIncident Engineering\nReality Debugger\nINVESTIGATION\nOverview\nTimeline\nHypotheses\nANALYSIS\nDigital Twin\nExperiments\nPatch\nOPERATIONS\nVerification\nEvidence\nReports\nSystem Status\nSystems Nominal\nv2.4.0\nOverview\nVerification\nVerification\nComparison Available\nLevel: MODEL_VERIFIED\n\nBefore vs. after digital-twin validation and reversible rollback confirmation\n\nRe-run Twin Comparison\nFAILURE RATE (BEFORE)\n0%\n0/20 emergency stops\nFAILURE RATE (AFTER)\n0%\n0/20 emergency stops\nGOAL REACHED (AFTER)\n20/20\nAll trials completed the route\nP99 LATENCY DELTA\n0ms\n140.38ms → 140.38ms (budget 600ms)\nDigital Twin Comparison\n\nBaseline failure vs. patched success replay with synchronized playback\n\nPause Both\nReset\nSpeed:\n1x\n2x\n4x\n10%\nNo change in failure rate\nPRE-PATCH DIGITAL TWIN (BASELINE FAILURE)\nINCIDENT INC-60F368BD — UNPATCHED\n0/20 Emergency Stops\nStart (0m)\nGoal (24m)\nAMR\n\nNo emergency stop recorded\n\nRobot travelled 0.0m before the interlock.\n\nBATCH WINDOW\n200ms\nP99 LA",
+   "svgs": [
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    }
+   ],
+   "canvas": 0
+  },
+  {
+   "step": "patchforge",
+   "url": "http://localhost:3000/patch-forge",
+   "title": "Cauveris - Autonomous Systems Incident Analysis & Repair",
+   "bodyChars": 3463,
+   "text": "INC-60F368BD\nPatch Forge\nIDLE\nSearch evidence, events, or hypotheses...\n⌘K\nJudge\nEngineer\nUpload Package\nNew\nIDLE\nJudge Mode\nLocal Fixtures\nonline\nCreate new incident\nLoad golden incident\nUpload evidence bundle\nDemo User\nCauveris\nIncident Engineering\nReality Debugger\nINVESTIGATION\nOverview\nTimeline\nHypotheses\nANALYSIS\nDigital Twin\nExperiments\nPatch\nOPERATIONS\nVerification\nEvidence\nReports\nSystem Status\nSystems Nominal\nv2.4.0\nOverview\nPatch\nPatch\n0 Verified Patch Ready\n\nAutomated patch candidate synthesis & 9-point invariant gate verification\n\nPatch Candidate List\n\n1 candidates synthesized\n\nH Connection Pool Exhaustion\nScore: 0.99\n•\nFiles: config/payments.toml\n•\nLines: ±1\nREJECTED\nUnified Diff Available\nTHREE-PANE DIFF VIEW\nSynchronized Patch Review Panes\n\nUnified Diff • Annotated Source • Invariants Checklist\n\nUNIVERSAL UNIFIED DIFF\nCONFIG/PAYMENTS.TOML\n--- a/config/payments.toml\n+++ b/config/payments.toml\n@@ -19,7 +19,7 @@\n # ^^ THE CONFIGURABLE ENVELOPE. Peak concurrent demand measured during the\n # incident was 35 active connections, so this limit is the knob the repair\n # patch must raise (10 -> 53, i.e. ceil(35 * 1.5)).\n-max_connections = 10\n+max_connections = 53\n # How long a",
+   "svgs": [
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 0,
+     "h": 0
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 0,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 2,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 2,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 5,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 1,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 12,
+     "h": 12
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 2,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 1,
+     "lines": 0,
+     "edges": 2,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 1,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    },
+    {
+     "circles": 0,
+     "lines": 0,
+     "edges": 3,
+     "w": 14,
+     "h": 14
+    }
+   ],
+   "canvas": 0
+  }
+ ],
+ "consoleErrors": [
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+ ],
+ "failedRequests": [
+  "http://localhost:8000/api/v1/auth/me :: HTTP 401"
+ ],
+ "incidentText": []
+}

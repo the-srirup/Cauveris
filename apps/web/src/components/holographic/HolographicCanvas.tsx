@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState, useMemo } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, Html, Stars } from "@react-three/drei";
+import { OrbitControls, Stars } from "@react-three/drei";
 import { tv } from "tailwind-variants";
 
 const holographicStyles = tv({
@@ -90,6 +90,96 @@ interface HolographicCanvasProps {
 }
 
 const MAX_INSTANCES = 10000;
+
+function CanvasNodeLabelSprite({
+  name,
+  position,
+  isSelected,
+  isHovered,
+}: {
+  name: string;
+  position: [number, number, number];
+  isSelected: boolean;
+  isHovered: boolean;
+}) {
+  const texture = useMemo(() => {
+    if (typeof document === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 48;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.clearRect(0, 0, 256, 48);
+    ctx.font = isSelected ? "bold 20px monospace" : "18px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = isSelected ? "#38bdf8" : isHovered ? "#f1f5f9" : "rgba(148, 163, 184, 0.75)";
+    ctx.fillText(name.slice(0, 18), 128, 24);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    return tex;
+  }, [name, isSelected, isHovered]);
+
+  if (!texture) return null;
+
+  return (
+    <sprite position={position} scale={[12, 2.4, 1]}>
+      <spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} opacity={isSelected || isHovered ? 1.0 : 0.65} />
+    </sprite>
+  );
+}
+
+function AmbiguityLabelSprite({
+  score,
+  color,
+  position,
+}: {
+  score: number;
+  color: string;
+  position: [number, number, number];
+}) {
+  const texture = useMemo(() => {
+    if (typeof document === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = 280;
+    canvas.height = 56;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.clearRect(0, 0, 280, 56);
+    ctx.beginPath();
+    ctx.roundRect(4, 4, 272, 48, 8);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+
+    ctx.font = "bold 18px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = color;
+    ctx.fillText(`⚠ ${score.toFixed(0)}% Ambiguous`, 140, 28);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    return tex;
+  }, [score, color]);
+
+  if (!texture) return null;
+
+  return (
+    <sprite position={position} scale={[14, 2.8, 1]}>
+      <spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} />
+    </sprite>
+  );
+}
 
 // Node Instanced Mesh Component
 function BulkNodes({
@@ -252,25 +342,15 @@ function BulkNodes({
         />
       </instancedMesh>
 
-      {/* Node labels - HTML overlay */}
-      {nodes.slice(0, 50).map((node, i) => (
-        <Html
+      {/* Node labels - Sprite overlay */}
+      {nodes.slice(0, 50).map((node) => (
+        <CanvasNodeLabelSprite
           key={node.id}
-          transform
+          name={node.name}
           position={node.position}
-          style={{
-            pointerEvents: "none",
-            fontSize: "10px",
-            color: node.id === selectedId ? "var(--color-brand-primary)" : "var(--color-text-muted)",
-            fontWeight: node.id === selectedId ? "bold" : "normal",
-            textShadow: "0 0 4px var(--theme-background)",
-            whiteSpace: "nowrap",
-            opacity: node.id === selectedId || node.id === hoveredId ? 1 : 0.6,
-            transition: "opacity 0.2s",
-          }}
-        >
-          {node.name}
-        </Html>
+          isSelected={node.id === selectedId}
+          isHovered={node.id === hoveredId}
+        />
       ))}
     </group>
   );
@@ -403,23 +483,11 @@ function AmbiguityRegions({
                 side={THREE.DoubleSide}
               />
             </mesh>
-            <Html
-              transform
+            <AmbiguityLabelSprite
+              score={region.ambiguity_score}
+              color={color}
               position={[pos[0], pos[1] + 15 + intensity * 20, pos[2]]}
-              style={{
-                pointerEvents: "none",
-                fontSize: "11px",
-                color,
-                fontWeight: "bold",
-                textShadow: "0 0 4px var(--theme-background)",
-                background: "var(--theme-background)/80",
-                padding: "2px 6px",
-                borderRadius: "4px",
-                border: `1px solid ${color}`,
-              }}
-            >
-              ⚠ {region.ambiguity_score.toFixed(0)}% Ambiguous
-            </Html>
+            />
           </group>
         );
       })}

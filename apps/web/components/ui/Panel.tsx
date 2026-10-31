@@ -85,7 +85,7 @@ export const Panel = forwardRef<HTMLDivElement, PanelProps>(
                   <h2 className="text-sm font-semibold text-[var(--color-fg-default)] truncate">{title}</h2>
                 )}
                 {subtitle && (
-                  <p className="text-[11px] text-[var(--color-fg-muted)] mt-0.5 truncate">{subtitle}</p>
+                  <div className={`text-[11px] text-[var(--color-fg-muted)] mt-0.5 ${typeof subtitle === "string" ? "truncate" : ""}`}>{subtitle}</div>
                 )}
               </div>
               {headerActions && (
@@ -145,7 +145,7 @@ export const PanelSection = forwardRef<HTMLDivElement, PanelSectionProps>(
           <div className="flex items-center justify-between gap-4 mb-3">
             <div className="flex-1 min-w-0">
               {title && <h3 className="text-xs font-medium uppercase tracking-wider text-[var(--color-fg-subtle)]">{title}</h3>}
-              {subtitle && <p className="text-[11px] text-[var(--color-fg-muted)] mt-0.5">{subtitle}</p>}
+              {subtitle && <div className="text-[11px] text-[var(--color-fg-muted)] mt-0.5">{subtitle}</div>}
             </div>
           </div>
         )}
@@ -301,7 +301,7 @@ export function PanelHeader({ title, subtitle, actions, divider = false, classNa
     <div className={`flex items-start justify-between gap-4 ${paddingClasses} ${borderClass} ${className || ""}`} {...props}>
       <div className="flex-1 min-w-0">
         <h2 className="text-sm font-semibold text-[var(--color-fg-default)] truncate">{title}</h2>
-        {subtitle && <p className="text-xs text-[var(--color-fg-muted)] mt-1 truncate">{subtitle}</p>}
+        {subtitle && <div className={`text-xs text-[var(--color-fg-muted)] mt-1 ${typeof subtitle === "string" ? "truncate" : ""}`}>{subtitle}</div>}
       </div>
       {actions && <div className="flex items-center gap-2 shrink-0 ml-4">{actions}</div>}
     </div>

@@ -52,7 +52,7 @@ function pointAt(progress: number, side: ReplaySide | null) {
 
 function VictoryReplayContent() {
   const { incidentId, judgeMode, engineerMode } = useActiveIncident();
-  const { openInspector, setIncidentContext } = useShell();
+  const { openInspector, setIncidentContext, state: shellState } = useShell();
 
   useEffect(() => {
     if (incidentId) {
@@ -62,7 +62,7 @@ function VictoryReplayContent() {
         state: "IDLE",
         pipelineStage: "IDLE",
         evidenceCoverage: 0,
-        modelProvider: "Local Fixtures",
+        modelProvider: shellState?.incidentContext?.modelProvider || "Nebius Token Factory",
         backendStatus: "online",
         processingMode: judgeMode ? "judge" : engineerMode ? "engineer" : "autonomous",
         isDemonstration: false,

@@ -37,8 +37,8 @@ class ModelExecutionRecord(BaseModel):
         ProviderState.NEBIUS_NVIDIA_ACTIVE, description="State of the provider during execution"
     )
     model_id: str = Field(
-        "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF",
-        description="Exact model ID used (e.g. nvidia/Llama-3.1-Nemotron-70B-Instruct-HF)",
+        "nvidia/Nemotron-3_5-Lightning",
+        description="Exact model ID used (e.g. nvidia/Nemotron-3_5-Lightning)",
     )
     endpoint_mode: str = Field("hosted", description="Endpoint mode: hosted | local")
     task_id: str = Field("HYPOTHESIS_PROPOSAL", description="Bounded task identifier (e.g. HYPOTHESIS_PROPOSAL)")

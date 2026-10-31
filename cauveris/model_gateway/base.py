@@ -71,7 +71,7 @@ class ModelGateway(ABC):
 
 def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     """
-    Attempt to extract JSON from model text output.
+    Attempt to extract JSON from model text output, stripping thinking traces if present.
 
     Args:
         text: Raw model output
@@ -81,19 +81,62 @@ def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     """
     import re
 
-    # Look for JSON block in markdown
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if json_match:
-        try:
-            return json.loads(json_match.group(1))
-        except json.JSONDecodeError:
-            pass
+    if not text or not text.strip():
+        return None
 
-    # Look for raw JSON object
-    json_match = re.search(r"\{.*\}", text, re.DOTALL)
+    # First attempt: if text is already pure JSON
+    try:
+        data = json.loads(text.strip())
+        if isinstance(data, dict):
+            # If the model wrapped the actual payload in a top-level schema definition,
+            # unwrapping or returning data
+            return data
+    except Exception:
+        pass
+
+    # Strip thinking / reasoning traces (e.g. Nemotron / DeepSeek COT)
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    cleaned = re.sub(r"Here's a thinking process:.*?(?=(\n\s*\{|\n\s*```))", "", cleaned, flags=re.DOTALL)
+    cleaned = cleaned.strip()
+
+    # Look for JSON blocks in markdown (evaluate from last to first since final answer is at end)
+    code_blocks = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
+    for block in reversed(code_blocks):
+        try:
+            parsed = json.loads(block)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
+
+    # Look for raw JSON objects with matching braces
+    for start_idx in range(len(cleaned)):
+        if cleaned[start_idx] == "{":
+            # Count brace depth to find matching closing brace
+            depth = 0
+            for end_idx in range(start_idx, len(cleaned)):
+                if cleaned[end_idx] == "{":
+                    depth += 1
+                elif cleaned[end_idx] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidate = cleaned[start_idx : end_idx + 1]
+                        try:
+                            parsed = json.loads(candidate)
+                            if isinstance(parsed, dict):
+                                # If this is a valid dict, keep checking if there's a later (final) one
+                                return parsed
+                        except json.JSONDecodeError:
+                            pass
+                        break
+
+    # Fallback to greedy search
+    json_match = re.search(r"\{.*\}", cleaned, re.DOTALL)
     if json_match:
         try:
-            return json.loads(json_match.group(0))
+            parsed = json.loads(json_match.group(0))
+            if isinstance(parsed, dict):
+                return parsed
         except json.JSONDecodeError:
             pass
 

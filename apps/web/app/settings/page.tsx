@@ -121,9 +121,9 @@ const defaultSettings: SettingsType = {
   modelProvider: "nebius",
   maxConcurrentExperiments: 3,
   modelBaseUrl: "https://api.tokenfactory.nebius.com/v1",
-  modelFast: "meta-llama/Meta-Llama-3.1-8B-Instruct",
-  modelReasoning: "meta-llama/Meta-Llama-3.1-70B-Instruct",
-  modelEscalation: "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF",
+  modelFast: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+  modelReasoning: "nvidia/Nemotron-3_5-Lightning",
+  modelEscalation: "nvidia/Nemotron-3-Ultra-550b-a55b",
 };
 
 function SettingsContent() {
@@ -278,6 +278,8 @@ function SettingsContent() {
       setMaskedKey(health.masked_key || "");
       setIsLiveGateway(Boolean(health.nebius_configured));
       setGatewayProviderName(health.provider || "Deterministic Local Fixtures");
+      // Show the endpoint this client is actually talking to, not a hardcoded default.
+      setSettings((prev) => ({ ...prev, apiEndpoint: api.getBaseUrl() || prev.apiEndpoint }));
       if (health.base_url) {
         setSettings((prev) => ({ ...prev, modelBaseUrl: health.base_url || prev.modelBaseUrl }));
       }
@@ -407,7 +409,6 @@ function SettingsContent() {
       const res = await api.create(false, {
         title: "Manual Telemetry Incident",
         description: "Created from Settings Command Center",
-        system_name: "warehouse-amr-01",
       });
       addActivity({
         type: "system",

@@ -604,7 +604,7 @@ vi.mock("@/components/ui", () => ({
   Panel: ({ children, className = "", title, subtitle, headerActions, headerDivider, footer, footerDivider, ...props }: any) => (
     <div className={className} {...props}>
       {title && <h2 data-testid="panel-title">{title}</h2>}
-      {subtitle && <p data-testid="panel-subtitle">{subtitle}</p>}
+      {subtitle && <div data-testid="panel-subtitle">{subtitle}</div>}
       {headerActions && <div data-testid="panel-header-actions">{headerActions}</div>}
       {headerDivider && <hr data-testid="panel-header-divider" />}
       <div data-testid="panel-content">{children}</div>
@@ -616,7 +616,7 @@ vi.mock("@/components/ui", () => ({
     <div className={className} {...props}>
       {dividerBefore && <hr data-testid="panel-section-divider" />}
       {title && <h3 data-testid="panel-section-title">{title}</h3>}
-      {subtitle && <p data-testid="panel-section-subtitle">{subtitle}</p>}
+      {subtitle && <div data-testid="panel-section-subtitle">{subtitle}</div>}
       <div data-testid="panel-section-content">{children}</div>
     </div>
   ),
@@ -643,7 +643,7 @@ vi.mock("@/components/ui", () => ({
     <div className={className} {...props} data-testid="panel-header">
       <div data-testid="panel-header-title">
         <h2>{title}</h2>
-        {subtitle && <p>{subtitle}</p>}
+        {subtitle && <div>{subtitle}</div>}
       </div>
       {actions && <div data-testid="panel-header-actions">{actions}</div>}
       {divider && <hr />}

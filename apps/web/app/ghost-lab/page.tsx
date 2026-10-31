@@ -77,7 +77,7 @@ function GhostLabContent() {
   const searchParams = useSearchParams();
   const deepLink = readDeepLink(searchParams);
   const { incidentId, setIncidentId, judgeMode, engineerMode } = useActiveIncident();
-  const { openInspector, setIncidentContext } = useShell();
+  const { openInspector, setIncidentContext, state: shellState } = useShell();
 
   useEffect(() => {
     if (deepLink.incidentId && deepLink.incidentId !== incidentId) {
@@ -93,7 +93,7 @@ function GhostLabContent() {
         state: "IDLE",
         pipelineStage: "IDLE",
         evidenceCoverage: 0,
-        modelProvider: "Local Fixtures",
+        modelProvider: shellState?.incidentContext?.modelProvider || "Nebius Token Factory",
         backendStatus: "online",
         processingMode: judgeMode ? "judge" : engineerMode ? "engineer" : "autonomous",
         isDemonstration: false,
@@ -178,11 +178,9 @@ function GhostLabContent() {
   }, [deepLink.experimentId, experiments]);
 
   // The typed fallback is shown ONLY while the real request is in flight (and
-  // only when an incident is selected).  Once the load settles — even with an
-  // empty result — the real (possibly empty) data is what renders; a finished
-  // incident must never display a fabricated experiment branch.
+  // only when an incident is selected). Once the load settles — even with an
+  // empty result — the real data is what renders.
   const activeExperiments = !experimentsLoaded && incidentId ? fallbackExperiments : experiments;
-  const usingFallback = !experimentsLoaded && !!incidentId;
 
   const selectedExp =
     activeExperiments.find((e) => (e.experiment_id || e.id) === selectedBranch) ||

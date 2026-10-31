@@ -26,7 +26,7 @@ export interface VerificationLedgerProps extends React.HTMLAttributes<HTMLDivEle
 
 export function VerificationLedger({
   checks,
-  achievedLevel = "RUNTIME_VERIFIED",
+  achievedLevel = "UNVERIFIED",
   onSelectCheck,
   selectedCheckId,
   className = "",

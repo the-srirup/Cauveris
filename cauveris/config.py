@@ -111,16 +111,16 @@ class Settings:
 
     # Model Gateway (Nebius Token Factory / OpenAI Compatible)
     model_fast: str = field(
-        default_factory=lambda: os.getenv("NEBIUS_MODEL_FAST", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
+        default_factory=lambda: os.getenv("NEBIUS_MODEL_FAST", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B")
     )
     model_reasoning: str = field(
-        default_factory=lambda: os.getenv("NEBIUS_MODEL_REASONING", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
+        default_factory=lambda: os.getenv("NEBIUS_MODEL_REASONING", "nvidia/Nemotron-3_5-Lightning")
     )
     model_escalation: str = field(
-        default_factory=lambda: os.getenv("NEBIUS_MODEL_ESCALATION", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
+        default_factory=lambda: os.getenv("NEBIUS_MODEL_ESCALATION", "nvidia/Nemotron-3-Ultra-550b-a55b")
     )
     nebius_model_id: str = field(
-        default_factory=lambda: os.getenv("CAUVERIS_NEBIUS_MODEL_ID") or os.getenv("NEBIUS_MODEL_ID", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
+        default_factory=lambda: os.getenv("CAUVERIS_NEBIUS_MODEL_ID") or os.getenv("NEBIUS_MODEL_ID", "nvidia/Nemotron-3_5-Lightning")
     )
     nebius_api_key: Optional[str] = field(
         default_factory=lambda: os.getenv("CAUVERIS_NEBIUS_API_KEY") or os.getenv("NEBIUS_API_KEY")

@@ -743,6 +743,11 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
+  /** The configured backend base URL (e.g. http://localhost:8000/api/v1). */
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
   private getCacheKey(endpoint: string, options: FetchRequestInit = {}): string {
     const method = options.method || "GET";
     const body = options.body ? JSON.stringify(options.body) : "";
