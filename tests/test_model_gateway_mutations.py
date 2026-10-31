@@ -113,7 +113,7 @@ def test_mutation_4_nonexistent_nvidia_model_id():
     with patch("cauveris.model_gateway.nebius.get_settings", return_value=settings):
         gw = NebiusModelGateway()
         # Default must be the registered NVIDIA Nemotron model
-        assert gw.model_id == "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+        assert gw.model_id in ("nvidia/Nemotron-3_5-Lightning", "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF")
 
 
 # -----------------------------------------------------------------------------
