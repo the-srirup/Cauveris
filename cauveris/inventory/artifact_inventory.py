@@ -338,6 +338,12 @@ class ArtifactInventory:
         for p in sorted(self.bundle_root.rglob("*")):
             if not p.is_file():
                 continue
+            # Skip hidden files (e.g. .cauveris-owner.json, .git)
+            if p.name.startswith("."):
+                continue
+            # Skip top-level package manifest files
+            if p.parent == self.bundle_root and p.name in ("manifest.yaml", "manifest.yml", "manifest.json"):
+                continue
             entry = self.inspect_file(p)
             entries.append(entry)
         return entries
