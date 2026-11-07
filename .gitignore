@@ -212,3 +212,9 @@ Dockerfile
 Dockerfile.worker
 docker-compose.prod.yml
 .env.production.example
+
+# Transient demo and scratch artifacts
+.scratch/
+.live-demo.pids
+*.db-shm
+*.db-wal
