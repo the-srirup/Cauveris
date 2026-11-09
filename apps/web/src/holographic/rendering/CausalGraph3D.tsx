@@ -3,7 +3,7 @@
  * Section 3.1 & Day 7-8 of Holographic Reconstruction Plan
  */
 
-import React, { useRef, useState, useMemo, useCallback } from "react";
+import React, { useRef, useState, useMemo, useCallback, useEffect, useLayoutEffect } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { CausalNode, CausalLink } from "../types";

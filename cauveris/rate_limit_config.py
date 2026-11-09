@@ -128,6 +128,10 @@ def get_cost_class_for_endpoint(method: str, path: str) -> str:
     if "/upload" in path and method == "POST":
         return "UPLOAD"
 
+    # URL-based ingestion downloads a remote payload: same cost class as upload
+    if "/from-url" in path and method == "POST":
+        return "UPLOAD"
+
     # Validate, temporal analysis, visualization - compute
     if any(
         x in path

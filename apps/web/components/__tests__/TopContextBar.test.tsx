@@ -49,6 +49,8 @@ vi.mock('lucide-react', () => ({
 }));
 
 // Mock all dependencies before importing the component
+const { mockSetCommandPalette } = vi.hoisted(() => ({ mockSetCommandPalette: vi.fn() }));
+
 vi.mock("@/lib/useShell", () => ({
   useShell: () => ({
     state: {
@@ -62,10 +64,12 @@ vi.mock("@/lib/useShell", () => ({
         backendStatus: "online",
         processingMode: "autonomous",
       },
+      commandPaletteOpen: false,
     },
     setIncidentContext: vi.fn(),
     addActivity: vi.fn(),
-    toggleCommandPalette: vi.fn(),
+    setNavDrawer: vi.fn(),
+    setCommandPalette: mockSetCommandPalette,
   }),
   ShellProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -167,15 +171,16 @@ describe("TopContextBar", () => {
     expect(screen.getByLabelText("Create new incident")).toBeInTheDocument();
     expect(screen.getByLabelText("Load golden incident")).toBeInTheDocument();
     expect(screen.getByLabelText("Upload evidence bundle")).toBeInTheDocument();
-    expect(screen.getByLabelText("Open command palette")).toBeInTheDocument();
   });
 
-  it("shows command palette button", () => {
+  it("opens the command palette when the search bar is clicked", () => {
+    mockSetCommandPalette.mockClear();
     render(
       <ShellProvider>
         <TopContextBar />
       </ShellProvider>
     );
-    expect(screen.getByLabelText("Open command palette")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Open command palette"));
+    expect(mockSetCommandPalette).toHaveBeenCalledWith(true);
   });
 });

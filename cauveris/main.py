@@ -106,8 +106,8 @@ def _run_golden_incident() -> int:
     return asyncio.run(run())
 
 
-def main():
-    """Main entry point."""
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser (all subcommands)."""
     parser = argparse.ArgumentParser(description="Cauveris - Autonomous Reality Debugger")
     parser.add_argument(
         "--golden",
@@ -154,8 +154,150 @@ def main():
         "--rollback", action="store_true", help="Rollback applied patch using backup"
     )
 
-    # Handle no command (default to serve)
-    args = parser.parse_args()
+    # Universal ingest command
+    ingest_parser = subparsers.add_parser(
+        "ingest",
+        help="Ingest any source into the evidence store and create an incident: "
+        "a ZIP/TAR/... archive, a single evidence file, a local directory, "
+        "a GitHub/GitLab URL or shorthand (github:owner/repo@ref), "
+        "a PyPI package (pypi:pkg@ver), an npm package (npm:pkg@ver), or any HTTPS URL",
+    )
+    ingest_parser.add_argument("source", help="Source spec: local path, HTTPS URL, or shorthand")
+    ingest_parser.add_argument("--title", default=None, help="Incident title")
+    ingest_parser.add_argument("--description", default=None, help="Incident description")
+    ingest_parser.add_argument("--system-name", default=None, help="Target system name")
+    ingest_parser.add_argument(
+        "--run", action="store_true", dest="run_pipeline",
+        help="After ingestion, run the full investigation pipeline on the incident",
+    )
+    ingest_parser.add_argument(
+        "--json", action="store_true", dest="as_json",
+        help="Print the ingestion summary as machine-readable JSON",
+    )
+    return parser
+
+
+def _run_ingest(args) -> int:
+    """
+    Ingest any supported source (local archive/file/dir, GitHub/GitLab,
+    PyPI, npm, or generic HTTPS URL) into the evidence store, create the
+    incident, and optionally run the full pipeline on it.
+    """
+    import asyncio
+    import json
+    import uuid
+    from pathlib import Path
+
+    from cauveris.config import get_settings
+    from cauveris.ingestion.controller import IngestionController
+    from cauveris.ingestion.sources import SourceSpecError, resolve_source
+    from cauveris.schemas.base import StatusLabel
+    from cauveris.schemas.incident import EvidenceItem, Incident
+    from cauveris.security import compute_file_hash
+
+    async def run() -> int:
+        settings = get_settings()
+        incident_id = f"INC-{uuid.uuid4().hex[:8].upper()}"
+        extract_dir = Path(settings.evidence_store_path) / incident_id
+
+        try:
+            resolved = await resolve_source(args.source, extract_dir, settings, allow_local=True)
+        except SourceSpecError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        except Exception as exc:
+            print(f"Error: failed to fetch/resolve source: {exc}", file=sys.stderr)
+            return 1
+
+        bundle_dir = resolved.bundle_dir
+        incident = Incident(
+            id=incident_id,
+            title=args.title or "Ingested Incident",
+            description=args.description or f"Ingested from {args.source}",
+            system_name=args.system_name or "unknown-system",
+            status=StatusLabel.OBSERVED,
+        )
+        incident.bundle_path = str(bundle_dir)
+        incident.package_sha256 = resolved.package_sha256
+        setattr(incident, "_uploaded_filename", resolved.filename)
+        incident.manifest = {
+            "incident_id": incident_id,
+            "title": incident.title,
+            "bundle_path": str(bundle_dir),
+            "package_sha256": resolved.package_sha256,
+            "uploaded_filename": resolved.filename,
+            "source": resolved.descriptor,
+        }
+
+        for fpath in sorted(p for p in bundle_dir.rglob("*") if p.is_file()):
+            # Only the bundle-root manifest/sidecar are bookkeeping; manifests
+            # in subdirectories are real evidence.
+            rel_parts = fpath.relative_to(bundle_dir).parts
+            if len(rel_parts) == 1 and fpath.name in (
+                "manifest.yaml", "manifest.yml", "manifest.json", ".cauveris-owner.json",
+            ):
+                continue
+            rel = str(fpath.relative_to(bundle_dir)).replace("\\", "/")
+            incident.evidence_items.append(
+                EvidenceItem(
+                    file_path=rel,
+                    file_type=IngestionController()._detect_file_type(fpath),
+                    size_bytes=fpath.stat().st_size,
+                    checksum_sha256=compute_file_hash(str(fpath)),
+                    status=StatusLabel.OBSERVED,
+                    is_required=False,
+                )
+            )
+
+        incident = await IngestionController().process(incident)
+
+        summary = {
+            "incident_id": incident.id,
+            "title": incident.title,
+            "source": resolved.descriptor,
+            "payload_kind": resolved.source_kind,
+            "package_sha256": resolved.package_sha256,
+            "size_bytes": resolved.size_bytes,
+            "bundle_dir": str(bundle_dir),
+            "evidence_count": len(incident.evidence_items),
+            "artifact_inventory_count": len(incident.artifact_inventory or []),
+            "warnings": resolved.warnings,
+        }
+        if args.as_json:
+            print(json.dumps(summary, indent=2, default=str))
+        else:
+            print(f"Ingested {args.source!r}")
+            print(f"  incident_id   : {incident.id}")
+            print(f"  title         : {incident.title}")
+            print(f"  payload       : {resolved.source_kind} ({resolved.size_bytes} bytes)")
+            print(f"  sha256        : {resolved.package_sha256}")
+            print(f"  bundle        : {bundle_dir}")
+            print(f"  evidence items: {len(incident.evidence_items)}")
+            for w in resolved.warnings:
+                print(f"  warning       : {w}")
+
+        if getattr(args, "run_pipeline", False):
+            from cauveris.state_machine.orchestrator import PipelineOrchestrator
+
+            print(f"\nRunning full pipeline on {incident.id} ...")
+            orchestrator = PipelineOrchestrator()
+            orchestrator.set_progress_callback(
+                lambda s: print(f"  [{s.get('state', '?'):>9}] {s.get('active_stage_id') or s.get('state', '')}")
+            )
+            await orchestrator.process_incident(incident)
+            pipe_summary = orchestrator.get_pipeline_summary()
+            print(f"\nPipeline state: {pipe_summary['state']}")
+            if pipe_summary.get("error"):
+                print(f"Error: {pipe_summary['error']}")
+
+        return 0
+
+    return asyncio.run(run())
+
+
+def main():
+    """Main entry point."""
+    args = _build_parser().parse_args()
 
     # --golden flag / golden subcommand: run the full pipeline on the golden incident
     if getattr(args, "golden", False) or args.command == "golden":
@@ -260,6 +402,9 @@ def main():
                 ok = fn(target_dir=args.target)
                 sys.exit(0 if ok else 1)
         return
+    elif args.command == "ingest":
+        setup_logging()
+        sys.exit(_run_ingest(args))
 
     setup_logging()
     logger.info("Starting Cauveris backend")

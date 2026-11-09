@@ -6,8 +6,8 @@ import { useShellLayout } from "@/hooks/useMediaQuery";
 import { usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { TopContextBar } from "@/components/TopContextBar";
-import { RightInspector } from "@/components/RightInspector";
 import { CommandPalette } from "@/components/CommandPalette";
+import { RightInspector } from "@/components/RightInspector";
 import { NotificationContainer } from "@/components/Notification";
 import { ClientErrorBoundary } from "@/components/ClientErrorBoundary";
 
@@ -16,7 +16,7 @@ export interface ShellLayoutProps {
 }
 
 export function ShellLayout({ children }: ShellLayoutProps) {
-  const { state, toggleNavCollapse } = useShell();
+  const { state } = useShell();
   const { isSidebarDrawer, isInspectorDrawer } = useShellLayout();
   const { isNavCollapsed, inspectorOpen, inspectorMode } = state;
   const pathname = usePathname();
@@ -69,28 +69,6 @@ export function ShellLayout({ children }: ShellLayoutProps) {
       };
     }
   }, [isNavCollapsed, isInspectorVisible]);
-
-  // Keyboard shortcut: '[' toggles sidebar collapse when not typing in form inputs
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "[" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        const target = e.target as HTMLElement | null;
-        const isInput =
-          target &&
-          (target.tagName === "INPUT" ||
-            target.tagName === "TEXTAREA" ||
-            target.tagName === "SELECT" ||
-            target.isContentEditable);
-        if (!isInput) {
-          e.preventDefault();
-          toggleNavCollapse();
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggleNavCollapse]);
 
   return (
     <>
@@ -162,7 +140,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
         )}
       </div>
 
-      {/* Command Palette (overlay) */}
+      {/* Global search palette — opened by clicking the search bar (no hotkey) */}
       <CommandPalette />
 
       {/* Notifications */}

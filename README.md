@@ -30,6 +30,12 @@
   - [2. Next.js Web Console](#2-nextjs-web-console)
   - [3. One-Command Live Demonstration Stack](#3-one-command-live-demonstration-stack)
 - [Core Investigation Workflow](#core-investigation-workflow)
+- [Universal Source Intake & Security Perimeter](#universal-source-intake--security-perimeter)
+  - [1. Accepted Source Specifications](#1-accepted-source-specifications)
+  - [2. Security Perimeter & SSRF Defenses](#2-security-perimeter--ssrf-defenses)
+  - [3. Archive Extraction & Decompression Bomb Protection](#3-archive-extraction--decompression-bomb-protection)
+  - [4. Real Source Tree Verifier Integration](#4-real-source-tree-verifier-integration)
+  - [5. Discoverability Endpoint](#5-discoverability-endpoint)
 - [Configuration Reference](#configuration-reference)
 - [Health, Observability & Monitoring](#health-observability--monitoring)
 - [Quality Assurance & Quality Gates](#quality-assurance--quality-gates)
@@ -349,6 +355,87 @@ curl -X GET http://localhost:8000/api/v1/incidents/CAU-0001/packages/latest/down
 
 ---
 
+## Universal Source Intake & Security Perimeter
+
+Cauveris provides a universal ingestion engine allowing operators to intake packages, repositories, and archives directly into the autonomous investigation pipeline from package registries, code hosts, git repositories, or HTTP archives.
+
+### 1. Accepted Source Specifications
+
+Cauveris recognizes 12 canonical specification formats:
+
+| Format / Scheme | Syntax Example | Resolution Strategy |
+|---|---|---|
+| **GitHub** | `github:psf/requests@v2.32.3` | Tarball archive downloaded from GitHub release/tag API |
+| **GitLab** | `gitlab:gitlab-org/gitlab-runner@v16.0.0` | Tarball archive fetched from GitLab archive API |
+| **PyPI** | `pypi:requests@2.32.3` or `pypi:urllib3>=2.0,<3` | Resolved via PyPI JSON API with PEP 440 version range matching; sdist tarball/zip fetched |
+| **npm** | `npm:express@^4.19.0` or `npm:@scope/pkg@1.0.0` | Resolved via npm registry JSON API with SemVer matching; tarball fetched |
+| **Maven Central** | `maven:org.apache.commons:commons-lang3@3.14.0` | JAR / sources-JAR downloaded directly from Maven Central |
+| **crates.io / Cargo** | `crates:serde@1.0.204` or `cargo:tokio@1.38.0` | Crates.io API lookup with SemVer resolution; `.crate` (gzipped tar) fetched |
+| **Go Modules** | `go:github.com/gin-gonic/gin@v1.10.0` | Go module proxy (`proxy.golang.org`) lookup; module zip fetched |
+| **NuGet** | `nuget:Newtonsoft.Json@13.0.3` | NuGet v3 flat container service lookup; `.nupkg` (zip) fetched |
+| **RubyGems** | `gem:rails@7.1.3` | RubyGems API lookup with gem version matching; `.gem` tarball fetched |
+| **Git Clone** | `git+https://github.com/org/repo.git#branch` or `https://github.com/org/repo.git` | Depth-1 shallow git clone via system `git` (requires `CAUVERIS_ALLOW_GIT_CLONE=true`). The `.git` repository folder is safely stripped before extraction |
+| **Local Path** | `file:///path/to/archive.zip` or `/path/to/archive.zip` | Local file/directory copy (guarded by `CAUVERIS_ALLOW_LOCAL_PATH_INGEST=true`) |
+| **Direct HTTPS URL** | `https://downloads.example.com/build-artifacts.tar.gz` | Direct stream download with content-type and magic-byte classification |
+
+> [!WARNING]
+> **Explicitly Prohibited Schemes & Formats**:
+> - `docker://` and `oci://` URIs are rejected deterministically with instructions to provide the source repository or an extracted rootfs archive.
+> - `.rar` archives are rejected due to proprietary unfree extraction formats.
+
+### 2. Security Perimeter & SSRF Defenses
+
+Every remote download and git clone passes through our multi-layer network security perimeter (`cauveris/ingestion/urlfetch.py`):
+
+- **Strict HTTPS Enforcement**: Unencrypted HTTP URLs are rejected without initiating network connections.
+- **Embedded Credentials Blocked**: URLs containing userinfo (e.g., `https://user:pass@host`) are immediately rejected to prevent credential leaks in logs.
+- **SSRF & Private IP Rejection**: Hostnames and IP literals are validated against private, loopback, and link-local ranges (RFC 1918 `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, RFC 3927 `169.254.0.0/16`, `127.0.0.1`, `::1`). DNS lookups are proactively resolved and inspected before requests are dispatched.
+- **Built-in Registry Allowlist**: In production, downloads are restricted to verified public artifact mirrors (`github.com`, `gitlab.com`, `pypi.org`, `npmjs.org`, `repo1.maven.org`, `crates.io`, `proxy.golang.org`, `nuget.org`, `rubygems.org`). Custom hosts can be authorized via `CAUVERIS_ALLOWED_URL_HOSTS`.
+- **Download Bounds**: Streaming download caps (default 100MB), maximum 5 HTTP redirects, and strict socket connect/read timeouts (default 10 minutes total).
+
+### 3. Archive Extraction & Decompression Bomb Protection
+
+Extraction is sandboxed in ephemeral UUID-isolated staging directories (`cauveris/ingestion/archives.py`):
+
+- **Chunked Byte Counter**: File extraction streams data in 64KB chunks through a real-time byte counter that halts immediately if a file exceeds `max_archive_file_size` (100MB) or if cumulative extraction exceeds `max_archive_uncompressed_size` (500MB). Declared zip headers are treated as untrusted and never relied upon for size safety.
+- **Atomic Cleanup on Failure**: Any extraction error, size violation, or abort instantly unlinks partial files and cleans up staging directories.
+- **Path Traversal Defense**: All archive member paths are canonicalized against the target root directory; directory traversal attempts (`..`), drive prefixes, absolute paths, hard links, and symlinks outside the archive root are rejected.
+- **Nesting & Member Limits**: Archives with more than 10,000 files or nested beyond 3 archive layers are rejected.
+- **Encrypted Zip Protection**: Encrypted/password-protected archives are caught safely and raise clean user-facing validation errors rather than unhandled Python exceptions.
+- **Supported Formats**: `.zip`, `.tar` (POSIX ustar, GNU tar, and legacy V7 formats via fallback probe), `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, and `.7z` (via optional `py7zr`).
+
+### 4. Real Source Tree Verifier Integration
+
+During pipeline execution, the Verification Engine (`cauveris/verifier/engine.py`) extracts and binds the ingested package's real source files directly into the verification workspace:
+
+- **Layout-Agnostic Tree Discovery**: Discovers source code across arbitrary project conventions (`src/`, `lib/`, `app/`, `pkg/`, `source/`, or flat repository roots) for Python, TypeScript/JavaScript, Go, Rust, Java, C/C++, and Ruby.
+- **Build & Test Preservation**: Automatically retains build descriptors (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `pom.xml`, `Makefile`, etc.) and test suites (`tests/`, `spec/`, `__tests__/`).
+- **Resource Limits & Denylisting**: Enforces verifier workspace caps (maximum 5,000 files, 50MB total tree size, 5MB individual file limit) while filtering out vendor trees (`node_modules/`, `vendor/`, `target/`, `.git/`, `.venv/`).
+
+### 5. Discoverability Endpoint
+
+Clients and agents can dynamically query runtime intake capabilities:
+
+```bash
+curl -X GET http://localhost:8000/api/v1/ingest/capabilities \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+Returns:
+```json
+{
+  "schemes": ["github", "gitlab", "pypi", "npm", "maven", "crates", "go", "nuget", "gem", "git", "file", "https"],
+  "formats": [".zip", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".7z"],
+  "allow_git_clone": true,
+  "allow_local_path_ingest": false,
+  "url_allow_any_public_host": false,
+  "max_download_size": 104857600,
+  "max_archive_uncompressed_size": 524288000
+}
+```
+
+---
+
 ## Configuration Reference
 
 Key configuration parameters specified in `.env`:
@@ -370,6 +457,17 @@ Key configuration parameters specified in `.env`:
 | `CAUVERIS_MAX_UPLOAD_SIZE`| `104857600` (100 MB) | Maximum permitted upload file size |
 | `CAUVERIS_EVIDENCE_STORE` | `./evidence_store` | Filesystem directory for ingested bundles |
 | `CAUVERIS_SANDBOX_WORKSPACE`| `./sandbox_workspace` | Isolated directory for simulation sweeps |
+| `CAUVERIS_URL_INGESTION_ENABLED` | `true` | Enable URL and remote package ingestion |
+| `CAUVERIS_ALLOW_GIT_CLONE` | `true` | Allow shallow git clone of remote repositories |
+| `CAUVERIS_GIT_CLONE_TIMEOUT_SECONDS` | `120` | Max timeout for depth-1 git clone operations |
+| `CAUVERIS_ALLOW_LOCAL_PATH_INGEST` | `false` | Enable ingestion from local filesystem paths (dev only) |
+| `CAUVERIS_URL_ALLOW_ANY_PUBLIC_HOST` | `false` | Allow public HTTPS downloads outside builtin registries |
+| `CAUVERIS_MAX_DOWNLOAD_SIZE` | `104857600` (100 MB) | Maximum download byte cap for URL ingestion |
+| `CAUVERIS_MAX_ARCHIVE_UNCOMPRESSED_SIZE` | `524288000` (500 MB) | Cumulative decompression limit preventing zip bombs |
+| `CAUVERIS_MAX_ARCHIVE_FILES` | `10000` | Maximum member count per ingested archive |
+| `CAUVERIS_MAX_ARCHIVE_FILE_SIZE` | `104857600` (100 MB) | Maximum extracted size for any single archive member |
+| `CAUVERIS_ALLOWED_URL_HOSTS` | `""` | Comma-delimited list of custom authorized hostnames |
+| `CAUVERIS_DENIED_URL_HOSTS` | `""` | Comma-delimited list of explicitly blocked hostnames |
 
 ---
 
@@ -380,7 +478,7 @@ Cauveris exposes dedicated operational probes for deployment orchestrators (Kube
 - **Liveness Probe** (`GET /health` or `GET /api/v1/health`):
   Confirms the process is responsive and accepting HTTP connections.
   ```json
-  {"status": "healthy", "service": "cauveris", "version": "0.1.0"}
+  {"status": "healthy", "service": "cauveris", "version": "3.1.0"}
   ```
 
 - **Readiness Probe** (`GET /ready` or `GET /api/v1/ready`):

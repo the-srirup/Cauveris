@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { PageHeader, Card, Badge, Button, Input, Toggle, Slider, Panel, PanelSection } from "@/components/ui";
+import { PageHeader, Card, Badge, Button, Input, Toggle, Slider } from "@/components/ui";
 import { AuthGate } from "@/components/AuthGate";
 import {
   Palette,
@@ -14,16 +14,8 @@ import {
   Sun,
   Monitor,
   Zap,
-  Bot,
-  AlertTriangle,
-  Download,
-  Upload,
-  Trash2,
   RotateCcw,
   Clock,
-  GitBranch,
-  FlaskConical,
-  Wrench,
   Settings,
   Loader2,
   Key,
@@ -31,64 +23,35 @@ import {
   EyeOff,
   Check,
   Server,
-  Play,
-  Square,
   Command,
-  LayoutDashboard,
   CheckCircle2,
   XCircle,
   Copy,
-  ChevronRight,
   Sliders,
-  ExternalLink,
+  LogOut,
+  User,
+  GitBranch,
+  FileCode,
+  Download,
+  Upload,
 } from "lucide-react";
-import { tv } from "tailwind-variants";
-import { api } from "@/lib/api";
+import { api, type IngestCapabilities } from "@/lib/api";
 import { useActiveIncident } from "@/lib/useIncident";
 import { useShell } from "@/lib/useShell";
 import { useAuthStore } from "@/lib/auth";
+import { APP_VERSION_TAG, APP_FULL_VERSION } from "@/lib/version";
 
 const BTN_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]";
 
-const settingRowStyles = tv({
-  base: `
-    flex items-center justify-between py-[var(--setting-row-padding)] px-[var(--space-4)] rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]
-    transition-all duration-150 hover:bg-[var(--color-canvas-subtle)]/60
-  `,
-});
+const settingRowStyles = "flex items-center justify-between py-3.5 px-4 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)] transition-all duration-150 hover:bg-[var(--color-canvas-subtle)]/70";
 
 export type SettingsType = {
-  // Appearance
   theme: "light" | "dark" | "system";
-  accentColor: "primary" | "secondary" | "success" | "amber";
-  density: "compact" | "comfortable" | "spacious";
   animations: boolean;
   reducedMotion: boolean;
-  // Notifications
-  pipelineNotifications: boolean;
-  experimentNotifications: boolean;
-  errorNotifications: boolean;
-  warningNotifications: boolean;
-  desktopNotifications: boolean;
-  // Editor
-  vimMode: boolean;
-  // Privacy & Security
-  telemetry: boolean;
-  crashReporting: boolean;
-  localStorageEncryption: boolean;
-  sessionTimeout: number;
-  // Data & Sync
-  autoSave: boolean;
-  syncTabs: boolean;
-  evidenceRetention: number;
-  logRetention: number;
-  // Advanced
   debugMode: boolean;
-  experimentalFeatures: boolean;
-  apiEndpoint: string;
-  modelProvider: "nebius" | "openai" | "local";
   maxConcurrentExperiments: number;
-  // Model Gateway
+  apiEndpoint: string;
   modelBaseUrl: string;
   modelFast: string;
   modelReasoning: string;
@@ -97,29 +60,11 @@ export type SettingsType = {
 
 const defaultSettings: SettingsType = {
   theme: "dark",
-  accentColor: "primary",
-  density: "comfortable",
   animations: true,
   reducedMotion: false,
-  pipelineNotifications: true,
-  experimentNotifications: true,
-  errorNotifications: true,
-  warningNotifications: true,
-  desktopNotifications: false,
-  vimMode: false,
-  telemetry: true,
-  crashReporting: true,
-  localStorageEncryption: false,
-  sessionTimeout: 30,
-  autoSave: true,
-  syncTabs: true,
-  evidenceRetention: 30,
-  logRetention: 90,
   debugMode: false,
-  experimentalFeatures: false,
-  apiEndpoint: "http://localhost:8000/api/v1",
-  modelProvider: "nebius",
   maxConcurrentExperiments: 3,
+  apiEndpoint: "http://localhost:8000/api/v1",
   modelBaseUrl: "https://api.tokenfactory.nebius.com/v1",
   modelFast: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
   modelReasoning: "nvidia/Nemotron-3_5-Lightning",
@@ -127,9 +72,9 @@ const defaultSettings: SettingsType = {
 };
 
 function SettingsContent() {
-  const { state: shellState, addActivity, setIncidentContext, toggleNavCollapse, openInspector, closeInspector, setTrayState } = useShell();
+  const { addActivity, setIncidentContext } = useShell();
   const { incidentId, judgeMode, setJudgeMode, engineerMode, setEngineerMode, loadIncident } = useActiveIncident();
-  const { isAuthenticated, isLoading: authLoading } = useAuthStore();
+  const { user: authUser, isAuthenticated, isLoading: authLoading, logout } = useAuthStore();
   const router = useRouter();
 
   // Redirect to login if not authenticated
@@ -141,7 +86,6 @@ function SettingsContent() {
 
   const [activeTab, setActiveTab] = useState<string>("appearance");
   const [isSaving, setIsSaving] = useState(false);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Model Gateway State
   const [apiKeyInput, setApiKeyInput] = useState<string>("");
@@ -157,6 +101,18 @@ function SettingsContent() {
   } | null>(null);
   const [isSavingModel, setIsSavingModel] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [capabilities, setCapabilities] = useState<IngestCapabilities | null>(null);
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
+
+  useEffect(() => {
+    if (activeTab === "intake" && !capabilities) {
+      setCapabilitiesLoading(true);
+      api.getIngestCapabilities()
+        .then((data) => setCapabilities(data))
+        .catch((err) => console.warn("Failed to load intake capabilities", err))
+        .finally(() => setCapabilitiesLoading(false));
+    }
+  }, [activeTab, capabilities]);
 
   // Initialize settings from localStorage or defaults
   const [settings, setSettings] = useState<SettingsType>(() => {
@@ -167,7 +123,7 @@ function SettingsContent() {
           return { ...defaultSettings, ...JSON.parse(saved) };
         }
       } catch {
-        // Fall back to defaultSettings
+        // Fall back to defaults
       }
     }
     return defaultSettings;
@@ -198,14 +154,6 @@ function SettingsContent() {
       }
     }
 
-    // Apply accent color
-    rootEl.classList.remove("accent-primary", "accent-secondary", "accent-success", "accent-amber");
-    rootEl.classList.add(`accent-${newSettings.accentColor}`);
-
-    // Apply density
-    rootEl.classList.remove("density-compact", "density-comfortable", "density-spacious");
-    rootEl.classList.add(`density-${newSettings.density}`);
-
     // Apply reduced motion
     if (newSettings.reducedMotion) {
       rootEl.classList.add("reduced-motion");
@@ -221,7 +169,6 @@ function SettingsContent() {
     }
   }, []);
 
-  // Sync settings to localStorage and apply
   const saveSettings = useCallback(
     (settingsToSave: SettingsType) => {
       setIsSaving(true);
@@ -236,7 +183,6 @@ function SettingsContent() {
     [applySettings]
   );
 
-  // Update a single setting
   const updateSetting = useCallback(
     <K extends keyof SettingsType>(key: K, value: SettingsType[K]) => {
       setSettings((prev) => {
@@ -248,7 +194,6 @@ function SettingsContent() {
     [saveSettings]
   );
 
-  // Apply on mount and listen to system theme changes
   useEffect(() => {
     applySettings(settings);
 
@@ -271,14 +216,12 @@ function SettingsContent() {
     }
   }, [settings.theme, applySettings, settings]);
 
-  // Fetch model health and configuration from backend
   const refreshModelHealth = useCallback(async () => {
     try {
       const health = await api.getModelHealth();
       setMaskedKey(health.masked_key || "");
       setIsLiveGateway(Boolean(health.nebius_configured));
       setGatewayProviderName(health.provider || "Deterministic Local Fixtures");
-      // Show the endpoint this client is actually talking to, not a hardcoded default.
       setSettings((prev) => ({ ...prev, apiEndpoint: api.getBaseUrl() || prev.apiEndpoint }));
       if (health.base_url) {
         setSettings((prev) => ({ ...prev, modelBaseUrl: health.base_url || prev.modelBaseUrl }));
@@ -290,7 +233,6 @@ function SettingsContent() {
         setSettings((prev) => ({ ...prev, modelReasoning: health.model_reasoning || prev.modelReasoning }));
       }
     } catch {
-      // Backend offline or mock test mode
       setMaskedKey("");
       setIsLiveGateway(false);
       setGatewayProviderName("Deterministic Local Fixtures (Offline Safe)");
@@ -301,12 +243,11 @@ function SettingsContent() {
     refreshModelHealth();
   }, [refreshModelHealth]);
 
-  // Update incident context in shell
   useEffect(() => {
     if (incidentId) {
       setIncidentContext({
         id: incidentId,
-        title: "Settings & Configuration",
+        title: "Settings & System Status",
         state: "IDLE",
         pipelineStage: "IDLE",
         evidenceCoverage: 0,
@@ -404,28 +345,6 @@ function SettingsContent() {
   };
 
   // Commands Tab Action Handlers
-  const handleCreateIncident = async () => {
-    try {
-      const res = await api.create(false, {
-        title: "Manual Telemetry Incident",
-        description: "Created from Settings Command Center",
-      });
-      addActivity({
-        type: "system",
-        message: `Incident created: ${res.incident_id}`,
-        dismissible: true,
-      });
-      loadIncident(res.incident_id);
-      router.push("/reality-rewind");
-    } catch {
-      addActivity({
-        type: "system",
-        message: "Demo incident initialized in local memory",
-        dismissible: true,
-      });
-    }
-  };
-
   const handleLoadGolden = async () => {
     try {
       await loadIncident("CAU-0001");
@@ -516,15 +435,6 @@ function SettingsContent() {
     }
   };
 
-  const resetDemo = async () => {
-    try {
-      await api.resetDemo();
-      addActivity({ type: "system", message: "Demo environment reset complete", dismissible: true });
-    } catch {
-      addActivity({ type: "system", message: "Local demo state refreshed", dismissible: true });
-    }
-  };
-
   const exportSettings = () => {
     const blob = new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -567,27 +477,26 @@ function SettingsContent() {
     addActivity({ type: "system", message: "Settings reset to defaults", dismissible: true });
   };
 
-  // Exactly 6 tabs as strictly asserted by accessibility tests
+  // 7 Settings categories corresponding to accessible tabs
   const tabs = [
-    { id: "appearance", label: "Appearance", icon: Palette },
-    { id: "notifications", label: "Notifications", icon: Bell },
+    { id: "appearance", label: "Display & Theme", icon: Palette },
+    { id: "notifications", label: "Engine & Modes", icon: Zap },
     { id: "keyboard", label: "Commands & Shortcuts", icon: Command },
-    { id: "privacy", label: "Privacy & Security", icon: Shield },
-    { id: "data", label: "Data & Sync", icon: Database },
-    { id: "advanced", label: "Advanced", icon: Settings },
+    { id: "privacy", label: "Identity & Security", icon: Shield },
+    { id: "data", label: "Workspace & Storage", icon: Database },
+    { id: "advanced", label: "Model Gateway", icon: Server },
+    { id: "intake", label: "Universal Intake", icon: Globe },
   ];
 
-  // Show loading while auth is initializing
   if (authLoading) {
     return (
       <div className="flex flex-col gap-8 max-w-7xl mx-auto w-full min-h-screen items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-[var(--color-accent-fg)]" />
-        <p className="text-[var(--color-fg-muted)]">Loading settings...</p>
+        <p className="text-[var(--color-fg-muted)]">Loading system configuration...</p>
       </div>
     );
   }
 
-  // Not authenticated - redirect happens in useEffect, show loading state
   if (!isAuthenticated) {
     return (
       <div className="flex flex-col gap-8 max-w-7xl mx-auto w-full min-h-screen items-center justify-center">
@@ -602,7 +511,7 @@ function SettingsContent() {
       <PageHeader
         title="System Status & Preferences"
         ariaLabel="Settings"
-        subtitle="Diagnostic telemetry, model gateway configuration, and user preferences"
+        subtitle="Model inference gateway, causal verification engine parameters, and runtime security"
         breadcrumbs={[{ label: "Overview", href: "/" }, { label: "System Status" }]}
       />
 
@@ -641,7 +550,7 @@ function SettingsContent() {
           </Card>
         </aside>
 
-        {/* Tab Panels: All 6 rendered in DOM with hidden attribute for accessibility & tests */}
+        {/* Tab Panels: All 7 rendered in DOM with hidden attribute for accessibility & tests */}
         <div className="lg:col-span-3 space-y-5">
           {/* 1. Appearance Tab */}
           <div
@@ -649,17 +558,17 @@ function SettingsContent() {
             id="panel-appearance"
             aria-labelledby="tab-appearance"
             hidden={activeTab !== "appearance"}
-            className={activeTab !== "appearance" ? "hidden" : "space-y-[var(--section-gap)]"}
+            className={activeTab !== "appearance" ? "hidden" : "space-y-5"}
           >
             <Card>
               <h2 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
-                <Palette className="h-5 w-5 text-[var(--color-accent-fg)]" /> Theme
+                <Palette className="h-5 w-5 text-[var(--color-accent-fg)]" /> Theme Mode
               </h2>
               <div className="grid gap-3 sm:grid-cols-3">
                 {[
-                  { id: "light", label: "Light", desc: "Clean bright theme for daytime", icon: Sun, iconColor: "text-zinc-300" },
-                  { id: "dark", label: "Dark", desc: "High-contrast dark reality debugger", icon: Moon, iconColor: "text-[var(--color-accent-fg)]" },
-                  { id: "system", label: "System", desc: "Follow operating system preference", icon: Monitor, iconColor: "text-[var(--color-fg-muted)]" },
+                  { id: "light", label: "Light", desc: "Clean bright theme for daytime environments", icon: Sun, iconColor: "text-amber-400" },
+                  { id: "dark", label: "Dark", desc: "High-contrast dark reality debugger theme", icon: Moon, iconColor: "text-[var(--color-accent-fg)]" },
+                  { id: "system", label: "System", desc: "Follow operating system theme preference", icon: Monitor, iconColor: "text-[var(--color-fg-muted)]" },
                 ].map((item) => (
                   <button
                     key={item.id}
@@ -682,66 +591,13 @@ function SettingsContent() {
 
             <Card>
               <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
-                <Zap className="h-5 w-5 text-[var(--color-accent-fg)]" /> Accent Color
+                <Sliders className="h-5 w-5 text-[var(--color-accent-fg)]" /> Motion & Accessibility
               </h3>
-              <div className="flex flex-wrap gap-3">
-                {[
-                  { id: "primary", name: "Monochrome Charcoal", bg: "bg-neutral-600" },
-                  { id: "secondary", name: "Slate Neutral", bg: "bg-slate-500" },
-                  { id: "success", name: "Monochrome Zinc", bg: "bg-zinc-400" },
-                  { id: "amber", name: "High Contrast", bg: "bg-zinc-200" },
-                ].map((color) => (
-                  <button
-                    key={color.id}
-                    onClick={() => updateSetting("accentColor", color.id as SettingsType["accentColor"])}
-                    className={`flex items-center gap-2.5 px-4 py-2.5 rounded-[var(--radius-lg)] border-2 transition-all ${BTN_FOCUS} ${
-                      settings.accentColor === color.id
-                        ? "border-[var(--color-accent-fg)] bg-[var(--color-accent-muted)]/10 ring-1 ring-[var(--color-accent-fg)]"
-                        : "border-[var(--color-border-default)] hover:border-[var(--color-accent-muted)]/30 bg-[var(--color-canvas-subtle)]/40"
-                    }`}
-                  >
-                    <span className={`h-3.5 w-3.5 rounded-full ${color.bg}`} />
-                    <span className="text-sm font-medium text-[var(--color-fg-default)]">{color.name}</span>
-                  </button>
-                ))}
-              </div>
-            </Card>
-
-            <Card>
-              <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
-                <GitBranch className="h-5 w-5 text-[var(--color-accent-fg)]" /> Layout Density
-              </h3>
-              <div className="grid gap-3 sm:grid-cols-3">
-                {[
-                  { id: "compact", label: "Compact", desc: "Maximum information density, tight margins" },
-                  { id: "comfortable", label: "Comfortable", desc: "Optimal balance of spacing and focus" },
-                  { id: "spacious", label: "Spacious", desc: "Relaxed breathing room for large displays" },
-                ].map((density) => (
-                  <button
-                    key={density.id}
-                    onClick={() => updateSetting("density", density.id as SettingsType["density"])}
-                    className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
-                      settings.density === density.id
-                        ? "border-[var(--color-accent-fg)] bg-[var(--color-accent-muted)]/10 ring-1 ring-[var(--color-accent-fg)]"
-                        : "border-[var(--color-border-default)] hover:border-[var(--color-accent-muted)]/40 bg-[var(--color-canvas-subtle)]/50"
-                    }`}
-                  >
-                    <span className="font-medium text-[var(--color-fg-default)]">{density.label}</span>
-                    <p className="text-xs text-[var(--color-fg-muted)] mt-1">{density.desc}</p>
-                  </button>
-                ))}
-              </div>
-            </Card>
-
-            <Card>
-              <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
-                <FlaskConical className="h-5 w-5 text-[var(--color-accent-fg)]" /> Motion & Transitions
-              </h3>
-              <div className="space-y-[var(--setting-group-gap)]">
-                <div className={settingRowStyles()}>
+              <div className="space-y-3">
+                <div className={settingRowStyles}>
                   <div>
                     <p className="font-medium text-[var(--color-fg-default)]">Animations</p>
-                    <p className="text-sm text-[var(--color-fg-muted)]">Enable micro-interactions and smooth sidebar resizing</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Enable micro-interactions and smooth UI transitions</p>
                   </div>
                   <Toggle
                     aria-label="Animations"
@@ -749,10 +605,10 @@ function SettingsContent() {
                     onChange={(v) => updateSetting("animations", v)}
                   />
                 </div>
-                <div className={settingRowStyles()}>
+                <div className={settingRowStyles}>
                   <div>
                     <p className="font-medium text-[var(--color-fg-default)]">Reduced Motion</p>
-                    <p className="text-sm text-[var(--color-fg-muted)]">Disable all non-essential movement for accessibility</p>
+                    <p className="text-sm text-[var(--color-fg-muted)]">Disable non-essential motion effects for accessibility compliance</p>
                   </div>
                   <Toggle
                     aria-label="Reduced Motion"
@@ -764,62 +620,75 @@ function SettingsContent() {
             </Card>
           </div>
 
-          {/* 2. Notifications Tab */}
+          {/* 2. Notifications / Engine Tab */}
           <div
             role="tabpanel"
             id="panel-notifications"
             aria-labelledby="tab-notifications"
             hidden={activeTab !== "notifications"}
-            className={activeTab !== "notifications" ? "hidden" : "space-y-[var(--section-gap)]"}
+            className={activeTab !== "notifications" ? "hidden" : "space-y-5"}
           >
             <Card>
               <h2 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
-                <Zap className="h-5 w-5 text-[var(--color-accent-fg)]" /> Pipeline & Simulation Alerts
+                <Zap className="h-5 w-5 text-[var(--color-accent-fg)]" /> Causal Verification & Engine Modes
               </h2>
-              <div className="space-y-[var(--setting-group-gap)]">
-                <div className={settingRowStyles()}>
-                  <div>
-                    <p className="font-medium text-[var(--color-fg-default)]">Pipeline Events</p>
-                    <p className="text-sm text-[var(--color-fg-muted)]">Notify on stage transitions, completions, and anomalies</p>
+              <div className="space-y-3">
+                <div className={settingRowStyles}>
+                  <div className="pr-4">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-[var(--color-fg-default)]">Judge Mode</p>
+                      <Badge tone={judgeMode ? "primary" : "neutral"} className="text-[10px]">
+                        {judgeMode ? "Enforcing Invariant Proofs" : "Disabled"}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-[var(--color-fg-muted)] mt-0.5">
+                      Enforces formal mathematical verification of causal claims. Automatically rejects unverified repair patches and requires counterfactual ablation proofs.
+                    </p>
                   </div>
                   <Toggle
-                    aria-label="Pipeline Events"
-                    checked={settings.pipelineNotifications}
-                    onChange={(v) => updateSetting("pipelineNotifications", v)}
+                    aria-label="Judge Mode"
+                    checked={judgeMode}
+                    onChange={(v) => setJudgeMode(v)}
                   />
                 </div>
-                <div className={settingRowStyles()}>
-                  <div>
-                    <p className="font-medium text-[var(--color-fg-default)]">Experiment Results</p>
-                    <p className="text-sm text-[var(--color-fg-muted)]">Notify when digital-twin simulation counterfactuals finish</p>
+
+                <div className={settingRowStyles}>
+                  <div className="pr-4">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-[var(--color-fg-default)]">Engineer Mode</p>
+                      <Badge tone={engineerMode ? "success" : "neutral"} className="text-[10px]">
+                        {engineerMode ? "Raw Signal Diagnostic" : "Standard View"}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-[var(--color-fg-muted)] mt-0.5">
+                      Direct microsecond diagnostic telemetry. Exposes raw node logs, micro-second ROS topic frames, and kernel memory metrics across timeline and holographic views.
+                    </p>
                   </div>
                   <Toggle
-                    aria-label="Experiment Results"
-                    checked={settings.experimentNotifications}
-                    onChange={(v) => updateSetting("experimentNotifications", v)}
+                    aria-label="Engineer Mode"
+                    checked={engineerMode}
+                    onChange={(v) => setEngineerMode(v)}
                   />
                 </div>
-                <div className={settingRowStyles()}>
-                  <div>
-                    <p className="font-medium text-[var(--color-fg-default)]">Error Notifications</p>
-                    <p className="text-sm text-[var(--color-fg-muted)]">Critical invariants broken or execution exceptions</p>
-                  </div>
-                  <Toggle
-                    aria-label="Error Notifications"
-                    checked={settings.errorNotifications}
-                    onChange={(v) => updateSetting("errorNotifications", v)}
-                  />
+              </div>
+            </Card>
+
+            <Card>
+              <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <Bell className="h-5 w-5 text-[var(--color-accent-fg)]" /> Runtime Invariant Alerts
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40">
+                  <span className="text-xs font-mono font-bold text-[var(--color-fg-default)] block mb-1">Critical Halts</span>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Immediate toast alert on safety invariant violation or emergency stop detection.</p>
                 </div>
-                <div className={settingRowStyles()}>
-                  <div>
-                    <p className="font-medium text-[var(--color-fg-default)]">Desktop Notifications</p>
-                    <p className="text-sm text-[var(--color-fg-muted)]">OS system alerts when Cauveris tab is in background</p>
-                  </div>
-                  <Toggle
-                    aria-label="Desktop Notifications"
-                    checked={settings.desktopNotifications}
-                    onChange={(v) => updateSetting("desktopNotifications", v)}
-                  />
+                <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40">
+                  <span className="text-xs font-mono font-bold text-[var(--color-fg-default)] block mb-1">Verification Refusal</span>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Alerts if an experimental intervention fails to reproduce or falsify the target claim.</p>
+                </div>
+                <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40">
+                  <span className="text-xs font-mono font-bold text-[var(--color-fg-default)] block mb-1">Gateway Fallback</span>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Notifies when token quotas or connection drops trigger local fixture playback.</p>
                 </div>
               </div>
             </Card>
@@ -831,17 +700,16 @@ function SettingsContent() {
             id="panel-keyboard"
             aria-labelledby="tab-keyboard"
             hidden={activeTab !== "keyboard"}
-            className={activeTab !== "keyboard" ? "hidden" : "space-y-[var(--section-gap)]"}
+            className={activeTab !== "keyboard" ? "hidden" : "space-y-5"}
           >
-            {/* Interactive Command Execution Grid */}
             <Card>
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h2 className="font-semibold text-[var(--color-fg-default)] flex items-center gap-2">
-                    <Command className="h-5 w-5 text-[var(--color-accent-fg)]" /> Application Command Center
+                    <Command className="h-5 w-5 text-[var(--color-accent-fg)]" /> Interactive Command Center
                   </h2>
                   <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">
-                    Direct visual execution of system actions and investigation routines
+                    Direct execution of system routines on the active incident workspace
                   </p>
                 </div>
                 <Badge tone="primary" className="border-[var(--color-accent-muted)]/40 text-[var(--color-accent-fg)]">
@@ -849,219 +717,85 @@ function SettingsContent() {
                 </Badge>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <button
-                  onClick={handleCreateIncident}
+                  onClick={handleLoadGolden}
                   className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-[var(--color-accent-muted)]/10 hover:border-[var(--color-accent-muted)]/40 text-left transition-all ${BTN_FOCUS}`}
                 >
                   <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
-                    <Zap className="h-4 w-4 text-[var(--color-accent-fg)]" />
-                    <span>Create New Incident</span>
+                    <Clock className="h-4 w-4 text-[var(--color-accent-fg)]" />
+                    <span>Load Benchmark</span>
                   </div>
-                  <p className="text-xs text-[var(--color-fg-muted)]">Initialize fresh investigation session</p>
-                </button>
-
-                <button
-                  onClick={handleLoadGolden}
-                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-zinc-800 hover:border-zinc-600 text-left transition-all ${BTN_FOCUS}`}
-                >
-                  <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
-                    <Clock className="h-4 w-4 text-zinc-300" />
-                    <span>Load Golden Benchmark</span>
-                  </div>
-                  <p className="text-xs text-[var(--color-fg-muted)]">Load CAU-0001 AMR Batching Bottleneck</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Load CAU-0001 Golden Incident</p>
                 </button>
 
                 <button
                   onClick={handleReconstruct}
-                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-zinc-800 hover:border-zinc-600 text-left transition-all ${BTN_FOCUS}`}
+                  disabled={!incidentId}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-[var(--color-accent-muted)]/10 hover:border-[var(--color-accent-muted)]/40 text-left transition-all disabled:opacity-50 ${BTN_FOCUS}`}
                 >
                   <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
-                    <RotateCcw className="h-4 w-4 text-zinc-300" />
-                    <span>Reconstruct Pipeline</span>
+                    <RotateCcw className="h-4 w-4 text-[var(--color-accent-fg)]" />
+                    <span>Reconstruct</span>
                   </div>
-                  <p className="text-xs text-[var(--color-fg-muted)]">Re-run causal discovery & verification</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Re-execute causal discovery</p>
                 </button>
 
                 <button
                   onClick={handleExportReport}
-                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-[var(--color-canvas-inset)] hover:border-[var(--color-border-strong)] text-left transition-all ${BTN_FOCUS}`}
+                  disabled={!incidentId}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-[var(--color-accent-muted)]/10 hover:border-[var(--color-accent-muted)]/40 text-left transition-all disabled:opacity-50 ${BTN_FOCUS}`}
                 >
                   <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
-                    <Download className="h-4 w-4 text-[var(--color-fg-default)]" />
-                    <span>Export Report (JSON)</span>
+                    <Download className="h-4 w-4 text-[var(--color-accent-fg)]" />
+                    <span>Export Report</span>
                   </div>
-                  <p className="text-xs text-[var(--color-fg-muted)]">Download formal causal diagnosis</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Download incident report JSON</p>
                 </button>
 
                 <button
                   onClick={handleDownloadPatch}
-                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-zinc-800 hover:border-zinc-600 text-left transition-all ${BTN_FOCUS}`}
+                  disabled={!incidentId}
+                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-[var(--color-accent-muted)]/10 hover:border-[var(--color-accent-muted)]/40 text-left transition-all disabled:opacity-50 ${BTN_FOCUS}`}
                 >
                   <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
-                    <Wrench className="h-4 w-4 text-zinc-300" />
-                    <span>Download Patch Package</span>
+                    <FileCode className="h-4 w-4 text-[var(--color-accent-fg)]" />
+                    <span>Download Patch</span>
                   </div>
-                  <p className="text-xs text-[var(--color-fg-muted)]">Export verified patch artifact zip</p>
-                </button>
-
-                <button
-                  onClick={resetDemo}
-                  className={`p-4 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 hover:bg-[var(--color-danger-muted)] hover:border-[var(--color-danger-muted)]/40 text-left transition-all ${BTN_FOCUS}`}
-                >
-                  <div className="flex items-center gap-2 text-[var(--color-fg-default)] font-medium mb-1">
-                    <Trash2 className="h-4 w-4 text-[var(--color-danger-fg)]" />
-                    <span>Reset Demo Environment</span>
-                  </div>
-                  <p className="text-xs text-[var(--color-fg-muted)]">Restore clean sandbox state</p>
+                  <p className="text-xs text-[var(--color-fg-muted)]">Get verified ZIP patch bundle</p>
                 </button>
               </div>
             </Card>
 
-            {/* Execution Modes */}
-            <Card>
-              <h3 className="font-semibold text-[var(--color-fg-default)] mb-2 flex items-center gap-2">
-                <Sliders className="h-5 w-5 text-[var(--color-accent-fg)]" /> Autonomous vs. Supervised Execution Modes
-              </h3>
-              <p className="text-xs text-[var(--color-fg-muted)] mb-4">
-                Configure safety invariants and autonomy levels for robotic incident remediation
-              </p>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <button
-                  onClick={() => {
-                    setJudgeMode(false);
-                    setEngineerMode(false);
-                    addActivity({ type: "system", message: "Autonomous Mode activated", dismissible: true });
-                  }}
-                  className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
-                    !judgeMode && !engineerMode
-                      ? "border-[var(--color-accent-fg)] bg-[var(--color-accent-muted)]/10 ring-1 ring-[var(--color-accent-fg)]"
-                      : "border-[var(--color-border-default)] hover:border-[var(--color-accent-muted)]/40 bg-[var(--color-canvas-subtle)]/50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 font-medium text-[var(--color-fg-default)] mb-1">
-                    <Bot className="h-4 w-4 text-[var(--color-accent-fg)]" />
-                    <span>Autonomous</span>
-                  </div>
-                  <p className="text-xs text-[var(--color-fg-muted)]">Self-healing: automatically hypothecates and applies fixes</p>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setJudgeMode(true);
-                    setEngineerMode(false);
-                    addActivity({ type: "system", message: "Judge Mode activated", dismissible: true });
-                  }}
-                  className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
-                    judgeMode
-                      ? "border-zinc-500 bg-zinc-800 ring-1 ring-zinc-500"
-                      : "border-[var(--color-border-default)] hover:border-zinc-600 bg-[var(--color-canvas-subtle)]/50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 font-medium text-[var(--color-fg-default)] mb-1">
-                    <Shield className="h-4 w-4 text-zinc-300" />
-                    <span>Judge Mode</span>
-                  </div>
-                  <p className="text-xs text-[var(--color-fg-muted)]">Human verification required before applying any patch</p>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setEngineerMode(true);
-                    setJudgeMode(false);
-                    addActivity({ type: "system", message: "Engineer Mode activated", dismissible: true });
-                  }}
-                  className={`p-4 rounded-[var(--radius-lg)] border-2 text-left transition-all ${BTN_FOCUS} ${
-                    engineerMode
-                      ? "border-zinc-500 bg-zinc-800 ring-1 ring-zinc-500"
-                      : "border-[var(--color-border-default)] hover:border-zinc-600 bg-[var(--color-canvas-subtle)]/50"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 font-medium text-[var(--color-fg-default)] mb-1">
-                    <Wrench className="h-4 w-4 text-zinc-300" />
-                    <span>Engineer Mode</span>
-                  </div>
-                  <p className="text-xs text-[var(--color-fg-muted)]">Deep telemetry traces, raw kernel timings, and step-through</p>
-                </button>
-              </div>
-            </Card>
-
-            {/* Layout Shell Controls */}
-            <Card>
-              <h3 className="font-semibold text-[var(--color-fg-default)] mb-3 flex items-center gap-2">
-                <LayoutDashboard className="h-5 w-5 text-[var(--color-accent-fg)]" /> Shell Layout Controls
-              </h3>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <button
-                  onClick={() => toggleNavCollapse()}
-                  className={`p-3 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40 hover:bg-[var(--color-canvas-subtle)]/50 text-left transition-all flex items-center justify-between ${BTN_FOCUS}`}
-                >
-                  <div>
-                    <span className="text-sm font-medium text-[var(--color-fg-default)] block">Navigation Sidebar</span>
-                    <span className="text-xs text-[var(--color-fg-muted)]">{shellState.isNavCollapsed ? "Collapsed" : "Expanded"}</span>
-                  </div>
-                  <Badge tone={shellState.isNavCollapsed ? "secondary" : "primary"}>
-                    {shellState.isNavCollapsed ? "Mini" : "Full"}
-                  </Badge>
-                </button>
-
-                <button
-                  onClick={() => (shellState.inspectorOpen ? closeInspector() : openInspector("timeline", { mode: "timeline" }))}
-                  className={`p-3 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40 hover:bg-[var(--color-canvas-subtle)]/50 text-left transition-all flex items-center justify-between ${BTN_FOCUS}`}
-                >
-                  <div>
-                    <span className="text-sm font-medium text-[var(--color-fg-default)] block">Context Inspector</span>
-                    <span className="text-xs text-[var(--color-fg-muted)]">{shellState.inspectorOpen ? "Visible" : "Hidden"}</span>
-                  </div>
-                  <Badge tone={shellState.inspectorOpen ? "primary" : "secondary"}>
-                    {shellState.inspectorOpen ? "Open" : "Closed"}
-                  </Badge>
-                </button>
-
-                <button
-                  onClick={() =>
-                    setTrayState(shellState.trayState === "closed" ? "expanded" : "closed")
-                  }
-                  className={`p-3 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40 hover:bg-[var(--color-canvas-subtle)]/50 text-left transition-all flex items-center justify-between ${BTN_FOCUS}`}
-                >
-                  <div>
-                    <span className="text-sm font-medium text-[var(--color-fg-default)] block">Activity Tray</span>
-                    <span className="text-xs text-[var(--color-fg-muted)]">Current: {shellState.trayState}</span>
-                  </div>
-                  <Badge tone="neutral" className="capitalize">
-                    {shellState.trayState}
-                  </Badge>
-                </button>
-              </div>
-            </Card>
-
-            {/* Keyboard Shortcuts Cheat Sheet */}
             <Card>
               <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
-                <Clock className="h-5 w-5 text-[var(--color-accent-fg)]" /> Keyboard Shortcuts Reference
+                <Command className="h-5 w-5 text-[var(--color-accent-fg)]" /> Global Keyboard Shortcuts
               </h3>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {[
-                  { shortcut: "Ctrl / Cmd + K", action: "Toggle Global Command Palette" },
-                  { shortcut: "Ctrl / Cmd + B", action: "Toggle Left Navigation Sidebar" },
-                  { shortcut: "Ctrl / Cmd + I", action: "Toggle Right Contextual Inspector" },
-                  { shortcut: "Ctrl / Cmd + J", action: "Toggle Bottom Activity Tray" },
-                  { shortcut: "Ctrl / Cmd + 1", action: "Jump to Reality Rewind" },
-                  { shortcut: "Ctrl / Cmd + 2", action: "Jump to Ghost Lab" },
-                  { shortcut: "Ctrl / Cmd + 3", action: "Jump to Patch Forge" },
-                  { shortcut: "Ctrl / Cmd + 4", action: "Jump to Victory Replay" },
-                  { shortcut: "Esc", action: "Close modal dialogs and clear inspector" },
-                ].map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-2.5 rounded-[var(--radius-md)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)] text-sm"
-                  >
-                    <span className="text-[var(--color-fg-muted)]/80">{item.action}</span>
-                    <kbd className="px-2 py-1 text-xs font-mono rounded bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]/20 text-[var(--color-accent-fg)] font-semibold">
-                      {item.shortcut}
-                    </kbd>
-                  </div>
-                ))}
+              <div className="grid gap-2 sm:grid-cols-2 text-xs font-mono">
+                <div className="flex items-center justify-between p-2.5 rounded bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]">
+                  <span className="text-[var(--color-fg-muted)]">Command Palette</span>
+                  <kbd className="px-2 py-0.5 rounded bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] font-bold">⌘ / Ctrl + K</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]">
+                  <span className="text-[var(--color-fg-muted)]">Toggle Right Inspector</span>
+                  <kbd className="px-2 py-0.5 rounded bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] font-bold">⌘ / Ctrl + I</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]">
+                  <span className="text-[var(--color-fg-muted)]">Toggle Left Sidebar</span>
+                  <kbd className="px-2 py-0.5 rounded bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] font-bold">⌘ / Ctrl + B</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]">
+                  <span className="text-[var(--color-fg-muted)]">Play / Pause Timeline</span>
+                  <kbd className="px-2 py-0.5 rounded bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] font-bold">Space</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]">
+                  <span className="text-[var(--color-fg-muted)]">Step Timeline Forward/Back</span>
+                  <kbd className="px-2 py-0.5 rounded bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] font-bold">← / →</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]">
+                  <span className="text-[var(--color-fg-muted)]">Jump to Failure</span>
+                  <kbd className="px-2 py-0.5 rounded bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] font-bold">F</kbd>
+                </div>
               </div>
             </Card>
           </div>
@@ -1072,61 +806,83 @@ function SettingsContent() {
             id="panel-privacy"
             aria-labelledby="tab-privacy"
             hidden={activeTab !== "privacy"}
-            className={activeTab !== "privacy" ? "hidden" : "space-y-[var(--section-gap)]"}
+            className={activeTab !== "privacy" ? "hidden" : "space-y-5"}
           >
             <Card>
-              <h2 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
-                <Shield className="h-5 w-5 text-[var(--color-accent-fg)]" /> Security & Telemetry
-              </h2>
-              <div className="space-y-[var(--setting-group-gap)]">
-                <Panel>
-                  <PanelSection>
-                    <div className="py-[var(--setting-row-padding)] px-[var(--space-4)] rounded-[var(--radius-lg)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]">
-                      <label htmlFor="settings-session-timeout" className="block text-sm font-medium text-[var(--color-fg-default)] mb-2">
-                        Session timeout (minutes)
-                      </label>
-                      <p className="text-xs text-[var(--color-fg-muted)] mb-3">
-                        Automatically lock authentication and terminal session when inactive
-                      </p>
-                      <div className="max-w-md">
-                        <Slider
-                          id="settings-session-timeout"
-                          aria-label="Session timeout (minutes)"
-                          value={settings.sessionTimeout}
-                          min={5}
-                          max={1440}
-                          step={5}
-                          showValue
-                          valueFormatter={(v) => `${v} min`}
-                          onValueChange={(v) => updateSetting("sessionTimeout", v)}
-                        />
-                      </div>
-                    </div>
-                  </PanelSection>
-                </Panel>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-semibold text-[var(--color-fg-default)] flex items-center gap-2">
+                  <User className="h-5 w-5 text-[var(--color-accent-fg)]" /> Authenticated Operator Identity
+                </h2>
+                <Badge tone="success" className="flex items-center gap-1.5">
+                  <Check className="h-3 w-3" /> Session Active
+                </Badge>
+              </div>
 
-                <div className={settingRowStyles()}>
+              <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)] mb-4">
+                <div className="grid gap-4 sm:grid-cols-2 text-sm">
                   <div>
-                    <p className="font-medium text-[var(--color-fg-default)]">Anonymized Telemetry</p>
-                    <p className="text-sm text-[var(--color-fg-muted)]">Contribute anonymized causal DAG accuracy metrics</p>
+                    <span className="text-xs text-[var(--color-fg-muted)] block">Operator Name</span>
+                    <span className="font-medium text-[var(--color-fg-default)]">{authUser?.full_name || "Lead Operator"}</span>
                   </div>
-                  <Toggle
-                    aria-label="Telemetry"
-                    checked={settings.telemetry}
-                    onChange={(v) => updateSetting("telemetry", v)}
-                  />
+                  <div>
+                    <span className="text-xs text-[var(--color-fg-muted)] block">Email</span>
+                    <span className="font-mono text-[var(--color-fg-default)]">{authUser?.email || "operator@cauveris.ai"}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-[var(--color-fg-muted)] block">Role & Permissions</span>
+                    <span className="font-mono text-[var(--color-accent-fg)] uppercase">{authUser?.role || "ENGINEER"}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-[var(--color-fg-muted)] block">Organization Slug</span>
+                    <span className="font-mono text-[var(--color-fg-default)]">{authUser?.org_id || "org_demo"}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-[var(--color-fg-muted)] block">Platform Release</span>
+                    <span className="font-mono text-xs font-semibold text-[var(--color-accent-fg)]">{APP_FULL_VERSION}</span>
+                  </div>
                 </div>
+              </div>
 
-                <div className={settingRowStyles()}>
-                  <div>
-                    <p className="font-medium text-[var(--color-fg-default)]">Local Storage Encryption</p>
-                    <p className="text-sm text-[var(--color-fg-muted)]">Encrypt cached incident artifacts and session tokens</p>
+              <div className="flex items-center justify-between pt-2 border-t border-[var(--color-border-default)]">
+                <p className="text-xs text-[var(--color-fg-muted)]">
+                  Session secured with cryptographically signed HS256 JWT tokens with automatic silent refresh.
+                </p>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={async () => {
+                    await logout();
+                    router.push("/login");
+                  }}
+                  className={BTN_FOCUS}
+                >
+                  <LogOut className="h-4 w-4 mr-1.5" /> Sign Out
+                </Button>
+              </div>
+            </Card>
+
+            <Card>
+              <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
+                <Shield className="h-5 w-5 text-[var(--color-accent-fg)]" /> API Security & Protection Perimeter
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-3 text-xs">
+                <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40">
+                  <div className="flex items-center gap-1.5 font-bold font-mono text-[var(--color-fg-default)] mb-1">
+                    <Shield className="h-3.5 w-3.5 text-emerald-400" /> Rate Limiting
                   </div>
-                  <Toggle
-                    aria-label="Local Storage Encryption"
-                    checked={settings.localStorageEncryption}
-                    onChange={(v) => updateSetting("localStorageEncryption", v)}
-                  />
+                  <p className="text-[var(--color-fg-muted)]">Sliding-window token bucket enforced per client IP and organization token.</p>
+                </div>
+                <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40">
+                  <div className="flex items-center gap-1.5 font-bold font-mono text-[var(--color-fg-default)] mb-1">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Idempotency Keys
+                  </div>
+                  <p className="text-[var(--color-fg-muted)]">Automated deduplication prevents accidental duplicate incident creation or runs.</p>
+                </div>
+                <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40">
+                  <div className="flex items-center gap-1.5 font-bold font-mono text-[var(--color-fg-default)] mb-1">
+                    <Shield className="h-3.5 w-3.5 text-emerald-400" /> Sandboxed Execution
+                  </div>
+                  <p className="text-[var(--color-fg-muted)]">Digital twin interventions execute in isolated runtime contexts with zero network access.</p>
                 </div>
               </div>
             </Card>
@@ -1138,94 +894,31 @@ function SettingsContent() {
             id="panel-data"
             aria-labelledby="tab-data"
             hidden={activeTab !== "data"}
-            className={activeTab !== "data" ? "hidden" : "space-y-[var(--section-gap)]"}
+            className={activeTab !== "data" ? "hidden" : "space-y-5"}
           >
             <Card>
               <h2 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
-                <Database className="h-5 w-5 text-[var(--color-accent-fg)]" /> Retention & Data Management
+                <Database className="h-5 w-5 text-[var(--color-accent-fg)]" /> Workspace & Local Incident Storage
               </h2>
-              <div className="space-y-[var(--setting-group-gap)]">
-                <Panel>
-                  <PanelSection title="Retention Policies">
-                    <div className="space-y-[var(--setting-group-gap)]">
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <div>
-                            <p className="font-medium text-[var(--color-fg-default)]">Evidence Retention</p>
-                            <p className="text-sm text-[var(--color-fg-muted)]">Days to keep evidence artifacts before cleanup</p>
-                          </div>
-                          <span className="text-sm font-mono text-[var(--color-accent-fg)]">{settings.evidenceRetention} days</span>
-                        </div>
-                        <Slider
-                          aria-label="Evidence retention (days)"
-                          value={settings.evidenceRetention}
-                          min={7}
-                          max={365}
-                          step={1}
-                          showValue
-                          valueFormatter={(v) => `${v} days`}
-                          onValueChange={(v) => updateSetting("evidenceRetention", v)}
-                        />
-                      </div>
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <div>
-                            <p className="font-medium text-[var(--color-fg-default)]">Log Retention</p>
-                            <p className="text-sm text-[var(--color-fg-muted)]">Days to keep system logs and activity history</p>
-                          </div>
-                          <span className="text-sm font-mono text-[var(--color-accent-fg)]">{settings.logRetention} days</span>
-                        </div>
-                        <Slider
-                          aria-label="Log retention (days)"
-                          value={settings.logRetention}
-                          min={7}
-                          max={365}
-                          step={1}
-                          showValue
-                          valueFormatter={(v) => `${v} days`}
-                          onValueChange={(v) => updateSetting("logRetention", v)}
-                        />
-                      </div>
-                    </div>
-                  </PanelSection>
-                </Panel>
+              <div className="space-y-4">
+                <div className="p-4 rounded-[var(--radius-lg)] bg-[var(--color-canvas-subtle)]/50 border border-[var(--color-border-default)]">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-mono font-bold text-[var(--color-fg-default)]">Active Incident Workspace</span>
+                    <Badge tone="primary">{incidentId || "None"}</Badge>
+                  </div>
+                  <p className="text-xs text-[var(--color-fg-muted)] leading-relaxed">
+                    Cauveris uses browser-local persistent storage to maintain active timeline positions, visual inspection parameters, and current incident state. Resetting demo data clears temporary memory without deleting package evidence on disk.
+                  </p>
+                </div>
 
-                <Panel>
-                  <PanelSection title="Data Synchronization">
-                    <div className={settingRowStyles()}>
-                      <div>
-                        <p className="font-medium text-[var(--color-fg-default)]">Auto-save</p>
-                        <p className="text-sm text-[var(--color-fg-muted)]">Periodically persist investigation state to browser</p>
-                      </div>
-                      <Toggle
-                        aria-label="Auto-save"
-                        checked={settings.autoSave}
-                        onChange={(v) => updateSetting("autoSave", v)}
-                      />
-                    </div>
-
-                    <div className={settingRowStyles()}>
-                      <div>
-                        <p className="font-medium text-[var(--color-fg-default)]">Cross-tab Synchronization</p>
-                        <p className="text-sm text-[var(--color-fg-muted)]">Synchronize active incident selection across windows</p>
-                      </div>
-                      <Toggle
-                        aria-label="Cross-tab Synchronization"
-                        checked={settings.syncTabs}
-                        onChange={(v) => updateSetting("syncTabs", v)}
-                      />
-                    </div>
-                  </PanelSection>
-                </Panel>
-
-                <div className="flex flex-wrap gap-3 pt-3">
-                  <Button variant="outline" onClick={exportSettings} className={BTN_FOCUS}>
+                <div className="flex flex-wrap gap-3 pt-1">
+                  <Button variant="outline" size="sm" onClick={exportSettings} className={BTN_FOCUS}>
                     <Download className="h-4 w-4 mr-2" /> Export Settings JSON
                   </Button>
-                  <Button variant="outline" onClick={importSettings} className={BTN_FOCUS}>
+                  <Button variant="outline" size="sm" onClick={importSettings} className={BTN_FOCUS}>
                     <Upload className="h-4 w-4 mr-2" /> Import Settings JSON
                   </Button>
-                  <Button variant="outline" onClick={resetSettings} className={BTN_FOCUS}>
+                  <Button variant="outline" size="sm" onClick={resetSettings} className={BTN_FOCUS}>
                     <RotateCcw className="h-4 w-4 mr-2" /> Reset Defaults
                   </Button>
                 </div>
@@ -1239,7 +932,7 @@ function SettingsContent() {
             id="panel-advanced"
             aria-labelledby="tab-advanced"
             hidden={activeTab !== "advanced"}
-            className={activeTab !== "advanced" ? "hidden" : "space-y-[var(--section-gap)]"}
+            className={activeTab !== "advanced" ? "hidden" : "space-y-5"}
           >
             {/* Live Model Gateway Status Card */}
             <Card>
@@ -1291,7 +984,7 @@ function SettingsContent() {
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label htmlFor="settings-model-api-key" className="text-sm font-medium text-[var(--color-fg-default)] flex items-center gap-2">
-                      <Key className="h-4 w-4 text-[var(--color-accent-fg)]" /> Nebius / OpenAI API Key
+                      <Key className="h-4 w-4 text-[var(--color-accent-fg)]" /> Model API Key
                     </label>
                     {maskedKey && (
                       <span className="text-xs text-zinc-300 flex items-center gap-1">
@@ -1300,8 +993,7 @@ function SettingsContent() {
                     )}
                   </div>
                   <p className="text-xs text-[var(--color-fg-muted)] mb-3">
-                    Paste your API key below. Once saved, the key is permanently masked on screen to prevent shoulder-surfing.
-                    No need to modify .env or source files.
+                    Paste your Nebius or OpenAI API key below. Once saved, the key is permanently masked on screen to prevent shoulder-surfing.
                   </p>
 
                   {/* Masked Preview if stored */}
@@ -1492,10 +1184,10 @@ function SettingsContent() {
               </div>
             </Card>
 
-            {/* General Advanced Settings (With required test labels) */}
+            {/* General Engine Parameters */}
             <Card>
               <h3 className="font-semibold text-[var(--color-fg-default)] mb-4 flex items-center gap-2">
-                <Sliders className="h-5 w-5 text-[var(--color-accent-fg)]" /> General Engine Parameters
+                <Sliders className="h-5 w-5 text-[var(--color-accent-fg)]" /> Engine Execution Parameters
               </h3>
               <div className="space-y-4">
                 <div>
@@ -1511,27 +1203,23 @@ function SettingsContent() {
                   />
                 </div>
 
-                <Panel>
-                  <PanelSection>
-                    <div>
-                      <label htmlFor="settings-max-concurrent" className="block text-sm font-medium text-[var(--color-fg-default)] mb-1">
-                        Max concurrent experiments
-                      </label>
-                      <Slider
-                        id="settings-max-concurrent"
-                        aria-label="Max concurrent experiments"
-                        value={settings.maxConcurrentExperiments}
-                        min={1}
-                        max={10}
-                        step={1}
-                        showValue
-                        onValueChange={(v) => updateSetting("maxConcurrentExperiments", v)}
-                      />
-                    </div>
-                  </PanelSection>
-                </Panel>
+                <div>
+                  <label htmlFor="settings-max-concurrent" className="block text-sm font-medium text-[var(--color-fg-default)] mb-1">
+                    Max concurrent experiments
+                  </label>
+                  <Slider
+                    id="settings-max-concurrent"
+                    aria-label="Max concurrent experiments"
+                    value={settings.maxConcurrentExperiments}
+                    min={1}
+                    max={10}
+                    step={1}
+                    showValue
+                    onValueChange={(v) => updateSetting("maxConcurrentExperiments", v)}
+                  />
+                </div>
 
-                <div className={settingRowStyles()}>
+                <div className={settingRowStyles}>
                   <div>
                     <p className="font-medium text-[var(--color-fg-default)]">Debug Mode</p>
                     <p className="text-sm text-[var(--color-fg-muted)]">Enable verbose logging and diagnostic stack traces</p>
@@ -1542,19 +1230,153 @@ function SettingsContent() {
                     onChange={(v) => updateSetting("debugMode", v)}
                   />
                 </div>
-
-                <div className={settingRowStyles()}>
-                  <div>
-                    <p className="font-medium text-[var(--color-fg-default)]">Experimental Features</p>
-                    <p className="text-sm text-[var(--color-fg-muted)]">Early access to neural causal abstraction primitives</p>
-                  </div>
-                  <Toggle
-                    aria-label="Experimental Features"
-                    checked={settings.experimentalFeatures}
-                    onChange={(v) => updateSetting("experimentalFeatures", v)}
-                  />
-                </div>
               </div>
+            </Card>
+          </div>
+
+          {/* 7. Intake Tab */}
+          <div
+            role="tabpanel"
+            id="panel-intake"
+            aria-labelledby="tab-intake"
+            hidden={activeTab !== "intake"}
+            className={activeTab !== "intake" ? "hidden" : "space-y-5"}
+          >
+            <Card>
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="font-semibold text-[var(--color-fg-default)] flex items-center gap-2">
+                    <Globe className="h-5 w-5 text-[var(--color-accent-fg)]" /> Universal Source Intake & Security Perimeter
+                  </h2>
+                  <p className="text-xs text-[var(--color-fg-muted)] mt-0.5">
+                    Read-only capabilities, accepted source specifications, format support, and security boundaries
+                  </p>
+                </div>
+                {capabilities && (
+                  <Badge
+                    tone={capabilities.url_ingestion_enabled ? "success" : "neutral"}
+                    className="flex items-center gap-1.5 px-3 py-1"
+                  >
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        capabilities.url_ingestion_enabled ? "bg-emerald-400" : "bg-zinc-400"
+                      }`}
+                    />
+                    <span>{capabilities.url_ingestion_enabled ? "URL Ingestion Active" : "URL Ingestion Disabled"}</span>
+                  </Badge>
+                )}
+              </div>
+
+              {capabilitiesLoading && !capabilities && (
+                <div className="flex items-center justify-center py-12 text-[var(--color-fg-muted)] gap-2">
+                  <Loader2 className="h-5 w-5 animate-spin text-[var(--color-accent-fg)]" />
+                  <span className="text-sm">Querying intake subsystem...</span>
+                </div>
+              )}
+
+              {capabilities && (
+                <div className="space-y-4">
+                  {/* Capabilities Status Grid */}
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40">
+                      <span className="text-[11px] font-mono text-[var(--color-fg-muted)] block mb-1 uppercase tracking-wider">
+                        Remote URL Ingest
+                      </span>
+                      <span className={`font-semibold text-sm ${capabilities.url_ingestion_enabled ? "text-emerald-400" : "text-zinc-400"}`}>
+                        {capabilities.url_ingestion_enabled ? "Enabled" : "Disabled (local only)"}
+                      </span>
+                    </div>
+
+                    <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40">
+                      <span className="text-[11px] font-mono text-[var(--color-fg-muted)] block mb-1 uppercase tracking-wider">
+                        Git Clone Ingest
+                      </span>
+                      <span className={`font-semibold text-sm ${capabilities.allow_git_clone ? "text-emerald-400" : "text-zinc-400"}`}>
+                        {capabilities.allow_git_clone ? "Enabled" : "Disabled"}
+                      </span>
+                    </div>
+
+                    <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40">
+                      <span className="text-[11px] font-mono text-[var(--color-fg-muted)] block mb-1 uppercase tracking-wider">
+                        Max Archive Size
+                      </span>
+                      <span className="font-semibold text-sm text-[var(--color-fg-default)]">
+                        {(capabilities.limits.max_archive_file_size / (1024 * 1024)).toFixed(0)} MB
+                      </span>
+                    </div>
+
+                    <div className="p-3.5 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40">
+                      <span className="text-[11px] font-mono text-[var(--color-fg-muted)] block mb-1 uppercase tracking-wider">
+                        Decompression Cap
+                      </span>
+                      <span className="font-semibold text-sm text-[var(--color-fg-default)]">
+                        {(capabilities.limits.max_archive_uncompressed_size / (1024 * 1024)).toFixed(0)} MB
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Accepted Archive Formats */}
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)] mb-2">
+                      Supported Archive & Compression Formats
+                    </h3>
+                    <div className="flex flex-wrap gap-1.5 font-mono text-xs">
+                      {capabilities.supported_archive_formats.map((fmt: string, idx: number) => (
+                        <span
+                          key={idx}
+                          className="px-2.5 py-1 rounded bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-[var(--color-fg-default)] font-medium"
+                        >
+                          {fmt}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Accepted Source Specs */}
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)] mb-2">
+                      Supported Source Specifications
+                    </h3>
+                    <div className="border border-[var(--color-border-default)] rounded-[var(--radius-md)] overflow-hidden">
+                      <table className="w-full text-left text-xs font-mono">
+                        <thead className="bg-[var(--color-canvas-subtle)] border-b border-[var(--color-border-default)] text-[var(--color-fg-muted)]">
+                          <tr>
+                            <th className="py-2 px-3 font-semibold">Specification Format</th>
+                            <th className="py-2 px-3 font-semibold">Example Spec</th>
+                            <th className="py-2 px-3 font-semibold font-sans">Description</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--color-border-default)]">
+                          {capabilities.spec_forms.map((item, idx: number) => (
+                            <tr key={idx} className="hover:bg-[var(--color-canvas-subtle)]/30">
+                              <td className="py-2 px-3 text-[var(--color-accent-fg)] font-bold">{item.form}</td>
+                              <td className="py-2 px-3 text-[var(--color-fg-default)]">{item.example}</td>
+                              <td className="py-2 px-3 font-sans text-[var(--color-fg-muted)] text-[11px]">{item.description}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Built-in Allowed Hosts */}
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)] mb-2">
+                      Built-in Trusted Host Allowlist
+                    </h3>
+                    <div className="flex flex-wrap gap-1.5 font-mono text-[11px]">
+                      {capabilities.host_policy.builtin_allowed_hosts.map((host, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2 py-0.5 rounded bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] text-[var(--color-fg-default)]"
+                        >
+                          {host}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </Card>
           </div>
         </div>

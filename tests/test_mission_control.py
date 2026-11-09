@@ -62,14 +62,25 @@ async def test_upload_validation(test_user):
         assert create_res.status_code == 200
         incident_id = create_res.json()["incident_id"]
 
-        # 2. Upload invalid non-zip file -> must be rejected with 400
-        invalid_file = io.BytesIO(b"Not a zip file content")
+        # 2. Upload a binary non-archive file -> must be rejected with 400.
+        #    (Detection is by magic bytes / content, not extension: a single
+        #    *text* evidence file is accepted, binary garbage is not.)
+        invalid_file = io.BytesIO(b"\x00\x01\x02\xff\xfe" * 64)
         bad_upload = await client.post(
             f"/api/v1/incidents/{incident_id}/upload",
-            files={"file": ("bundle.txt", invalid_file, "text/plain")},
+            files={"file": ("bundle.bin", invalid_file, "application/octet-stream")},
         )
         assert bad_upload.status_code == 400
-        assert "ZIP archive" in bad_upload.json()["detail"]
+        assert "Unsupported file type" in bad_upload.json()["detail"]
+
+        # 2b. A single text evidence file is accepted as-is (200)
+        text_file = io.BytesIO(b"2026-09-20T10:00:00Z sensor note: all nominal\n")
+        text_upload = await client.post(
+            f"/api/v1/incidents/{incident_id}/upload",
+            files={"file": ("notes.txt", text_file, "text/plain")},
+        )
+        assert text_upload.status_code == 200
+        assert text_upload.json()["evidence_count"] >= 1
 
         # 3. Create a valid zip archive in-memory
         zip_buffer = io.BytesIO()

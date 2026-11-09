@@ -101,7 +101,6 @@ function HolographicReconstructionContent() {
   const [displayGain, setDisplayGain] = useState(1.0);
   const [showGhosts, setShowGhosts] = useState(true);
   const [showPatch, setShowPatch] = useState(false);
-  const [showControls, setShowControls] = useState(true);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   const [gpuEnabled, setGpuEnabled] = useState(true);
@@ -240,27 +239,6 @@ function HolographicReconstructionContent() {
     []
   );
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-
-      if (e.key === "[") {
-        setShowControls((prev) => !prev);
-      } else if (e.key === "g" || e.key === "G") {
-        setShowGhosts((prev) => !prev);
-      } else if (e.key === "ArrowRight") {
-        setCurrentTime((prev) => Math.min(1.0, prev + 0.1));
-      } else if (e.key === "ArrowLeft") {
-        setCurrentTime((prev) => Math.max(0.0, prev - 0.1));
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
   const selectedNode = useMemo(
     () => layoutNodes.find((n) => n.id === selectedNodeId) || null,
     [layoutNodes, selectedNodeId]
@@ -286,8 +264,7 @@ function HolographicReconstructionContent() {
 
       <ProvenanceBanner metadata={provenanceMetadata} />
 
-      {showControls && (
-        <Panel variant="inset" padding="md">
+      <Panel variant="inset" padding="md">
           <PanelHeader
             title="Reconstruction Controls"
             subtitle="View modes, field visualizations, and GPU configuration"
@@ -399,8 +376,7 @@ function HolographicReconstructionContent() {
               </Button>
             </div>
           </PanelSection>
-        </Panel>
-      )}
+      </Panel>
 
       {error && (
         <Panel variant="inset" padding="sm" className="bg-zinc-900 border border-zinc-700">
@@ -531,9 +507,6 @@ function HolographicReconstructionContent() {
             </div>
           )}
 
-          <div className="absolute bottom-4 right-4 text-[10px] text-[var(--color-fg-muted)] bg-[var(--color-canvas-inset)] px-2 py-1 rounded-[var(--radius-sm)] border border-[var(--color-border-default)]">
-            Keys: <kbd className="text-[var(--color-fg-default)] font-mono">[</kbd> Toggle UI • <kbd className="text-[var(--color-fg-default)] font-mono">G</kbd> Ghosts • <kbd className="text-[var(--color-fg-default)] font-mono">←/→</kbd> Step
-          </div>
             </>
           )}
         </div>

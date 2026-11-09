@@ -35,7 +35,7 @@ import { InstrumentPanel, SignalTag, TraceValue } from "@/design-system";
 import {
   ZoomIn, ZoomOut, ArrowLeft, ArrowRight, Maximize, RotateCcw,
   Play, SkipBack, SkipForward, AlertTriangle, Globe, Timer,
-  X, Check, Search, Download, Clock, Loader2,
+  X, Check, Search, Download, Clock, Loader2, RefreshCw, Sparkles,
   GitBranch, Terminal, Eye, Shield, FileText, Zap, Database, Bot
 } from "lucide-react";
 
@@ -158,6 +158,141 @@ interface TimelineControls {
   showClockCorrection: boolean;
 }
 
+export function resolveEventLane(ev: TimelineEvent): LaneId {
+  const laneStr = (ev.lane || "").toLowerCase();
+  const srcType = (ev.source_type || "").toLowerCase();
+  const src = (ev.source || "").toLowerCase();
+  const msg = (ev.message || "").toLowerCase();
+
+  // 1. Safety & Guardrails
+  if (
+    laneStr.includes("safety") ||
+    srcType.includes("safety") ||
+    src.includes("safety") ||
+    msg.includes("halt") ||
+    msg.includes("emergency") ||
+    msg.includes("e-stop") ||
+    msg.includes("interlock") ||
+    msg.includes("shutdown") ||
+    msg.includes("abort") ||
+    (ev.attributes?.severity === "critical" && (msg.includes("stop") || msg.includes("failure")))
+  ) {
+    return "safety-event";
+  }
+
+  // 2. Deployment
+  if (
+    laneStr.includes("deploy") ||
+    srcType.includes("deploy") ||
+    srcType.includes("git") ||
+    src.includes("git") ||
+    src.includes("deploy") ||
+    msg.includes("commit") ||
+    msg.includes("deploy") ||
+    msg.includes("rollout") ||
+    msg.includes("release") ||
+    msg.includes("intake") ||
+    msg.includes("build")
+  ) {
+    return "deployment";
+  }
+
+  // 3. Configuration
+  if (
+    laneStr.includes("config") ||
+    srcType.includes("config") ||
+    srcType.includes("yaml") ||
+    src.includes("config") ||
+    src.includes("setting") ||
+    src.includes("manifest") ||
+    msg.includes("config") ||
+    msg.includes("manifest") ||
+    msg.includes("tunable") ||
+    msg.includes("parameter")
+  ) {
+    return "configuration";
+  }
+
+  // 4. Robotic messages / ROS2 / Kinematics
+  if (
+    laneStr.includes("robotic") ||
+    laneStr.includes("ros") ||
+    srcType.includes("robotic") ||
+    srcType.includes("mcap") ||
+    srcType.includes("bag") ||
+    src.includes("ros") ||
+    src.includes("teleop") ||
+    src.includes("motor") ||
+    src.includes("actuator") ||
+    src.includes("canbus") ||
+    src.includes("sensor") ||
+    src.includes("node") ||
+    msg.includes("ros") ||
+    msg.includes("topic") ||
+    msg.includes("joint") ||
+    msg.includes("cmd_vel") ||
+    msg.includes("actuator") ||
+    msg.includes("odometry")
+  ) {
+    return "robotic-message";
+  }
+
+  // 5. Distributed trace / RPC / Span
+  if (
+    laneStr.includes("trace") ||
+    srcType.includes("trace") ||
+    srcType.includes("span") ||
+    src.includes("trace") ||
+    src.includes("grpc") ||
+    src.includes("rpc") ||
+    msg.includes("trace") ||
+    msg.includes("span") ||
+    msg.includes("rpc")
+  ) {
+    return "trace";
+  }
+
+  // 6. Metrics / Telemetry / Time-series
+  if (
+    laneStr.includes("metric") ||
+    srcType.includes("metric") ||
+    srcType.includes("telemetry") ||
+    srcType.includes("csv") ||
+    src.includes("metric") ||
+    src.includes("heap") ||
+    src.includes("mem") ||
+    src.includes("cpu") ||
+    src.includes("gpu") ||
+    msg.includes("metric") ||
+    msg.includes("spike") ||
+    msg.includes("exhaustion") ||
+    msg.includes("utilization") ||
+    msg.includes("mb") ||
+    msg.includes("memory") ||
+    msg.includes("oom")
+  ) {
+    return "metric";
+  }
+
+  // 7. Operator observation
+  if (
+    laneStr.includes("operator") ||
+    laneStr.includes("observation") ||
+    srcType.includes("operator") ||
+    src.includes("operator") ||
+    src.includes("human") ||
+    msg.includes("observed") ||
+    msg.includes("operator") ||
+    msg.includes("manual override") ||
+    msg.includes("visual inspection")
+  ) {
+    return "operator-observation";
+  }
+
+  // 8. Default application log
+  return "application-log";
+}
+
 function RealityRewindContent() {
   // `useSearchParams` must sit with the top-level hooks — calling it after an
   // early return would change the hook count between renders and throw
@@ -180,7 +315,8 @@ function RealityRewindContent() {
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [analysis, setAnalysis] = useState<TemporalAnalysis | null>(null);
-  const [lanes, setLanes] = useState<Lane[]>([]);
+  const [incidentsList, setIncidentsList] = useState<Array<{ id: string; title?: string; system_name?: string }>>([]);
+  const [loadingGolden, setLoadingGolden] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -205,14 +341,51 @@ function RealityRewindContent() {
   const [clockDomains, setClockDomains] = useState<Record<string, number[]>>({});
   const animationFrameRef = useRef<number>(0);
 
+  // Sync ref for setIncidentId to avoid infinite effect loops
+  const setIncidentIdRef = useRef(setIncidentId);
+  useEffect(() => {
+    setIncidentIdRef.current = setIncidentId;
+  }, [setIncidentId]);
+
+  // Fetch available incidents for quick switching and fallback
+  useEffect(() => {
+    let mounted = true;
+    const fetchIncidents = async () => {
+      try {
+        const res = typeof api?.list === "function" ? await api.list() : null;
+        const items = Array.isArray(res?.incidents) ? res.incidents : [];
+        if (!mounted) return;
+        setIncidentsList(items);
+        const setId = setIncidentIdRef.current;
+        if (!incidentId && items.length > 0 && typeof setId === "function") {
+          setId(items[0].id);
+        }
+      } catch {
+        // incident list is best-effort
+      }
+    };
+    fetchIncidents();
+    return () => {
+      mounted = false;
+    };
+  }, [incidentId]);
+
   // Load timeline and temporal data
   const loadData = async (id: string) => {
     setLoading(true);
     setError(null);
     try {
       const tl = await api.getTimeline(id);
-      if (tl && tl.timeline_events) {
-        setEvents(tl.timeline_events);
+      if (tl && Array.isArray(tl.timeline_events) && tl.timeline_events.length > 0) {
+        const sanitized = tl.timeline_events.map((ev: TimelineEvent, idx: number) => ({
+          ...ev,
+          event_id: ev.event_id || `EVT-${String(idx + 1).padStart(4, "0")}`,
+          relative_timestamp_s:
+            typeof ev.relative_timestamp_s === "number" && !isNaN(ev.relative_timestamp_s)
+              ? ev.relative_timestamp_s
+              : idx * 0.5,
+        }));
+        setEvents(sanitized);
         if (tl.clock_alignment) {
           setClockDomains(tl.clock_alignment as Record<string, number[]>);
         }
@@ -221,14 +394,34 @@ function RealityRewindContent() {
         setClockDomains({});
       }
 
-      const ta = await api.getTemporalAnalysis(id);
-      if (ta) {
-        setAnalysis(ta);
+      try {
+        const ta = await api.getTemporalAnalysis(id);
+        if (ta) {
+          setAnalysis(ta);
+        }
+      } catch {
+        // temporal analysis is progressive / best-effort
       }
     } catch (e: any) {
       setError(e.message || "Failed to load timeline events");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLoadGolden = async () => {
+    setLoadingGolden(true);
+    try {
+      const res = await api.create(true);
+      if (res && res.incident_id) {
+        setIncidentId(res.incident_id);
+        await loadData(res.incident_id);
+        notify(`Golden incident ${res.incident_id} loaded successfully`, "success");
+      }
+    } catch (err: any) {
+      notify(err.message || "Failed to load golden incident", "error");
+    } finally {
+      setLoadingGolden(false);
     }
   };
 
@@ -293,74 +486,6 @@ function RealityRewindContent() {
     }
   }, [incidentId, judgeMode, engineerMode]);
 
-  // Group events into predefined lanes
-  const groupedLanes: Lane[] = useMemo(() => {
-    if (!events.length) {
-      return (Object.keys(laneConfigs) as LaneId[]).map((id) => ({
-        id,
-        name: laneConfigs[id].name,
-        color: laneConfigs[id].color,
-        events: [],
-      }));
-    }
-
-    const laneMap: Partial<Record<LaneId, TimelineEvent[]>> = {
-      deployment: [],
-      configuration: [],
-      "application-log": [],
-      trace: [],
-      metric: [],
-      "robotic-message": [],
-      "operator-observation": [],
-      "safety-event": [],
-    };
-
-    events.forEach((ev) => {
-      let lane: LaneId | undefined;
-      const sourceType = (ev.source_type || "").toLowerCase();
-      const laneFromEvent = (ev.lane || "").toLowerCase();
-      const source = (ev.source || "").toLowerCase();
-      const message = (ev.message || "").toLowerCase();
-
-      if (sourceType.includes("deploy") || laneFromEvent.includes("deploy") || message.includes("deploy")) {
-        lane = "deployment";
-      } else if (sourceType.includes("config") || laneFromEvent.includes("config") || message.includes("config")) {
-        lane = "configuration";
-      } else if (sourceType.includes("log") || laneFromEvent.includes("log") || source.includes("log") || message.includes("log")) {
-        lane = "application-log";
-      } else if (sourceType.includes("trace") || laneFromEvent.includes("trace") || message.includes("trace")) {
-        lane = "trace";
-      } else if (sourceType.includes("metric") || laneFromEvent.includes("metric") || message.includes("metric")) {
-        lane = "metric";
-      } else if (sourceType.includes("robotic") || laneFromEvent.includes("robotic") || source.includes("ros") || message.includes("robot")) {
-        lane = "robotic-message";
-      } else if (sourceType.includes("operator") || laneFromEvent.includes("operator") || message.includes("operator")) {
-        lane = "operator-observation";
-      } else if (
-        sourceType.includes("safety") ||
-        laneFromEvent.includes("safety") ||
-        message.includes("halt") ||
-        message.includes("stop") ||
-        message.includes("emergency")
-      ) {
-        lane = "safety-event";
-      } else {
-        lane = "application-log";
-      }
-
-      if (lane && laneMap[lane]) {
-        laneMap[lane]!.push(ev);
-      }
-    });
-
-    return (Object.keys(laneConfigs) as LaneId[]).map((id) => ({
-      id,
-      name: laneConfigs[id].name,
-      color: laneConfigs[id].color,
-      events: laneMap[id] ?? [],
-    }));
-  }, [events]);
-
   // Determine time range from events
   useEffect(() => {
     if (!events.length) {
@@ -390,12 +515,14 @@ function RealityRewindContent() {
             (ev.message?.toLowerCase().includes(q) ?? false) ||
             (ev.source?.toLowerCase().includes(q) ?? false) ||
             (ev.source_type?.toLowerCase().includes(q) ?? false) ||
-            (ev.lane?.toLowerCase().includes(q) ?? false);
+            (ev.lane?.toLowerCase().includes(q) ?? false) ||
+            (ev.event_id?.toLowerCase().includes(q) ?? false);
           if (!matches) return false;
         }
         if (sourceFilter.length > 0) {
+          const resolved = resolveEventLane(ev);
           const src = ev.source_type ?? ev.lane ?? "";
-          if (!sourceFilter.includes(src)) return false;
+          if (!sourceFilter.includes(src) && !sourceFilter.includes(resolved)) return false;
         }
         if (evidenceStatusFilter.length > 0) {
           const status = ev.status ?? "";
@@ -424,20 +551,35 @@ function RealityRewindContent() {
     severityFilter,
   ]);
 
-  // Update lanes with filtered events
-  useEffect(() => {
-    setLanes(
-      groupedLanes.map((lane) => {
-        const laneEvents = filteredEvents.filter(
-          (ev) =>
-            ((ev.source_type ?? ev.lane ?? "").toLowerCase() === lane.id ||
-              (ev.source_type ?? "").toLowerCase().includes(lane.id) ||
-              (ev.lane ?? "").toLowerCase().includes(lane.id))
-        );
-        return { ...lane, events: laneEvents };
-      })
-    );
-  }, [filteredEvents, groupedLanes]);
+  // Group filtered events directly into predefined lanes
+  const lanes: Lane[] = useMemo(() => {
+    const laneMap: Record<LaneId, TimelineEvent[]> = {
+      deployment: [],
+      configuration: [],
+      "application-log": [],
+      trace: [],
+      metric: [],
+      "robotic-message": [],
+      "operator-observation": [],
+      "safety-event": [],
+    };
+
+    filteredEvents.forEach((ev) => {
+      const laneId = resolveEventLane(ev);
+      if (laneMap[laneId]) {
+        laneMap[laneId].push(ev);
+      } else {
+        laneMap["application-log"].push(ev);
+      }
+    });
+
+    return (Object.keys(laneConfigs) as LaneId[]).map((id) => ({
+      id,
+      name: laneConfigs[id].name,
+      color: laneConfigs[id].color,
+      events: laneMap[id] ?? [],
+    }));
+  }, [filteredEvents]);
 
   // Playback animation loop
   useEffect(() => {
@@ -752,6 +894,51 @@ function RealityRewindContent() {
             {events.length} Synchronized Events ({timeRange.end.toFixed(3)}s span)
           </Badge>
         }
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {incidentsList.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-[var(--color-fg-muted)] font-mono">Incident:</span>
+                <select
+                  aria-label="Select active incident"
+                  value={incidentId || incidentsList[0]?.id || ""}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    if (nextId) setIncidentId(nextId);
+                  }}
+                  className="h-8 rounded-[var(--radius-sm)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)] px-2.5 py-1 text-xs font-mono text-[var(--color-fg-default)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-fg)]"
+                >
+                  {incidentsList.map((inc) => (
+                    <option key={inc.id} value={inc.id}>
+                      {inc.id} {inc.title ? `— ${inc.title}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (incidentId) loadData(incidentId);
+              }}
+              disabled={loading || !incidentId}
+              title="Refresh timeline data"
+              leadingIcon={<RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />}
+            >
+              Refresh
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleLoadGolden}
+              disabled={loadingGolden || loading}
+              leadingIcon={loadingGolden ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            >
+              {loadingGolden ? "Loading..." : "Load Golden (CAU-0001)"}
+            </Button>
+          </div>
+        }
       />
 
       {/*
@@ -816,6 +1003,16 @@ function RealityRewindContent() {
             </Button>
           }
         />
+      )}
+
+      {/* Notice banner when no active incident is selected */}
+      {!incidentId && !loading && (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)] text-xs text-[var(--color-fg-muted)]">
+          <span>No active incident selected. Choose an incident from the header dropdown or load the golden benchmark (CAU-0001).</span>
+          <Button variant="secondary" size="sm" onClick={handleLoadGolden} disabled={loadingGolden} leadingIcon={<Sparkles className="w-3.5 h-3.5" />}>
+            {loadingGolden ? "Loading..." : "Load Golden (CAU-0001)"}
+          </Button>
+        </div>
       )}
 
       {/* Main Unified Content Column with Clean Inter-Component Spacing */}

@@ -10,12 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 import mimetypes
-import shutil
 from cauveris.schemas.incident import Incident, EvidenceItem
 from cauveris.schemas.base import StatusLabel
 from cauveris.security import scan_for_secrets, compute_file_hash, validate_file_size
 from cauveris.bundles import resolve_bundle
-from cauveris.config import get_settings
+from cauveris.config import Settings, get_settings
 from cauveris.inventory.artifact_inventory import ArtifactInventory, ContentTypeDetector
 from cauveris.capability.planner import CapabilityPlanner
 from cauveris.discovery.repo_discovery import RepositoryDiscovery
@@ -45,22 +44,41 @@ def _parse_datetime_value(value: Any) -> Optional[datetime]:
             return None
 
 
-def extract_zip_safely(zip_path: Path, extract_to: Path) -> List[Path]:
+def extract_zip_safely(
+    zip_path: Path, extract_to: Path, settings: Optional[Settings] = None
+) -> List[Path]:
     """
     Safely extract a ZIP file preventing path traversal attacks.
 
     Args:
         zip_path: Path to the ZIP file
         extract_to: Directory to extract to
+        settings: Policy to apply; defaults to the global settings.  Callers
+            that already hold a settings instance pass it in, so the ZIP path
+            enforces exactly the same caps as the tar and 7z paths.
 
     Returns:
         List of extracted file paths
+
+    Every failure mode raises ``ValueError`` - a policy violation, a corrupt
+    archive, or a password-protected archive - so callers can turn it into a
+    4xx instead of a 500.  The size caps are checked twice: once against the
+    sizes the archive declares, and again against the bytes actually written
+    while inflating.  CPython's ``zipfile`` already bounds a member's output
+    by its declared size, so the second check is defence in depth - it keeps
+    the cap true even if that behaviour ever changes, and it enforces the
+    archive-wide cap against real output rather than summed headers.
     """
     extracted_files = []
-    settings = get_settings()
+    settings = settings or get_settings()
     extract_to.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+    try:
+        zip_ref = zipfile.ZipFile(zip_path, "r")
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"Archive is corrupt: {exc}")
+
+    with zip_ref:
         members = zip_ref.infolist()
         if not members:
             raise ValueError("ZIP archive is empty")
@@ -70,6 +88,8 @@ def extract_zip_safely(zip_path: Path, extract_to: Path) -> List[Path]:
         if uncompressed_size > settings.max_archive_uncompressed_size:
             raise ValueError("ZIP archive exceeds the uncompressed-size threshold")
         max_file_size = getattr(settings, "max_archive_file_size", 50 * 1024 * 1024)
+        max_total_size = settings.max_archive_uncompressed_size
+        bytes_written_total = 0
         for member_info in members:
             member = member_info.filename
             norm_member = member.replace("\\", "/")
@@ -81,7 +101,8 @@ def extract_zip_safely(zip_path: Path, extract_to: Path) -> List[Path]:
             if is_symlink:
                 raise ValueError(f"Symlinks are forbidden in archive: {member}")
 
-            # Per-file size check
+            # Per-file size check (declared size - a fast rejection before we
+            # spend time inflating it; the real cap is applied below).
             if member_info.file_size > max_file_size:
                 raise ValueError(f"File {member} exceeds maximum permitted size")
 
@@ -102,8 +123,44 @@ def extract_zip_safely(zip_path: Path, extract_to: Path) -> List[Path]:
                 continue
 
             safe_path.parent.mkdir(parents=True, exist_ok=True)
-            with zip_ref.open(member_info) as source, open(safe_path, "wb") as target:
-                shutil.copyfileobj(source, target)
+            written = 0
+            try:
+                source = zip_ref.open(member_info)
+            except RuntimeError as exc:
+                # zipfile raises RuntimeError for password-protected members.
+                raise ValueError(
+                    f"Archive member {member} is password-protected, which is not supported"
+                ) from exc
+            except zipfile.BadZipFile as exc:
+                raise ValueError(f"Archive is corrupt: {exc}") from exc
+            try:
+                with source, open(safe_path, "wb") as target:
+                    while True:
+                        chunk = source.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        written += len(chunk)
+                        bytes_written_total += len(chunk)
+                        if written > max_file_size:
+                            raise ValueError(f"File {member} exceeds maximum permitted size")
+                        if bytes_written_total > max_total_size:
+                            raise ValueError("ZIP archive exceeds the uncompressed-size threshold")
+                        target.write(chunk)
+            except (RuntimeError, zipfile.BadZipFile) as exc:
+                try:
+                    if safe_path.exists():
+                        safe_path.unlink()
+                except OSError:
+                    pass
+                raise ValueError(f"Archive member {member} could not be extracted: {exc}") from exc
+            except BaseException:
+                # Never leave a partially-inflated file behind.
+                try:
+                    if safe_path.exists():
+                        safe_path.unlink()
+                except OSError:
+                    pass
+                raise
 
             extracted_files.append(safe_path)
 

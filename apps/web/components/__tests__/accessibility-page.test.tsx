@@ -62,7 +62,6 @@ vi.mock('@/lib/useShell', () => ({
       inspectorData: { mode: null },
       trayState: 'compact',
       activities: [],
-      commandPaletteOpen: false,
     },
     setActiveNav: vi.fn(),
     toggleNavCollapse: vi.fn(),
@@ -74,8 +73,6 @@ vi.mock('@/lib/useShell', () => ({
     addActivity: vi.fn(),
     removeActivity: vi.fn(),
     clearActivities: vi.fn(),
-    toggleCommandPalette: vi.fn(),
-    setCommandPalette: vi.fn(),
   }),
   ShellProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -199,10 +196,6 @@ vi.mock('@/hooks/useMediaQuery', () => ({
   useMediaQuery: () => false,
 }));
 
-vi.mock('@/hooks/useKeyboardShortcut', () => ({
-  useKeyboardShortcuts: vi.fn(),
-}));
-
 // Mock Notification
 vi.mock('@/components/Notification', () => ({
   notify: vi.fn(),
@@ -219,7 +212,7 @@ vi.mock('lucide-react', () => {
     'AlertCircle', 'CheckCircle', 'CheckCircle2', 'XCircle', 'ChevronUp', 'ChevronDown', 'Filter', 'Trash2',
     'Palette', 'Bell', 'Keyboard', 'Command', 'Globe', 'Moon', 'Sun', 'Monitor', 'Key', 'Server',
     'Sliders', 'Copy', 'Magnet', 'ZoomIn', 'ZoomOut', 'Maximize', 'ArrowLeft', 'ArrowRight', 'SkipBack', 'SkipForward', 'Timer', 'Package',
-    'ShieldAlert', 'ShieldCheck', 'User', 'LogOut', 'FileCode',
+    'ShieldAlert', 'ShieldCheck', 'User', 'LogOut', 'FileCode', 'RefreshCw', 'Sparkles',
   ];
   const mocks: Record<string, any> = {};
   icons.forEach(name => {
@@ -522,7 +515,7 @@ describe('Accessibility Audit - Page Components', () => {
       expect(nav).toBeInTheDocument();
       // Tab buttons should have aria-selected
       const tabs = screen.getAllByRole('tab');
-      expect(tabs.length).toBe(6); // appearance, notifications, keyboard, privacy, data, advanced
+      expect(tabs.length).toBe(7); // appearance, notifications, commands, privacy, data, advanced, intake
       tabs.forEach((tab, i) => {
         expect(tab).toHaveAttribute('aria-selected');
         expect(tab.getAttribute('role')).toBe('tab');
@@ -559,12 +552,12 @@ describe('Accessibility Audit - Page Components', () => {
 
     it('should have proper input labels for form fields', () => {
       render(<SettingsPage />);
-      // Session timeout input
-      expect(screen.getByLabelText(/session timeout/i)).toBeInTheDocument();
-      // API endpoint input
-      expect(screen.getByLabelText(/api endpoint/i)).toBeInTheDocument();
-      // Max concurrent experiments input
-      expect(screen.getByLabelText(/max concurrent experiments/i)).toBeInTheDocument();
+      // Model API key input
+      expect(screen.getByLabelText(/model api key/i)).toBeInTheDocument();
+      // Gateway base URL input
+      expect(screen.getByLabelText(/gateway base url/i)).toBeInTheDocument();
+      // Fast model input
+      expect(screen.getByLabelText(/fast model/i)).toBeInTheDocument();
     });
   });
 

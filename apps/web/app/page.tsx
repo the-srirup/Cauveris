@@ -28,6 +28,7 @@ import {
   ShieldCheck,
   Activity,
   Layers,
+  Globe,
 } from "lucide-react";
 import {
   Button,
@@ -43,6 +44,8 @@ import {
 import { Dialog, ConfirmDialog } from "@/components/ui/Dialog";
 import { Table, type Column } from "@/components/ui/Table";
 import { AuthGate } from "@/components/AuthGate";
+import { IntakePanel, type IntakeResult } from "@/components/IntakePanel";
+import { CreateIncidentModal } from "@/components/CreateIncidentModal";
 import {
   api,
   Incident,
@@ -73,6 +76,13 @@ interface ActionableError {
   actionLabel?: string;
   onAction?: () => void;
 }
+
+// Picker accept list: archive extensions are refreshed from the deployment's
+// intake capabilities at mount. The fallback never offers formats the backend
+// cannot read (.rar is unsupported; .7z needs the optional 'archives' extra).
+const EVIDENCE_ACCEPT_EXTENSIONS = ".json,.jsonl,.ndjson,.csv,.yaml,.yml,.toml,.ini,.log,.txt,.md,.mcap";
+const FALLBACK_FILE_ACCEPT =
+  ".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz,.gz,.bz2,.xz," + EVIDENCE_ACCEPT_EXTENSIONS;
 
 export default function MissionControl() {
   return (
@@ -118,6 +128,8 @@ function MissionControlContent() {
   const [isValidating, setIsValidating] = useState<boolean>(false);
   const [isDraggingPackage, setIsDraggingPackage] = useState<boolean>(false);
   const [uploadManifest, setUploadManifest] = useState<{ name: string; size: number } | null>(null);
+  const [ingestSource, setIngestSource] = useState<string>("");
+  const [isIngesting, setIsIngesting] = useState<boolean>(false);
 
   // Actionable errors
   const [actionableError, setActionableError] = useState<ActionableError | null>(null);
@@ -125,9 +137,6 @@ function MissionControlContent() {
   // Modals & UI controls
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [showEvidenceDrawer, setShowEvidenceDrawer] = useState<boolean>(false);
-  const [newTitle, setNewTitle] = useState<string>("");
-  const [newSystemName, setNewSystemName] = useState<string>("");
-  const [newDescription, setNewDescription] = useState<string>("");
 
   // Engineer mode interactive simulation state
   const [simBatchWindow, setSimBatchWindow] = useState<number>(100);
@@ -138,6 +147,22 @@ function MissionControlContent() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Picker accept list derived from the deployment's intake capabilities, so
+  // the file dialog never offers formats the backend cannot actually read.
+  const [fileAccept, setFileAccept] = useState<string>(FALLBACK_FILE_ACCEPT);
+  useEffect(() => {
+    let cancelled = false;
+    try {
+      Promise.resolve(api.getIngestCapabilities?.())
+        .then((caps: any) => {
+          if (cancelled || !caps?.supported_archive_extensions?.length) return;
+          setFileAccept([...caps.supported_archive_extensions, EVIDENCE_ACCEPT_EXTENSIONS].join(","));
+        })
+        .catch(() => { /* keep the fallback list */ });
+    } catch { /* API unavailable in this context: keep the fallback list */ }
+    return () => { cancelled = true; };
+  }, []);
 
   // Health check
   const checkHealth = useCallback(async () => {
@@ -532,6 +557,62 @@ function MissionControlContent() {
     if (file) {
       processUploadFile(file);
     }
+    e.target.value = "";
+  };
+
+  const handleIngestFromSource = async () => {
+    const source = ingestSource.trim();
+    if (!source || isIngesting) return;
+    setIsIngesting(true);
+    try {
+      notify(`Ingesting from ${source} ...`, "info");
+      const job = await api.ingestFromSource(source);
+      notify(`Ingest job queued (${job.source_kind}); fetching and extracting...`, "info");
+      // Poll the ingest job until it reaches a terminal state (downloads can take a while).
+      const deadline = Date.now() + 10 * 60 * 1000;
+      let status = job.status;
+      let result: any = null;
+      let jobError: string | null = null;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const polled = await api.getIngestJob(job.job_id);
+        status = polled.status;
+        result = polled.result ?? null;
+        jobError = polled.error ?? null;
+        if (["completed", "failed", "dead_letter", "cancelled"].includes(status)) break;
+      }
+      if (status !== "completed" || !result?.incident_id) {
+        throw new Error(jobError || result?.error || `Ingest job ended with status "${status}"`);
+      }
+      const newId = result.incident_id;
+      setIncidentId(newId);
+      setIsDemonstration(false);
+      await loadIncidentsList();
+      await loadIncidentDetails(newId);
+      notify(`Ingested from link: ${result.evidence_count ?? 0} artifacts indexed for ${newId}`, "success");
+      setIngestSource("");
+    } catch (err: any) {
+      notify(err.message || "Link ingestion failed", "error");
+    } finally {
+      setIsIngesting(false);
+    }
+  };
+
+  const handleIntakeSuccess = async (result: IntakeResult) => {
+    setIncidentId(result.incident_id);
+    setIsDemonstration(false);
+    await loadIncidentsList();
+    await loadIncidentDetails(result.incident_id);
+    notify(`Ingested ${result.incident_id}: ${result.evidence_count ?? 0} artifacts indexed`, "success");
+  };
+
+  const handleIncidentCreated = async (createdId: string) => {
+    setIncidentId(createdId);
+    setIsDemonstration(false);
+    setShowCreateModal(false);
+    await loadIncidentsList();
+    await loadIncidentDetails(createdId);
+    notify(`Created incident ${createdId}`, "success");
   };
 
   const isPipelineActive = pipelineState === "RUNNING";
@@ -662,7 +743,13 @@ function MissionControlContent() {
 
   return (
     <div className="w-full space-y-5">
-      <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".zip,.tar.gz" className="hidden" />
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept={fileAccept}
+        className="hidden"
+      />
 
       {/* Standard Page Header */}
       <PageHeader
@@ -682,12 +769,12 @@ function MissionControlContent() {
         actions={
           <div className="flex items-center gap-2 flex-wrap">
             <Button
-              variant="outline"
+              variant="primary"
               size="sm"
               onClick={() => setShowCreateModal(true)}
               disabled={loading || isPipelineActive}
               leadingIcon={<Plus className="h-3.5 w-3.5" />}
-              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] shadow-xs"
             >
               Create Incident
             </Button>
@@ -702,6 +789,11 @@ function MissionControlContent() {
             >
               Upload incident package
             </Button>
+
+            <IntakePanel
+              onIngestSuccess={handleIntakeSuccess}
+              disabled={loading || isPipelineActive}
+            />
 
             <Button
               variant="outline"
@@ -854,7 +946,7 @@ function MissionControlContent() {
             </div>
 
             <h2 className="text-base font-bold text-[var(--text-primary,#f4f4f5)] mb-1">
-              Drop Incident Package Archive (.zip, .tar.gz)
+              Drop Incident Package (any archive or evidence file)
             </h2>
             <p className="text-xs text-[var(--text-tertiary,#71717a)] max-w-md mb-4 font-sans">
               Cauveris securely inspects magic bytes, calculates SHA-256 hashes, normalizes telemetry signals with strict provenance, and refuses unsupported repairs safely.
@@ -893,7 +985,7 @@ function MissionControlContent() {
 
             <div className="mt-6 pt-4 border-t border-[var(--divider,#27272a)] flex items-center gap-6 text-[11px] text-[var(--text-tertiary,#71717a)]">
               <span>Limit: 50MB</span>
-              <span>Formats: ZIP, TAR, MCAP, JSONL</span>
+              <span>Formats: ZIP / TAR / GZ / BZ2 / XZ / JSON / JSONL / YAML / CSV / LOG / MCAP &amp; more — or paste a GitHub / PyPI / npm / HTTPS link above</span>
               <span>Execution: Sandboxed / No untrusted code execution</span>
             </div>
           </div>
@@ -1076,88 +1168,11 @@ function MissionControlContent() {
       )}
 
       {/* Create Incident Modal */}
-      <Dialog
-        open={showCreateModal}
+      <CreateIncidentModal
+        isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        title="Create Incident Investigation Workspace"
-      >
-        <div className="space-y-4 p-4 font-mono text-xs">
-          <div>
-            <label htmlFor="new-incident-title" className="block text-[var(--text-secondary,#a1a1aa)] mb-1 uppercase text-[10.5px]">
-              Incident Title
-            </label>
-            <input
-              id="new-incident-title"
-              type="text"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="e.g. Navigation Planner Memory Exhaustion"
-              className="w-full p-2 bg-[var(--workspace,#121215)] border border-[var(--divider,#27272a)] rounded-[var(--radius-sm,4px)] text-[var(--text-primary,#f4f4f5)] focus:outline-none focus:border-zinc-400"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="new-incident-system" className="block text-[var(--text-secondary,#a1a1aa)] mb-1 uppercase text-[10.5px]">
-              System Identifier
-            </label>
-            <input
-              id="new-incident-system"
-              type="text"
-              value={newSystemName}
-              onChange={(e) => setNewSystemName(e.target.value)}
-              placeholder="e.g. AMR-NAV-04"
-              className="w-full p-2 bg-[var(--workspace,#121215)] border border-[var(--divider,#27272a)] rounded-[var(--radius-sm,4px)] text-[var(--text-primary,#f4f4f5)] focus:outline-none focus:border-zinc-400"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="new-incident-description" className="block text-[var(--text-secondary,#a1a1aa)] mb-1 uppercase text-[10.5px]">
-              Description
-            </label>
-            <textarea
-              id="new-incident-description"
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              placeholder="e.g. Memory spike during sensor processing caused worker OOM kill"
-              rows={2}
-              className="w-full p-2 bg-[var(--workspace,#121215)] border border-[var(--divider,#27272a)] rounded-[var(--radius-sm,4px)] text-[var(--text-primary,#f4f4f5)] focus:outline-none focus:border-zinc-400 resize-none"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowCreateModal(false)}
-              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={async () => {
-                try {
-                  const res = await api.create(false, {
-                    title: newTitle || "Untitled Incident",
-                    system_name: newSystemName,
-                    description: newDescription,
-                  });
-                  setIncidentId(res.incident_id);
-                  setShowCreateModal(false);
-                  await loadIncidentsList();
-                  notify(`Created incident ${res.incident_id}`, "success");
-                } catch (err: any) {
-                  notify(err.message || "Failed to create incident", "error");
-                }
-              }}
-              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-            >
-              Create Workspace
-            </Button>
-          </div>
-        </div>
-      </Dialog>
+        onSuccess={handleIncidentCreated}
+      />
     </div>
   );
 }

@@ -80,7 +80,7 @@ const mockShellState = {
   inspectorData: { mode: null },
   trayState: 'compact',
   activities: [],
-  commandPaletteOpen: true,
+  commandPaletteOpen: false,
 };
 
 const ShellContextValue = {

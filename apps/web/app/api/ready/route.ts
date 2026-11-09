@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { api } from "@/lib/api";
+import { APP_VERSION } from "@/lib/version";
 
 /**
  * Readiness check endpoint for Next.js frontend
@@ -60,7 +61,7 @@ export async function GET(): Promise<NextResponse> {
   return NextResponse.json({
     status: allReady ? "ready" : "not_ready",
     service: "cauveris-web",
-    version: process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0",
+    version: APP_VERSION,
     timestamp: new Date().toISOString(),
     latency_ms: totalLatencyMs,
     checks,

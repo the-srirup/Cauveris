@@ -21,7 +21,7 @@ vi.mock('lucide-react', () => {
     'Palette', 'Bell', 'Keyboard', 'Command', 'Globe', 'Moon', 'Sun', 'Monitor', 'Key', 'Server',
     'Sliders', 'Copy',
     'Magnet', 'ZoomIn', 'ZoomOut', 'Maximize', 'ArrowLeft', 'ArrowRight', 'SkipBack', 'SkipForward', 'Timer', 'Package', 'Wrench',
-  'ShieldAlert', 'ShieldCheck',
+    'ShieldAlert', 'ShieldCheck', 'User', 'LogOut', 'FileCode', 'RefreshCw', 'Sparkles',
   ];
   const mocks: Record<string, any> = {};
   icons.forEach(name => {
@@ -83,7 +83,6 @@ vi.mock("@/lib/useShell", () => ({
       inspectorData: { mode: null },
       trayState: 'compact',
       activities: [],
-      commandPaletteOpen: false,
     },
     setActiveNav: vi.fn(),
     toggleNavCollapse: vi.fn(),
@@ -95,8 +94,6 @@ vi.mock("@/lib/useShell", () => ({
     addActivity: vi.fn(),
     removeActivity: vi.fn(),
     clearActivities: vi.fn(),
-    toggleCommandPalette: vi.fn(),
-    setCommandPalette: vi.fn(),
   }),
   ShellProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useActiveIncident: () => ({
@@ -190,9 +187,6 @@ vi.mock("@/hooks/useMediaQuery", () => ({
   useMediaQuery: () => false,
 }));
 
-vi.mock("@/hooks/useKeyboardShortcut", () => ({
-  useKeyboardShortcuts: vi.fn(),
-}));
 
 // Mock Notification
 vi.mock("@/components/Notification", () => ({

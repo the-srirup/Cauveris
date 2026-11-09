@@ -55,10 +55,6 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-vi.mock("@/hooks/useKeyboardShortcut", () => ({
-  useKeyboardShortcuts: vi.fn(),
-}));
-
 // Import after mocks
 import { CommandPalette } from "@/components/CommandPalette";
 import { ShellProvider } from "@/lib/useShell";
@@ -107,24 +103,6 @@ describe("CommandPalette", () => {
     expect(screen.getByText("Views")).toBeInTheDocument();
     expect(screen.getByText("Export")).toBeInTheDocument();
     expect(screen.getByText("Demo")).toBeInTheDocument();
-  });
-
-  it("shows correct keyboard shortcuts", () => {
-    render(
-      <ShellProvider>
-        <CommandPalette />
-      </ShellProvider>
-    );
-    // Check a few key shortcuts - they are rendered as individual kbd elements
-    // Use getAllByText and check counts since some shortcuts share letters
-    const cKeys = screen.getAllByText("C");
-    expect(cKeys.length).toBeGreaterThanOrEqual(2); // Create Incident, Cancel Investigation
-    const iKeys = screen.getAllByText("I");
-    expect(iKeys.length).toBeGreaterThanOrEqual(1);
-    const lKeys = screen.getAllByText("L");
-    expect(lKeys.length).toBeGreaterThanOrEqual(1);
-    const gKeys = screen.getAllByText("G");
-    expect(gKeys.length).toBeGreaterThanOrEqual(1);
   });
 
   it("filters commands by search query", () => {

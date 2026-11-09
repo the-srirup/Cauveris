@@ -214,11 +214,13 @@ class TimelineBuilder:
                 for event in timeline_events
                 if event.get("timestamp_ns", 0) > 0
             )
-            for event in timeline_events:
+            for idx, event in enumerate(timeline_events):
                 t_ns = event.get("timestamp_ns", base_time)
                 rel_ns = t_ns - base_time
                 event["relative_timestamp_ns"] = rel_ns
                 event["relative_timestamp_s"] = round(rel_ns / 1_000_000_000.0, 3)
+                if not event.get("event_id"):
+                    event["event_id"] = f"EVT-{idx + 1:04d}"
 
         incident.timeline_events = timeline_events
         logger.info(f"Built timeline with {len(timeline_events)} synchronized events")

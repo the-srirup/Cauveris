@@ -21,7 +21,7 @@ describe("Frontend Real-Backend Integration Contracts", () => {
     vi.spyOn(api, "health").mockResolvedValue({
       status: "healthy",
       service: "cauveris",
-      version: "0.1.0",
+      version: "3.1.0",
       latency_ms: 10,
     });
     vi.spyOn(api, "modelHealth").mockResolvedValue({
@@ -45,7 +45,7 @@ describe("Frontend Real-Backend Integration Contracts", () => {
     vi.spyOn(api, "health").mockResolvedValue({
       status: "healthy",
       service: "cauveris",
-      version: "0.1.0",
+      version: "3.1.0",
     });
     vi.spyOn(api, "modelHealth").mockResolvedValue({
       status: "healthy",

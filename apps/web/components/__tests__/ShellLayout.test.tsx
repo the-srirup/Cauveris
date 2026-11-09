@@ -83,12 +83,12 @@ vi.mock("@/lib/useShell", () => ({
         },
       },
       trayState: 'expanded',
+      commandPaletteOpen: false,
       activities: [
         { id: "act-1", type: "pipeline", message: "Pipeline started", timestamp: Date.now() - 10000, stageId: "INGEST", dismissible: true },
         { id: "act-2", type: "system", message: "Backend connected", timestamp: Date.now() - 5000, dismissible: false },
         { id: "act-3", type: "error", message: "Validation failed", timestamp: Date.now(), details: "Missing required evidence", dismissible: true },
       ],
-      commandPaletteOpen: false,
     },
     setActiveNav: vi.fn(),
     toggleNavCollapse: vi.fn(),
@@ -100,6 +100,7 @@ vi.mock("@/lib/useShell", () => ({
     addActivity: vi.fn(),
     removeActivity: vi.fn(),
     clearActivities: vi.fn(),
+    setNavDrawer: vi.fn(),
     toggleCommandPalette: vi.fn(),
     setCommandPalette: vi.fn(),
   }),
@@ -136,10 +137,6 @@ vi.mock("@/hooks/useMediaQuery", () => ({
     isDesktop: true,
   }),
   useMediaQuery: () => false,
-}));
-
-vi.mock("@/hooks/useKeyboardShortcut", () => ({
-  useKeyboardShortcuts: vi.fn(),
 }));
 
 // Mock Tooltip component
@@ -192,7 +189,6 @@ import Sidebar from "@/components/Sidebar";
 import { TopContextBar } from "@/components/TopContextBar";
 import { RightInspector } from "@/components/RightInspector";
 import { BottomActivityTray } from "@/components/BottomActivityTray";
-import { CommandPalette } from "@/components/CommandPalette";
 import { NotificationContainer } from "@/components/Notification";
 
 describe("Shell Layout Integration", () => {
@@ -203,7 +199,6 @@ describe("Shell Layout Integration", () => {
         <TopContextBar />
         <RightInspector />
         <BottomActivityTray />
-        <CommandPalette />
         <NotificationContainer />
       </ShellProvider>
     );
@@ -251,20 +246,6 @@ describe("Shell Layout Integration", () => {
   it("top bar shows system status", () => {
     renderShell();
     expect(screen.getByText("online")).toBeInTheDocument();
-  });
-
-  it("keyboard shortcuts prevent default", () => {
-    renderShell();
-    // Test Cmd+K
-    const event = new KeyboardEvent("keydown", { key: "k", metaKey: true });
-    document.dispatchEvent(event);
-    // Should be prevented by the script in layout
-    expect(true).toBeTruthy();
-  });
-
-  it("command palette opens with Cmd+K", () => {
-    // This would require integration with the keyboard shortcut handler
-    expect(true).toBeTruthy();
   });
 
   it("sidebar collapses/expands", () => {

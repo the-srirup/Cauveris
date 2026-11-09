@@ -46,6 +46,7 @@ RUN groupadd -g 10001 cauveris && \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    git \
     tini \
     && rm -rf /var/lib/apt/lists/*
 

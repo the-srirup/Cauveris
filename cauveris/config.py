@@ -70,6 +70,84 @@ class Settings:
             os.getenv("CAUVERIS_MAX_ARCHIVE_UNCOMPRESSED_SIZE", "536870912")
         )
     )
+    max_archive_file_size: int = field(
+        default_factory=lambda: int(os.getenv("CAUVERIS_MAX_ARCHIVE_FILE_SIZE", "52428800"))
+    )  # 50MB per extracted member
+
+    # Universal source intake: remote URL fetching (GitHub/PyPI/npm/generic HTTPS).
+    # SSRF posture: https-only, no userinfo, host allowlist below (or any public
+    # host when url_allow_any_public_host=true), and every DNS answer is checked
+    # against loopback/private/link-local/metadata ranges before connecting.
+    url_ingestion_enabled: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_URL_INGESTION_ENABLED", "true").lower()
+        == "true"
+    )
+    # Comma-separated host allowlist; supports "*.example.com" wildcard suffixes.
+    # Empty string means the built-in market-standard defaults (GitHub, GitLab,
+    # PyPI, npm). Entries are ADDED to the built-ins.
+    url_allowed_hosts: str = field(
+        default_factory=lambda: os.getenv("CAUVERIS_URL_ALLOWED_HOSTS", "")
+    )
+    url_allow_any_public_host: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_URL_ALLOW_ANY_PUBLIC_HOST", "false").lower()
+        == "true"
+    )
+    # Hard cap on bytes downloaded from a URL; 0 means "use max_upload_size".
+    max_download_size: int = field(
+        default_factory=lambda: int(os.getenv("CAUVERIS_MAX_DOWNLOAD_SIZE", "0"))
+    )
+    url_fetch_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv("CAUVERIS_URL_FETCH_TIMEOUT_SECONDS", "120"))
+    )
+    url_max_redirects: int = field(
+        default_factory=lambda: int(os.getenv("CAUVERIS_URL_MAX_REDIRECTS", "5"))
+    )
+    # Optional outbound proxy for ALL URL fetches (e.g. corporate egress proxy).
+    # Example: "http://proxy.corp:8080". Disabled by default.
+    url_fetch_proxy: Optional[str] = field(
+        default_factory=lambda: os.getenv("CAUVERIS_URL_FETCH_PROXY") or None
+    )
+    # Optional tokens for authenticated fetches (private repos, higher rate
+    # limits). Read from env only, attached only to the matching host, never
+    # logged or stored in provenance.
+    github_token: Optional[str] = field(
+        default_factory=lambda: os.getenv("CAUVERIS_GITHUB_TOKEN") or None
+    )
+    gitlab_token: Optional[str] = field(
+        default_factory=lambda: os.getenv("CAUVERIS_GITLAB_TOKEN") or None
+    )
+    # Nested archives found inside an extracted bundle are expanded up to this
+    # depth and at most this many archives total (zip-bomb defense).
+    nested_archive_depth: int = field(
+        default_factory=lambda: int(os.getenv("CAUVERIS_NESTED_ARCHIVE_DEPTH", "1"))
+    )
+    max_nested_archives: int = field(
+        default_factory=lambda: int(os.getenv("CAUVERIS_MAX_NESTED_ARCHIVES", "50"))
+    )
+    # Explicit opt-in escape hatch for local/loopback fetch targets (tests,
+    # local mirrors). Never enable in production.
+    allow_loopback_fetch: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_ALLOW_LOOPBACK_FETCH", "false").lower()
+        == "true"
+    )
+    # Whether API callers may ingest server-local paths (e.g. POST
+    # /api/v1/incidents/from-url with source="/data/bundle.zip").  Off by
+    # default: letting an HTTP caller name server files is a disclosure
+    # hole.  The CLI (`cauveris ingest`) always allows local paths.
+    allow_local_path_ingest: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_ALLOW_LOCAL_PATH_INGEST", "false").lower()
+        == "true"
+    )
+    # Git clone intake (`git+https://.../repo.git@ref` or a bare .git URL):
+    # whether repos may be cloned, and how long a clone may run.  Cloning
+    # needs `git` in the runtime image; the URL still goes through the full
+    # SSRF policy (https only, no userinfo, host allowlist, DNS check).
+    allow_git_clone: bool = field(
+        default_factory=lambda: os.getenv("CAUVERIS_ALLOW_GIT_CLONE", "true").lower() == "true"
+    )
+    git_clone_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv("CAUVERIS_GIT_CLONE_TIMEOUT_SECONDS", "120"))
+    )
 
     # Demo mode: seeds the demo user and allows implicit CAU-0001 golden-incident
     # hydration in read paths. Default is false to prevent implicit hydration.
@@ -449,6 +527,11 @@ class Settings:
     auth_lockout_duration_minutes: int = field(
         default_factory=lambda: int(os.getenv("CAUVERIS_AUTH_LOCKOUT_DURATION", "15"))
     )
+
+    @property
+    def effective_max_download_size(self) -> int:
+        """Hard byte cap for URL downloads: explicit max_download_size, else max_upload_size."""
+        return self.max_download_size if self.max_download_size > 0 else self.max_upload_size
 
     def validate_production_security(self) -> None:
         """Validate production security invariants.

@@ -93,7 +93,6 @@ vi.mock("@/lib/useShell", () => ({
       inspectorData: { mode: null },
       trayState: "compact",
       activities: [],
-      commandPaletteOpen: false,
     },
     setActiveNav: vi.fn(),
     toggleNavCollapse: vi.fn(),
@@ -105,8 +104,6 @@ vi.mock("@/lib/useShell", () => ({
     addActivity: vi.fn(),
     removeActivity: vi.fn(),
     clearActivities: vi.fn(),
-    toggleCommandPalette: vi.fn(),
-    setCommandPalette: vi.fn(),
   }),
   buildIncidentContext: vi.fn(() => ({})),
   ShellProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -163,9 +160,6 @@ vi.mock("@/hooks/useMediaQuery", () => ({
   useMediaQuery: () => false,
 }));
 
-vi.mock("@/hooks/useKeyboardShortcut", () => ({
-  useKeyboardShortcuts: vi.fn(),
-}));
 
 // The holographic page renders a WebGL canvas; jsdom has no WebGL context.
 vi.mock("@react-three/fiber", () => ({

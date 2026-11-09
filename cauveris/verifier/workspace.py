@@ -37,6 +37,33 @@ WORKSPACE_SOURCE_DIRS = ("config", "source", "deploy", "tests", "scripts")
 #: their fix rejected for living in the wrong place.
 WORKSPACE_ROOT_SUFFIXES = (".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".conf")
 
+#: Known source extensions recognized by the layout-agnostic verifier sweep.
+VERIFIER_SOURCE_EXTENSIONS = (
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".rb", ".cs",
+    ".c", ".cc", ".cpp", ".h", ".hpp", ".kt", ".scala", ".swift", ".php", ".sh", ".sql",
+)
+
+#: Known build and packaging filenames recognized by the verifier sweep.
+VERIFIER_BUILD_FILENAMES = (
+    "setup.py", "pyproject.toml", "setup.cfg", "Cargo.toml", "go.mod", "pom.xml",
+    "build.gradle", "package.json", "Makefile", "CMakeLists.txt",
+)
+
+#: Recognized source-root directory names under which files are copied.
+VERIFIER_SOURCE_ROOT_NAMES = (
+    "config", "source", "src", "lib", "app", "pkg", "internal", "cmd", "packages", "deploy", "scripts", "tests",
+)
+
+#: Directory names excluded from the verifier sweep.
+VERIFIER_DENY_DIR_NAMES = (
+    ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", "target",
+    ".mypy_cache", ".pytest_cache",
+)
+
+VERIFIER_MAX_FILES = 5000
+VERIFIER_MAX_TOTAL_BYTES = 50 * 1024 * 1024  # 50 MB
+VERIFIER_MAX_FILE_BYTES = 5 * 1024 * 1024   # 5 MB
+
 #: A configuration key maps onto a pipeline parameter when its name contains
 #: one of these needles.  The order matters: the first match wins, so the
 #: specific names are checked before the general ones.

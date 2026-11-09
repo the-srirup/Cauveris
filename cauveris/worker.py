@@ -18,6 +18,7 @@ submitted inside the API process is not visible to this process.
 
 import asyncio
 import logging
+import re
 import signal
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from cauveris.logging_config import setup_structured_logging, get_logger
 logger = get_logger(__name__)
 
 # Canonical job type strings (see job_queue.Job.type docstring).
-WORKER_TYPES = ["pipeline", "simulation", "patch_generation"]
+WORKER_TYPES = ["pipeline", "simulation", "patch_generation", "ingest"]
 
 
 async def process_pipeline_job(job):
@@ -210,10 +211,143 @@ async def process_patch_job(job):
     }
 
 
+async def process_ingest_job(job):
+    """
+    Resolve a universal source (URL / GitHub / GitLab / PyPI / npm / local
+    path) into the evidence store and create the incident from it.
+
+    Payload: {"source", "incident_id", "title", "description",
+    "system_name", "user_id", "org_id"}.  Any "extract_dir" in the payload is
+    ignored — the bundle directory is always derived server-side from the
+    evidence store root and a validated incident_id, because the payload is
+    client-controlled.
+    Returns the incident_id plus provenance (source descriptor, SHA-256,
+    evidence count) so the API can hand it straight to the caller.
+    """
+    from pathlib import Path as _Path
+
+    from cauveris.config import get_settings
+    from cauveris.ingestion.controller import IngestionController
+    from cauveris.ingestion.sources import resolve_source
+    from cauveris.schemas.base import StatusLabel
+    from cauveris.schemas.incident import EvidenceItem, Incident
+    from cauveris.security import compute_file_hash
+
+    payload = job.payload or {}
+    source = payload.get("source")
+    incident_id = payload.get("incident_id")
+    if not source or not incident_id:
+        raise ValueError("Ingest job payload must contain 'source' and 'incident_id'")
+
+    # The job payload is client-controlled (anyone with job_queue:submit can
+    # submit an ingest job), so nothing in it may name a filesystem location.
+    # The incident id is validated against a strict charset, and the extract
+    # directory is always derived server-side under the evidence store — never
+    # taken from the payload.
+    if not isinstance(incident_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", incident_id):
+        raise ValueError("Ingest job payload has an invalid incident_id")
+
+    settings = get_settings()
+    store_root = _Path(settings.evidence_store_path).resolve()
+    extract_dir = store_root / incident_id
+    extract_dir.resolve().relative_to(store_root)  # belt-and-braces containment check
+
+    logger.info(f"Ingest job {job.id}: resolving source {source!r} -> {extract_dir}")
+    # Local-path intake stays gated by CAUVERIS_ALLOW_LOCAL_PATH_INGEST: the
+    # /incidents/from-url endpoint enforces the same flag before queueing, and
+    # a direct job-queue submission must not be able to read server files.
+    resolved = await resolve_source(
+        source, extract_dir, settings, allow_local=settings.allow_local_path_ingest
+    )
+    bundle_dir = resolved.bundle_dir
+
+    incident = Incident(
+        id=incident_id,
+        title=payload.get("title") or "Uploaded Incident",
+        description=payload.get("description") or "Incident ingested from remote source",
+        system_name=payload.get("system_name") or "unknown-system",
+        status=StatusLabel.OBSERVED,
+    )
+    incident._owner_user_id = payload.get("user_id")  # type: ignore[attr-defined]
+    incident._owner_org_id = payload.get("org_id")  # type: ignore[attr-defined]
+    incident._is_anonymous = False  # type: ignore[attr-defined]
+    incident.bundle_path = str(bundle_dir)
+    incident.package_sha256 = resolved.package_sha256
+    setattr(incident, "_uploaded_filename", resolved.filename)
+    incident.manifest = {
+        "bundle_path": str(bundle_dir),
+        "package_sha256": resolved.package_sha256,
+        "uploaded_filename": resolved.filename,
+        "source": resolved.descriptor,
+        "ingest_job_id": job.id,
+    }
+
+    for fpath in sorted(p for p in bundle_dir.rglob("*") if p.is_file()):
+        # Only the bundle-root manifest/sidecar are bookkeeping; a manifest in
+        # a subdirectory (e.g. a repo shipping src/manifest.yaml) is evidence.
+        rel_parts = fpath.relative_to(bundle_dir).parts
+        if len(rel_parts) == 1 and fpath.name in (
+            "manifest.yaml", "manifest.yml", "manifest.json", ".cauveris-owner.json",
+        ):
+            continue
+        rel = str(fpath.relative_to(bundle_dir)).replace("\\", "/")
+        try:
+            det_type = IngestionController()._detect_file_type(fpath)
+            incident.evidence_items.append(
+                EvidenceItem(
+                    file_path=rel,
+                    file_type=det_type,
+                    size_bytes=fpath.stat().st_size,
+                    checksum_sha256=compute_file_hash(str(fpath)),
+                    status=StatusLabel.OBSERVED,
+                    is_required=False,
+                )
+            )
+        except Exception as exc:
+            logger.warning(f"Error indexing ingested file {fpath}: {exc}")
+
+    controller = IngestionController()
+    incident = await controller.process(incident)
+
+    # Register the incident with the API process when the worker runs
+    # embedded in it (the default); with an external worker the bundle +
+    # canonical manifest on disk are enough for the API to rehydrate it.
+    try:
+        from cauveris.api import main as api_main
+        from cauveris.state_machine.orchestrator import PipelineOrchestrator, PipelineContext
+        from cauveris.state_machine.persistence import PipelinePersistenceStore
+
+        api_main.incidents[incident.id] = incident
+        orch = PipelineOrchestrator()
+        orch.context = PipelineContext(incident=incident)
+        api_main.pipeline_tasks[incident.id] = orch
+        api_main.pipeline_contexts[incident.id] = orch.context
+        PipelinePersistenceStore.get_instance().initialize_incident_stages(incident.id, overwrite=True)
+    except Exception as exc:
+        logger.debug(f"Could not register ingested incident in API process: {exc}")
+
+    logger.info(
+        f"Ingest job {job.id} complete: incident {incident_id} with "
+        f"{len(incident.evidence_items)} evidence items from {source!r}"
+    )
+    return {
+        "status": "completed",
+        "incident_id": incident.id,
+        "title": incident.title,
+        "package_sha256": resolved.package_sha256,
+        "source": resolved.descriptor,
+        "evidence_count": len(incident.evidence_items),
+        "artifact_inventory_count": len(incident.artifact_inventory or []),
+        "capability_report": incident.capability_report,
+        "warnings": resolved.warnings,
+    }
+
+
 JOB_HANDLERS = {
     "pipeline": process_pipeline_job,
     "simulation": process_simulation_job,
     "patch_generation": process_patch_job,
+    "ingest": process_ingest_job,
 }
 
 

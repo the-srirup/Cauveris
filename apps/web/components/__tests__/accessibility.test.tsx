@@ -4,7 +4,6 @@ import Sidebar from '@/components/Sidebar';
 import { TopContextBar } from '@/components/TopContextBar';
 import { Tooltip } from '@/components/Tooltip';
 import { Tabs } from '@/components/Tabs';
-import { CommandPalette } from '@/components/CommandPalette';
 import { Button } from '@/components/ui';
 
 expect.extend(toHaveNoViolations);
@@ -67,10 +66,9 @@ describe('Accessibility Audit - Core Components', () => {
       expect(header).toBeInTheDocument();
     });
 
-    it('should have proper section labels for incident identity, evidence coverage, and system status', () => {
+    it('should have proper section labels for incident identity and system status', () => {
       render(<TopContextBar />);
       expect(screen.getByLabelText('Incident identity')).toBeInTheDocument();
-      expect(screen.getByLabelText('Evidence coverage and processing mode')).toBeInTheDocument();
       expect(screen.getByLabelText('System status and global actions')).toBeInTheDocument();
     });
 
@@ -79,7 +77,6 @@ describe('Accessibility Audit - Core Components', () => {
       expect(screen.getByLabelText('Create new incident')).toBeInTheDocument();
       expect(screen.getByLabelText('Load golden incident')).toBeInTheDocument();
       expect(screen.getByLabelText('Upload evidence bundle')).toBeInTheDocument();
-      expect(screen.getByLabelText('Open command palette')).toBeInTheDocument();
     });
 
     it('should have focus-visible styles on all interactive elements', () => {
@@ -209,50 +206,6 @@ describe('Accessibility Audit - Core Components', () => {
         expect(tab).toHaveClass('focus-visible:ring-2');
         expect(tab).toHaveClass('focus-visible:ring-[var(--color-accent)]');
       });
-    });
-  });
-
-  // CommandPalette Tests
-  describe('CommandPalette', () => {
-    it('should have no accessibility violations', async () => {
-      const { container } = render(<CommandPalette />);
-      const results = await axe(container);
-      expect(results).toHaveNoViolations();
-    });
-
-    it('should have dialog role with proper label', () => {
-      render(<CommandPalette />);
-      const dialog = screen.getByRole('dialog', { name: 'Command Palette' });
-      expect(dialog).toBeInTheDocument();
-    });
-
-    it('should have search input with proper label', () => {
-      render(<CommandPalette />);
-      // The search input should be accessible
-      const searchInput = screen.getByPlaceholderText('Type a command or search…');
-      expect(searchInput).toBeInTheDocument();
-    });
-
-    it('should have proper list structure with roles', () => {
-      render(<CommandPalette />);
-      const list = screen.getByRole('listbox', { name: 'Commands' });
-      expect(list).toBeInTheDocument();
-    });
-
-    it('should have focus-visible styles on command items', () => {
-      render(<CommandPalette />);
-      const items = screen.getAllByRole('option');
-      items.forEach(item => {
-        expect(item).toHaveClass('focus-visible:outline-none');
-        expect(item).toHaveClass('focus-visible:ring-2');
-        expect(item).toHaveClass('focus-visible:ring-[var(--color-accent)]');
-      });
-    });
-
-    it('should trap focus within dialog when open', () => {
-      render(<CommandPalette />);
-      const dialog = screen.getByRole('dialog');
-      expect(dialog).toHaveAttribute('aria-modal', 'true');
     });
   });
 

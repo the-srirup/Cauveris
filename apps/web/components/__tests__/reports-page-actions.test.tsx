@@ -89,7 +89,6 @@ vi.mock("@/lib/useShell", () => ({
       inspectorData: { mode: null },
       trayState: "compact",
       activities: [],
-      commandPaletteOpen: false,
     },
     addActivity: mockAddActivity,
     setIncidentContext: mockSetIncidentContext,

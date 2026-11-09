@@ -78,16 +78,6 @@ export interface Activity {
 
 export type TrayState = "closed" | "expanded";
 
-export interface Command {
-  id: string;
-  label: string;
-  description: string;
-  shortcut: string;
-  category: "incident" | "investigation" | "views" | "export" | "demo";
-  action: () => void | Promise<void>;
-  disabled?: boolean;
-}
-
 export interface ShellState {
   // Navigation
   activeNav: NavItemKey;
@@ -106,7 +96,7 @@ export interface ShellState {
   trayState: TrayState;
   activities: Activity[];
 
-  // Command Palette
+  // Command Palette (opened by clicking the search bar — no global hotkey)
   commandPaletteOpen: boolean;
 }
 

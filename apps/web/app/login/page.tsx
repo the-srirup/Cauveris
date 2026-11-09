@@ -6,6 +6,7 @@ import { useAuthStore, LoginRequest, RegisterRequest } from '@/lib/auth';
 import { Button, Input, Card } from '@/components/ui';
 import { Mail, Lock, User, AlertCircle, Loader2, Eye, EyeOff } from 'lucide-react';
 import { NotificationContainer } from '@/components/Notification';
+import { APP_VERSION_TAG } from '@/lib/version';
 
 function LoginForm() {
   const router = useRouter();
@@ -328,7 +329,7 @@ function LoginForm() {
         </Card>
 
         <div className="flex items-center justify-between text-[11px] text-[var(--color-fg-subtle)] px-2">
-          <span>Cauveris v2.4.0 (Production Authentication)</span>
+          <span>Cauveris {APP_VERSION_TAG} (Production Authentication)</span>
           <div className="flex items-center gap-3">
             <span className="cursor-default hover:text-[var(--color-fg-muted)]">Server Session</span>
             <span>·</span>

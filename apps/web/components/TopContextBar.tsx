@@ -8,12 +8,12 @@ import { Tooltip } from "./Tooltip";
 import { useShell } from "@/lib/useShell";
 import { useActiveIncident } from "@/lib/useIncident";
 import { api } from "@/lib/api";
-import { Search, Plus, Upload, Scale, Wrench, Menu } from "lucide-react";
+import { Plus, Upload, Scale, Wrench, Menu, Search } from "lucide-react";
 import { CreateIncidentModal } from "./CreateIncidentModal";
 import { UserMenu } from "./UserMenu";
 
 export function TopContextBar() {
-  const { state: shellState, addActivity, toggleCommandPalette, setNavDrawer } = useShell();
+  const { state: shellState, addActivity, setNavDrawer, setCommandPalette } = useShell();
   const { incident, incidentId: activeIncidentId, judgeMode, engineerMode, loadIncident, setJudgeMode, setEngineerMode } = useActiveIncident();
   const router = useRouter();
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -71,19 +71,13 @@ export function TopContextBar() {
   const handleUploadEvidence = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".zip,.tar,.gz,.json,.mcap,.bag";
+    input.accept = ".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz,.gz,.bz2,.xz,.7z,.rar,.json,.jsonl,.ndjson,.csv,.yaml,.yml,.toml,.ini,.log,.txt,.md,.mcap,.bag";
     input.onchange = async (e: Event) => {
       const files = (e.target as HTMLInputElement).files;
       if (!files || files.length === 0) return;
       const file = files[0];
-      if (!file.name.toLowerCase().endsWith(".zip")) {
-        addActivity({
-          type: "error",
-          message: "Upload requires a ZIP incident package (.zip)",
-          dismissible: true,
-        });
-        return;
-      }
+      // Backend sniffs magic bytes and enforces size/format policy; it rejects
+      // anything unsupported with a clear error, so no client-side gate here.
       addActivity({
         type: "system",
         message: `Uploading package: ${file.name} (${Math.round(file.size / 1024)} KB)...`,
@@ -168,21 +162,18 @@ export function TopContextBar() {
           </div>
         </div>
 
-        {/* Center: Global Search Bar */}
-        <div className="hidden md:flex items-center flex-1 max-w-md mx-4" aria-label="Evidence coverage and processing mode">
+        {/* Center: Global Search Bar — opens the command palette on click */}
+        <div className="hidden md:flex items-center flex-1 max-w-md mx-4">
           <button
             type="button"
-            onClick={toggleCommandPalette}
-            className="w-full flex items-center justify-between px-3 py-1.5 rounded-[var(--radius-md,6px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/70 hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] text-xs text-[var(--color-fg-muted)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+            onClick={() => setCommandPalette(true)}
+            className="w-full flex items-center justify-between px-3 py-1.5 rounded-[var(--radius-md,6px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/70 hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] text-xs text-[var(--color-fg-muted)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-canvas)]"
             aria-label="Open command palette"
           >
             <span className="flex items-center gap-2 truncate">
               <Search className="h-3.5 w-3.5 text-[var(--color-fg-subtle)] shrink-0" aria-hidden="true" />
               <span>Search evidence, events, or hypotheses...</span>
             </span>
-            <kbd className="hidden lg:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-[var(--color-border-default)] bg-[var(--color-canvas-inset)] font-mono text-xs text-[var(--color-fg-muted)]">
-              ⌘K
-            </kbd>
           </button>
         </div>
 

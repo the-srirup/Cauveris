@@ -77,7 +77,8 @@ __all__ = [
     # Config
     "TemporalConfig",
     "TolerancePolicy",
+    "__version__",
 ]
 
 # Version tag for the temporal module
-__version__ = "0.1.0"
+from cauveris import __version__

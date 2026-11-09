@@ -59,6 +59,13 @@ from cauveris.analysis.parameters import (
     is_packaging_file,
 )
 from cauveris.verifier.workspace import (
+    VERIFIER_BUILD_FILENAMES,
+    VERIFIER_DENY_DIR_NAMES,
+    VERIFIER_MAX_FILE_BYTES,
+    VERIFIER_MAX_FILES,
+    VERIFIER_MAX_TOTAL_BYTES,
+    VERIFIER_SOURCE_EXTENSIONS,
+    VERIFIER_SOURCE_ROOT_NAMES,
     WORKSPACE_ROOT_SUFFIXES,
     WORKSPACE_SOURCE_DIRS,
     compare_safety,
@@ -325,46 +332,100 @@ class VerificationEngine:
         """
         Copy the bundle's configuration and source into the workspace.
 
+        Performs a layout-agnostic sweep:
+        - Copies files matching source extensions (.py, .ts, etc.) or build filenames
+          (package.json, Cargo.toml, etc.) anywhere in the bundle.
+        - Copies any files residing under recognized source-root directory names
+          (config, source, src, lib, app, pkg, internal, cmd, packages, deploy, scripts, tests).
+        - Copies root config files (.yaml, .toml, .json, etc.).
+        - Unions with WORKSPACE_SOURCE_DIRS allowlist for backwards compatibility.
+        - Skips denylist directories (.git, node_modules, __pycache__, .venv, venv,
+          dist, build, target, .mypy_cache, .pytest_cache, *.egg-info).
+        - Enforces limits: max 5000 files, max 50 MB total, max 5 MB per file.
+
         Returns:
             The pre-patch bytes of every copied file, keyed by workspace
-            relative path.  The rollback gate compares against these.
+            relative path. The rollback gate compares against these.
         """
         originals: Dict[str, bytes] = {}
-        for directory in WORKSPACE_SOURCE_DIRS:
-            source_dir = bundle / directory
-            if not source_dir.is_dir():
-                continue
-            for path in sorted(source_dir.rglob("*")):
-                if not path.is_file():
-                    continue
-                relative = path.relative_to(bundle)
-                target = workspace / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    payload = path.read_bytes()
-                except OSError as exc:
-                    logger.debug(f"Could not copy {path}: {exc}")
-                    continue
-                target.write_bytes(payload)
-                originals[relative.as_posix()] = payload
+        total_copied_bytes = 0
+        copied_files_count = 0
 
-        # A bundle may keep its configuration beside the manifest instead of
-        # in a directory of its own.  Those files are copied as well, so that
-        # a patch against ``robot.toml`` can be applied and verified.
-        for path in sorted(p for p in bundle.iterdir() if p.is_file()):
-            if path.suffix.lower() not in WORKSPACE_ROOT_SUFFIXES:
+        def is_denied(rel_parts: tuple[str, ...]) -> bool:
+            for part in rel_parts:
+                if part in VERIFIER_DENY_DIR_NAMES or part.endswith(".egg-info"):
+                    return True
+            return False
+
+        def should_copy(path: Path, rel: Path) -> bool:
+            parts = rel.parts
+            if not parts:
+                return False
+            # Check denylist
+            if is_denied(parts[:-1]):
+                return False
+
+            # Root config files
+            if len(parts) == 1:
+                if path.suffix.lower() in WORKSPACE_ROOT_SUFFIXES and not is_packaging_file(path):
+                    return True
+
+            # Any file under a recognized source-root / WORKSPACE_SOURCE_DIRS
+            top_dir = parts[0]
+            if top_dir in VERIFIER_SOURCE_ROOT_NAMES or top_dir in WORKSPACE_SOURCE_DIRS:
+                return True
+
+            # Known source extension anywhere in the bundle
+            if path.suffix.lower() in VERIFIER_SOURCE_EXTENSIONS:
+                return True
+
+            # Known build / packaging file anywhere in the bundle
+            if path.name in VERIFIER_BUILD_FILENAMES:
+                return True
+
+            return False
+
+        for path in sorted(bundle.rglob("*")):
+            if not path.is_file():
                 continue
-            if is_packaging_file(path):
+            try:
+                relative = path.relative_to(bundle)
+            except ValueError:
                 continue
-            relative = path.relative_to(bundle)
+
+            if not should_copy(path, relative):
+                continue
+
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+
+            if size > VERIFIER_MAX_FILE_BYTES:
+                logger.debug(f"Skipping oversized file in verifier sweep: {relative} ({size} bytes)")
+                continue
+
+            if copied_files_count >= VERIFIER_MAX_FILES:
+                logger.warning(f"Reached verifier file count cap ({VERIFIER_MAX_FILES})")
+                break
+
+            if total_copied_bytes + size > VERIFIER_MAX_TOTAL_BYTES:
+                logger.warning(f"Reached verifier total size cap ({VERIFIER_MAX_TOTAL_BYTES} bytes)")
+                break
+
             target = workspace / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 payload = path.read_bytes()
             except OSError as exc:
                 logger.debug(f"Could not copy {path}: {exc}")
                 continue
+
             target.write_bytes(payload)
             originals[relative.as_posix()] = payload
+            copied_files_count += 1
+            total_copied_bytes += len(payload)
+
         return originals
 
     def _write_calibration(self, workspace: Path, model: Optional[SystemModel]) -> None:

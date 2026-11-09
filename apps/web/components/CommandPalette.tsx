@@ -13,7 +13,6 @@ interface Command {
   id: string;
   label: string;
   description: string;
-  shortcut: string;
   category: "incident" | "investigation" | "views" | "export" | "demo";
   action: () => void | Promise<void>;
   disabled?: boolean;
@@ -66,7 +65,6 @@ export function CommandPalette() {
       id: "create-incident",
       label: "Create Incident",
       description: "Create a new incident investigation",
-      shortcut: "C I",
       category: "incident",
       icon: <Plus className="h-3.5 w-3.5" />,
       action: async () => {
@@ -86,7 +84,6 @@ export function CommandPalette() {
       id: "load-golden",
       label: "Load Golden Incident",
       description: "Load the CAU-0001 golden incident for demonstration",
-      shortcut: "L G",
       category: "incident",
       icon: <Download className="h-3.5 w-3.5" />,
       action: async () => {
@@ -105,8 +102,7 @@ export function CommandPalette() {
     {
       id: "upload-evidence",
       label: "Upload Incident Package",
-      description: "Upload real incident bundle from file (.zip)",
-      shortcut: "U P",
+      description: "Upload incident bundle from file (zip/tar/.../json/log) or ingest a link from the dashboard",
       category: "incident",
       icon: <Upload className="h-3.5 w-3.5" />,
       action: () => {
@@ -123,7 +119,6 @@ export function CommandPalette() {
       id: "start-investigation",
       label: "Start Investigation",
       description: "Begin autonomous pipeline reconstruction",
-      shortcut: "S I",
       category: "investigation",
       icon: <Play className="h-3.5 w-3.5" />,
       action: async () => {
@@ -142,7 +137,6 @@ export function CommandPalette() {
       id: "cancel-investigation",
       label: "Cancel Investigation",
       description: "Stop the currently running pipeline",
-      shortcut: "C X",
       category: "investigation",
       icon: <Square className="h-3.5 w-3.5" />,
       action: async () => {
@@ -162,7 +156,6 @@ export function CommandPalette() {
       id: "toggle-sidebar",
       label: state.isNavCollapsed ? "Expand Sidebar" : "Collapse Sidebar",
       description: "Toggle left navigation sidebar between expanded and collapsed",
-      shortcut: "[",
       category: "views",
       icon: <ChevronRight className="h-3.5 w-3.5" />,
       action: () => {
@@ -174,7 +167,6 @@ export function CommandPalette() {
       id: "open-timeline",
       label: "Open Timeline",
       description: "View event timeline in Reality Rewind",
-      shortcut: "O T",
       category: "views",
       icon: <Clock className="h-3.5 w-3.5" />,
       action: () => {
@@ -186,7 +178,6 @@ export function CommandPalette() {
       id: "open-graph",
       label: "Open Graph",
       description: "View causal graph in Causal Constellation",
-      shortcut: "O G",
       category: "views",
       icon: <GitBranch className="h-3.5 w-3.5" />,
       action: () => {
@@ -198,7 +189,6 @@ export function CommandPalette() {
       id: "open-reconstruction",
       label: "Open Reconstruction",
       description: "View holographic reconstruction",
-      shortcut: "O R",
       category: "views",
       icon: <Eye className="h-3.5 w-3.5" />,
       action: () => {
@@ -210,7 +200,6 @@ export function CommandPalette() {
       id: "open-ghost-lab",
       label: "Open Ghost Lab",
       description: "Run simulation experiments",
-      shortcut: "O L",
       category: "views",
       icon: <FlaskConical className="h-3.5 w-3.5" />,
       action: () => {
@@ -222,7 +211,6 @@ export function CommandPalette() {
       id: "verify-patch",
       label: "Verify Patch",
       description: "Review patch candidates in Patch Forge",
-      shortcut: "V P",
       category: "views",
       icon: <Wrench className="h-3.5 w-3.5" />,
       action: () => {
@@ -236,7 +224,6 @@ export function CommandPalette() {
       id: "export-report",
       label: "Export Report",
       description: "Download investigation report as JSON",
-      shortcut: "E R",
       category: "export",
       icon: <FileText className="h-3.5 w-3.5" />,
       action: async () => {
@@ -263,7 +250,6 @@ export function CommandPalette() {
       id: "reset-demo",
       label: "Reset Demo Environment",
       description: "Clear all demo data and reset to initial state",
-      shortcut: "R D",
       category: "demo",
       icon: <AlertTriangle className="h-3.5 w-3.5" />,
       action: async () => {
@@ -288,7 +274,6 @@ export function CommandPalette() {
       (cmd) =>
         cmd.label.toLowerCase().includes(q) ||
         cmd.description.toLowerCase().includes(q) ||
-        cmd.shortcut.toLowerCase().includes(q) ||
         cmd.category.toLowerCase().includes(q)
     );
   }, [commands, query]);
@@ -424,11 +409,6 @@ export function CommandPalette() {
                             <div className="text-[11px] text-[var(--color-fg-muted)] truncate">{cmd.description}</div>
                           </div>
                           <div className="flex items-center gap-1.5">
-                            {cmd.shortcut.split(" ").map((key) => (
-                              <kbd key={key} className="flex items-center gap-1 px-2 py-0.5 rounded-[var(--radius-sm)] text-[10px] font-mono font-medium bg-[var(--color-canvas-subtle)] text-[var(--color-fg-muted)] border border-[var(--color-border-default)]">
-                                {key}
-                              </kbd>
-                            ))}
                             {isSelected && <ChevronRight className="h-4 w-4 text-[var(--color-accent-fg)]" />}
                           </div>
                         </div>

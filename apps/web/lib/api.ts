@@ -109,6 +109,39 @@ export interface PipelineEventsResponse {
   timestamp?: string;
 }
 
+export interface IngestCapabilities {
+  url_ingestion_enabled: boolean;
+  allow_local_path_ingest: boolean;
+  allow_git_clone: boolean;
+  spec_forms: Array<{
+    form: string;
+    example: string;
+    description: string;
+  }>;
+  supported_archive_formats: string[];
+  supported_archive_extensions?: string[];
+  limits: {
+    max_archive_members: number;
+    max_archive_uncompressed_size: number;
+    max_archive_file_size: number;
+    max_download_size: number;
+    max_upload_size: number;
+    url_fetch_timeout_seconds: number;
+    git_clone_timeout_seconds: number;
+    url_max_redirects: number;
+    nested_archive_depth: number;
+    max_nested_archives: number;
+  };
+  host_policy: {
+    allow_any_public_host: boolean;
+    builtin_allowed_hosts: string[];
+    custom_allowed_hosts: string[];
+    has_proxy: boolean;
+    has_github_token: boolean;
+    has_gitlab_token: boolean;
+  };
+}
+
 export interface EvidenceValidationSummary {
   incident_id: string;
   validation_status: "completed" | "PASSED" | "WARNING" | "FAILED" | string;
@@ -1001,6 +1034,50 @@ class ApiClient {
     }
 
     return response.json();
+  }
+
+  // Ingest an incident from a URL / GitHub / GitLab / PyPI / npm / any HTTPS source.
+  // Returns a queued ingest job; poll getIngestJob until status is completed/failed.
+  async ingestFromSource(source: string, opts?: { title?: string; description?: string; systemName?: string }): Promise<{
+    job_id: string;
+    incident_id: string;
+    status: string;
+    source: string;
+    source_kind: string;
+    message: string;
+  }> {
+    const body: Record<string, string> = { source };
+    if (opts?.title) body.title = opts.title;
+    if (opts?.description) body.description = opts.description;
+    if (opts?.systemName) body.system_name = opts.systemName;
+    return this.request(`/incidents/from-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  // Poll an ingest job; the completed result carries the incident_id and provenance.
+  async getIngestJob(jobId: string): Promise<{
+    job_id: string;
+    status: string;
+    incident_id?: string;
+    result?: {
+      incident_id?: string;
+      package_sha256?: string;
+      source?: Record<string, unknown>;
+      evidence_count?: number;
+      warnings?: string[];
+      [key: string]: unknown;
+    } | null;
+    error?: string | null;
+  }> {
+    return this.request(`/ingest/jobs/${encodeURIComponent(jobId)}`, { method: 'GET' });
+  }
+
+  // Get universal intake capabilities, supported spec forms, archive formats, and limits.
+  async getIngestCapabilities(): Promise<IngestCapabilities> {
+    return this.request('/ingest/capabilities', { method: 'GET' });
   }
 
   // Upload incident file
