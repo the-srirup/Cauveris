@@ -11,8 +11,9 @@ const packageRoot = path.join(root, "tests", "e2e_packages", "memory_quota");
 
 function makeZip(): string {
   const destination = path.join(os.tmpdir(), `cauveris-browser-${Date.now()}.zip`);
+  const pythonCmd = process.env.PYTHON || (process.platform === "win32" ? "powershell.exe" : "python3");
   execFileSync(
-    process.platform === "win32" ? "powershell.exe" : "python",
+    process.platform === "win32" ? "powershell.exe" : pythonCmd,
     process.platform === "win32"
       ? ["-NoProfile", "-Command", `Compress-Archive -Path '${packageRoot}\\*' -DestinationPath '${destination}'`]
       : ["-c", "import shutil,sys; shutil.make_archive(sys.argv[1][:-4], 'zip', sys.argv[2])", destination, packageRoot],
@@ -34,20 +35,38 @@ test("real upload observes stages and exposes the verified repair", async ({ pag
   const zip = makeZip();
   try {
     await signIn(page);
+    const uploadPromise = page.waitForResponse(
+      (res) => res.url().includes("/incidents/upload") && res.status() === 200,
+    );
     await page.getByRole("button", { name: "Upload incident package" }).first().click();
     await page.locator('input[type="file"]').setInputFiles(zip);
+    const uploadRes = await uploadPromise;
+    const { incident_id: uploadedIncidentId } = await uploadRes.json();
+    expect(uploadedIncidentId).toBeTruthy();
+
     await expect(page.getByText(/Package ingested|Incident uploaded/i)).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "Start Investigation" }).click();
-    await expect(page.getByText(/SUCCESS|completed successfully/i).first()).toBeVisible({ timeout: 150_000 });
+
+    // Wait until the investigation pipeline completes
+    await expect(
+      page.getByText(/Investigation pipeline completed successfully/i).first(),
+    ).toBeVisible({ timeout: 150_000 });
+
     await page.locator('a[href="/evidence-vault"]').click();
     await expect(page.getByText(/Artifacts Indexed|forensic evidence/i).first()).toBeVisible();
     await page.goto("/reports");
     await expect(page.getByText(/Verification|Repair|Report/i).first()).toBeVisible();
-    const incidents = await page.request.get("http://127.0.0.1:8000/api/v1/incidents");
-    const incident = (await incidents.json()).incidents.find((item: any) => !item.is_demonstration);
-    expect(incident).toBeTruthy();
-    const repair = await page.request.get(`http://127.0.0.1:8000/api/v1/incidents/${incident.id}/download-patch-package`);
-    expect(repair.ok()).toBeTruthy();
+
+    await expect.poll(async () => {
+      const repair = await page.request.get(
+        `http://127.0.0.1:8000/api/v1/incidents/${uploadedIncidentId}/download-patch-package`,
+      );
+      return repair.status();
+    }, {
+      message: "Wait for verified patch package ZIP to be ready for download",
+      timeout: 30_000,
+      intervals: [1000, 2000],
+    }).toBe(200);
     await page.screenshot({ path: "test-results/production-repair.png", fullPage: true });
     expect(requests.some((request) => request.includes("/incidents/") && request.includes("/events"))).toBe(true);
   } finally {
