@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
-const python = process.platform === "win32"
-  ? path.join(root, ".venv", "Scripts", "python.exe")
-  : path.join(root, ".venv", "bin", "python");
+const python = process.env.PYTHON || (process.env.VIRTUAL_ENV
+  ? path.join(process.env.VIRTUAL_ENV, process.platform === "win32" ? "Scripts/python.exe" : "bin/python")
+  : (process.platform === "win32"
+      ? path.join(root, ".venv", "Scripts", "python.exe")
+      : path.join(root, ".venv", "bin", "python")));
 
 export default defineConfig({
   testDir: "./e2e",
@@ -37,7 +39,7 @@ export default defineConfig({
       },
     },
     {
-      command: "npm run dev -- --hostname 127.0.0.1 --port 3000",
+      command: "npm run start -- --hostname 127.0.0.1 --port 3000",
       cwd: here,
       port: 3000,
       reuseExistingServer: false,

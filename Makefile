@@ -1,36 +1,54 @@
 # Cauveris Makefile
 # Note: If 'make' is not available, use the equivalent uv and npm commands documented in README.md
 
-.PHONY: setup dev test lint typecheck golden-incident demo clean live-demo live-demo-check live-demo-stop
+.PHONY: setup dev test lint typecheck quality backend-quality frontend-quality backend-test frontend-test test-coverage build security production-proof e2e golden-incident demo clean live-demo live-demo-check live-demo-stop
 
 # ===== Dependency Installation =====
 
-setup: #### Install all dependencies
-	uv sync
-	cd apps/web && npm install
+setup: #### Install all dependencies using committed lockfiles
+	uv sync --frozen
+	npm --prefix apps/web ci
 
-# ===== Development =====
+# ===== Quality Gates =====
 
-dev: #### Start development servers (backend and frontend)
-	@echo "Starting backend server..."
-	uv run cauveris &
-	BACKEND_PID=$$!
-	@echo "Starting frontend server..."
-	cd apps/web && npm run dev
-	@echo "Stopping backend server..."
-	kill $$BACKEND_PID
+quality: backend-quality frontend-quality #### Run all backend and frontend quality checks
 
-# Equivalent to running in separate terminals:
-# Terminal 1: uv run cauveris serve
-# Terminal 2: cd apps/web && npm run dev
+backend-quality: #### Run backend linter, typecheck, and runtime fixture guard
+	uv run python scripts/check_runtime_fixture_imports.py
+	uv run ruff check .
+	uv run mypy cauveris
 
-# ===== Commands =====
+frontend-quality: #### Run frontend runtime fixture guard and strict TypeScript check
+	node apps/web/scripts/check-runtime-fixture-imports.mjs
+	npm --prefix apps/web run typecheck
 
-golden-incident: #### Load the golden incident (CAU-0001)
-	uv run cauveris --golden
+# ===== Tests =====
 
-test: #### Run the test suite
-	uv run pytest -x
+test: backend-test frontend-test #### Run both backend and frontend test suites
+
+backend-test: #### Run backend pytest suite
+	uv run pytest -v
+
+frontend-test: #### Run frontend Vitest suite
+	npm --prefix apps/web test
+
+test-coverage: #### Run backend and frontend tests with coverage reports
+	uv run pytest --junitxml=test-results/backend-results.xml -v
+	npm --prefix apps/web run test:coverage
+
+security: #### Run security and authentication mutation regression tests
+	uv run pytest tests/test_auth_mutations.py tests/test_production_auth_e2e.py tests/test_refresh_token_rotation.py tests/test_phase1_anti_mock.py -v
+
+# ===== Production Build & Proof =====
+
+build: #### Build Next.js frontend in production mode
+	npm --prefix apps/web run build
+
+production-proof: #### Run end-to-end production path proof against live server
+	uv run python scripts/run_production_e2e.py
+
+e2e: build #### Run Playwright production end-to-end browser tests
+	npm --prefix apps/web run e2e:production
 
 lint: #### Run linting
 	uv run ruff check .

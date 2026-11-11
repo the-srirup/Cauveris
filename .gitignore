@@ -36,6 +36,11 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+coverage/
+apps/web/coverage/
+test-results/
+playwright-report/
+repomix-output.xml
 htmlcov/
 .tox/
 .nox/

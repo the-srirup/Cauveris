@@ -1,43 +1,274 @@
-# CI/CD Pipeline for Cauveris
-
 name: CI
 
 on:
   push:
     branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  backend-quality:
+    name: Backend Quality
     runs-on: ubuntu-latest
-    
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install uv
-      uses: astral-sh/setup-uv@v5
-      with:
-        enable-cache: true
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-    
-    - name: Install dependencies
-      run: |
-        uv sync
-    
-    - name: Run tests
-      run: |
-        uv run pytest -x
-    
-    - name: Lint with Ruff
-      run: |
-        uv run ruff check .
-    
-    - name: Type check with MyPy
-      run: |
-        uv run mypy cauveris
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies from lockfile
+        run: uv sync --frozen
+
+      - name: Guard against runtime fixture & mock imports
+        run: uv run python scripts/check_runtime_fixture_imports.py
+
+      - name: Lint with Ruff
+        run: uv run ruff check .
+
+      - name: Type check with MyPy
+        run: uv run mypy cauveris
+
+  backend-tests:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies from lockfile
+        run: uv sync --frozen
+
+      - name: Create test results directory
+        run: mkdir -p test-results
+
+      - name: Run Pytest suite
+        run: uv run pytest --junitxml=test-results/backend-results.xml -v
+
+      - name: Upload backend test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-results
+          path: test-results/backend-results.xml
+          retention-days: 7
+
+  security-regressions:
+    name: Security & Mutation Regressions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies from lockfile
+        run: uv sync --frozen
+
+      - name: Run security & authentication mutation tests
+        run: uv run pytest tests/test_auth_mutations.py tests/test_production_auth_e2e.py tests/test_refresh_token_rotation.py tests/test_phase1_anti_mock.py -v
+
+  frontend-quality:
+    name: Frontend Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install frontend dependencies from lockfile
+        run: npm --prefix apps/web ci
+
+      - name: Guard against frontend runtime fixture imports
+        run: npm --prefix apps/web run check:fixtures
+
+      - name: Strict TypeScript typecheck
+        run: npm --prefix apps/web run typecheck
+
+  frontend-tests:
+    name: Frontend Tests & Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install frontend dependencies from lockfile
+        run: npm --prefix apps/web ci
+
+      - name: Run Vitest with coverage
+        run: npm --prefix apps/web run test:coverage
+
+      - name: Upload frontend coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-coverage
+          path: apps/web/coverage
+          retention-days: 7
+
+  frontend-build:
+    name: Frontend Production Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install frontend dependencies from lockfile
+        run: npm --prefix apps/web ci
+
+      - name: Build Next.js production bundle
+        run: npm --prefix apps/web run build
+
+  production-path-proof:
+    name: Production Path Proof (E2E)
+    runs-on: ubuntu-latest
+    needs: [frontend-build, backend-quality]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install backend dependencies from lockfile
+        run: uv sync --frozen
+
+      - name: Install frontend dependencies from lockfile
+        run: npm --prefix apps/web ci
+
+      - name: Build frontend for production
+        run: npm --prefix apps/web run build
+
+      - name: Create artifact directories
+        run: |
+          mkdir -p e2e-artifacts
+          mkdir -p apps/web/test-results
+
+      - name: Run backend incident-to-repair proof
+        env:
+          CAUVERIS_E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts
+        run: uv run python scripts/run_production_e2e.py --keep --artifact-dir e2e-artifacts
+
+      - name: Install Playwright browsers
+        run: npx --prefix apps/web playwright install --with-deps chromium
+
+      - name: Run Playwright production E2E tests
+        run: npm --prefix apps/web run e2e:production
+
+      - name: Upload E2E sanitized logs & artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-e2e-artifacts
+          path: |
+            e2e-artifacts
+            apps/web/test-results
+            apps/web/playwright-report
+          retention-days: 7
+
+  model-gateway-integration:
+    name: Nebius Model Gateway Integration (Optional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for model credentials
+        id: check-secrets
+        run: |
+          if [ -n "${{ secrets.NEBIUS_API_KEY }}" ]; then
+            echo "has_secret=true" >> $GITHUB_OUTPUT
+            echo "NEBIUS_API_KEY secret detected; running live integration test."
+          else
+            echo "has_secret=false" >> $GITHUB_OUTPUT
+            echo "NEBIUS_API_KEY secret not present; live provider integration skipped (deterministic mode)."
+          fi
+
+      - name: Install uv
+        if: steps.check-secrets.outputs.has_secret == 'true'
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        if: steps.check-secrets.outputs.has_secret == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies from lockfile
+        if: steps.check-secrets.outputs.has_secret == 'true'
+        run: uv sync --frozen
+
+      - name: Run live model smoke test
+        if: steps.check-secrets.outputs.has_secret == 'true'
+        env:
+          NEBIUS_API_KEY: ${{ secrets.NEBIUS_API_KEY }}
+        run: uv run python scripts/smoke_test_nebius.py --live

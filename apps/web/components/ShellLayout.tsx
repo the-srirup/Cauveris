@@ -18,7 +18,7 @@ export interface ShellLayoutProps {
 export function ShellLayout({ children }: ShellLayoutProps) {
   const { state } = useShell();
   const { isSidebarDrawer, isInspectorDrawer } = useShellLayout();
-  const { isNavCollapsed, inspectorOpen, inspectorMode } = state;
+  const { isNavCollapsed, inspectorOpen, inspectorMode, inspectorDockPosition } = state;
   const pathname = usePathname();
 
   const isInspectorVisible = Boolean(inspectorOpen && inspectorMode);
@@ -26,25 +26,28 @@ export function ShellLayout({ children }: ShellLayoutProps) {
 
   // Dynamic widths for CSS grid tracks:
   // Desktop:
-  //   Sidebar: 220px (expanded) or 56px (collapsed - icon-only width)
-  //   Inspector: 360px (open) or 0px (closed)
+  //   Sidebar: 240px (expanded) or 64px (collapsed - icon-only width)
+  //   Inspector:
+  //     - Docked to bottom (command center): 0px (does NOT shift or shrink the main body)
+  //     - Docked to right sidebar: 360px (open) or 0px (closed)
   // Mobile/Tablet (isDrawer):
   //   Sidebar & Inspector are fixed overlay drawers and do not consume desktop grid columns
+  const isRightInspector = isInspectorVisible && !isInspectorDrawer && inspectorDockPosition === "right";
   const sidebarWidthPx = isSidebarDrawer ? 0 : isNavCollapsed ? 64 : 240;
-  const inspectorWidthPx = isInspectorDrawer || !isInspectorVisible ? 0 : 360;
+  const inspectorWidthPx = isRightInspector ? 360 : 0;
 
   // Track layout state changes to trigger window resize event for charts/graphs/timelines
   const prevCollapsedRef = useRef(isNavCollapsed);
-  const prevInspectorRef = useRef(isInspectorVisible);
+  const prevInspectorRef = useRef(isRightInspector);
   const resizeTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (
       prevCollapsedRef.current !== isNavCollapsed ||
-      prevInspectorRef.current !== isInspectorVisible
+      prevInspectorRef.current !== isRightInspector
     ) {
       prevCollapsedRef.current = isNavCollapsed;
-      prevInspectorRef.current = isInspectorVisible;
+      prevInspectorRef.current = isRightInspector;
 
       if (resizeTimerRef.current) {
         clearTimeout(resizeTimerRef.current);
@@ -56,7 +59,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
           window.dispatchEvent(new Event("resize"));
           window.dispatchEvent(
             new CustomEvent("cauveris:layout-resize", {
-              detail: { isNavCollapsed, inspectorOpen: isInspectorVisible },
+              detail: { isNavCollapsed, inspectorOpen: isInspectorVisible, inspectorDockPosition },
             })
           );
         }
@@ -68,7 +71,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
         }
       };
     }
-  }, [isNavCollapsed, isInspectorVisible]);
+  }, [isNavCollapsed, isRightInspector, isInspectorVisible, inspectorDockPosition]);
 
   return (
     <>
@@ -79,6 +82,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
         id="cauveris-shell-grid"
         data-sidebar-collapsed={isNavCollapsed}
         data-inspector-open={isInspectorVisible}
+        data-inspector-dock={inspectorDockPosition || "bottom"}
         className={
           isLoginPage
             ? "relative h-full w-full flex items-center justify-center bg-[var(--color-canvas)]"

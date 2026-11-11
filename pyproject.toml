@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cauveris"
-version = "3.1.0"
+version = "3.2.0"
 description = "Autonomous reality debugger for AI-powered robotic systems"
 requires-python = ">=3.11"
 authors = [
@@ -83,7 +83,7 @@ select = ["E", "F", "W"]
 ignore = ["E501"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 plugins = ["pydantic.mypy"]
 mypy_path = "."
 explicit_package_bases = true

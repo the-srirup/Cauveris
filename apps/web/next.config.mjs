@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Read package.json version
-let pkgVersion = "3.1.0";
+let pkgVersion = "3.2.0";
 try {
   const pkgPath = path.join(__dirname, "package.json");
   const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));

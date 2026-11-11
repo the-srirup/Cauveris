@@ -1396,6 +1396,32 @@ class ApiClient {
     });
   }
 
+  // Get a specific report artifact by ID (returns markdown or json data)
+  async getReportArtifact(
+    incidentId: string,
+    reportId: string,
+    format?: string
+  ): Promise<{ text: string; isMarkdown: boolean; data?: any }> {
+    const { accessToken } = useAuthStore.getState();
+    const headers: Record<string, string> = {};
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+    const query = format ? `?format=${format}` : '';
+    const response = await fetch(`${this.baseUrl}/incidents/${incidentId}/reports/${reportId}${query}`, { headers });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to fetch report artifact ${reportId}: ${response.status} ${errorText}`);
+    }
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("markdown") || contentType.includes("text/plain")) {
+      const text = await response.text();
+      return { text, isMarkdown: true };
+    }
+    const data = await response.json();
+    return { text: JSON.stringify(data, null, 2), isMarkdown: false, data };
+  }
+
   // Apply patch to target directory
   async applyPatch(incidentId: string, targetDir: string = ".", dryRun: boolean = false, rollback: boolean = false): Promise<ApplyPatchResult> {
     return this.request<ApplyPatchResult>(`/incidents/${incidentId}/apply-patch`, {

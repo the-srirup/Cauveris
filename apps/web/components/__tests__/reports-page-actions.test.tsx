@@ -293,4 +293,53 @@ describe("ReportsPage - Action Buttons Functionality", () => {
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(screen.getByText("report-investigation")).toBeInTheDocument();
   });
+
+  it("Report Templates component renders all 4 templates and handles preview modal and actions", async () => {
+    render(<ReportsPage />);
+
+    // Wait for reports to load
+    await screen.findByRole("table");
+
+    // Check that Report Templates section exists
+    expect(screen.getByRole("heading", { name: /report templates/i, level: 2 })).toBeInTheDocument();
+
+    // Verify all 4 template titles
+    expect(screen.getByRole("heading", { name: /^full investigation$/i, level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^executive summary$/i, level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^technical deep dive$/i, level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^compliance & audit$/i, level: 3 })).toBeInTheDocument();
+
+    // Investigation, Executive, and Technical reports exist in apiReports mock, so they show Inspect buttons
+    const inspectBtn = screen.getByRole("button", { name: /inspect full investigation document/i });
+    expect(inspectBtn).toBeInTheDocument();
+
+    // Clicking Inspect opens the viewer modal
+    fireEvent.click(inspectBtn);
+    await waitFor(() => {
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /close report viewer/i }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    // Compliance report does NOT exist in apiReports mock, so it shows Create Document and Preview Spec buttons
+    const previewComplianceBtn = screen.getByRole("button", { name: /preview compliance & audit template specification/i });
+    expect(previewComplianceBtn).toBeInTheDocument();
+
+    // Click Preview Spec to open the template preview modal
+    fireEvent.click(previewComplianceBtn);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /template: compliance & audit/i, level: 3 })).toBeInTheDocument();
+    expect(screen.getByText(/specification & structure/i)).toBeInTheDocument();
+    expect(screen.getByText(/sample output excerpt/i)).toBeInTheDocument();
+
+    // Switch to sample tab
+    fireEvent.click(screen.getByText(/sample output excerpt/i));
+    expect(screen.getByText(/compliance & security audit verification/i)).toBeInTheDocument();
+
+    // Close preview modal
+    fireEvent.click(screen.getByRole("button", { name: /close preview/i }));
+    expect(screen.queryByRole("heading", { name: /template: compliance & audit/i, level: 3 })).not.toBeInTheDocument();
+  });
 });

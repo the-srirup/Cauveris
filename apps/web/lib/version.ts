@@ -11,7 +11,7 @@ import packageJson from "../package.json";
 const rawVersion =
   (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_APP_VERSION) ||
   packageJson.version ||
-  "3.1.0";
+  "3.2.0";
 
 /**
  * Semantic version string without leading "v" (e.g. "3.0.0").

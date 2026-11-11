@@ -40,6 +40,8 @@ export type InspectorMode =
   | "patch"
   | null;
 
+export type InspectorDockPosition = "bottom" | "right";
+
 export interface InspectorData {
   mode: InspectorMode;
   // Timeline event
@@ -87,10 +89,11 @@ export interface ShellState {
   // Top Context Bar
   incidentContext: IncidentContext | null;
 
-  // Right Inspector
+  // Right Inspector / Command Center Dock
   inspectorOpen: boolean;
   inspectorMode: InspectorMode;
   inspectorData: InspectorData;
+  inspectorDockPosition: InspectorDockPosition;
 
   // Bottom Activity Tray
   trayState: TrayState;
@@ -106,8 +109,9 @@ export type ShellAction =
   | { type: "SET_NAV_COLLAPSE"; payload: boolean }
   | { type: "SET_NAV_DRAWER"; payload: boolean }
   | { type: "SET_INCIDENT_CONTEXT"; payload: IncidentContext | null }
-  | { type: "OPEN_INSPECTOR"; payload: { mode: InspectorMode; data: InspectorData } }
+  | { type: "OPEN_INSPECTOR"; payload: { mode: InspectorMode; data: InspectorData; dockPosition?: InspectorDockPosition } }
   | { type: "CLOSE_INSPECTOR" }
+  | { type: "SET_INSPECTOR_DOCK_POSITION"; payload: InspectorDockPosition }
   | { type: "SET_TRAY_STATE"; payload: TrayState }
   | { type: "ADD_ACTIVITY"; payload: Activity }
   | { type: "REMOVE_ACTIVITY"; payload: string }
@@ -142,6 +146,9 @@ function shellReducer(state: ShellState, action: ShellAction): ShellState {
         inspectorOpen: true,
         inspectorMode: action.payload.mode,
         inspectorData: action.payload.data,
+        inspectorDockPosition:
+          action.payload.dockPosition ??
+          (action.payload.mode === "evidence" ? "bottom" : (state.inspectorDockPosition ?? "bottom")),
       };
 
     case "CLOSE_INSPECTOR":
@@ -152,6 +159,12 @@ function shellReducer(state: ShellState, action: ShellAction): ShellState {
         inspectorData: {
           mode: null,
         },
+      };
+
+    case "SET_INSPECTOR_DOCK_POSITION":
+      return {
+        ...state,
+        inspectorDockPosition: action.payload,
       };
 
     
@@ -196,6 +209,7 @@ const initialState: ShellState = {
   inspectorOpen: false,
   inspectorMode: null,
   inspectorData: { mode: null },
+  inspectorDockPosition: "bottom",
   trayState: "closed",
   activities: [],
   commandPaletteOpen: false,
@@ -214,8 +228,9 @@ interface ShellContextValue {
   setNavCollapse: (collapsed: boolean) => void;
   setNavDrawer: (open: boolean) => void;
   setIncidentContext: (ctx: IncidentContext | null) => void;
-  openInspector: (mode: InspectorMode, data: InspectorData) => void;
+  openInspector: (mode: InspectorMode, data: InspectorData, dockPosition?: InspectorDockPosition) => void;
   closeInspector: () => void;
+  setInspectorDockPosition: (position: InspectorDockPosition) => void;
   setTrayState: (trayState: TrayState) => void;
   addActivity: (activity: Omit<Activity, "id" | "timestamp">) => void;
   removeActivity: (id: string) => void;
@@ -263,8 +278,17 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const setNavCollapse = useCallback((collapsed: boolean) => dispatch({ type: "SET_NAV_COLLAPSE", payload: collapsed }), [dispatch]);
   const setNavDrawer = useCallback((open: boolean) => dispatch({ type: "SET_NAV_DRAWER", payload: open }), [dispatch]);
   const setIncidentContext = useCallback((ctx: IncidentContext | null) => dispatch({ type: "SET_INCIDENT_CONTEXT", payload: ctx }), [dispatch]);
-  const openInspector = useCallback((mode: InspectorMode, data: InspectorData) => dispatch({ type: "OPEN_INSPECTOR", payload: { mode, data } }), [dispatch]);
+  const openInspector = useCallback(
+    (mode: InspectorMode, data: InspectorData, dockPosition?: InspectorDockPosition) =>
+      dispatch({ type: "OPEN_INSPECTOR", payload: { mode, data, dockPosition } }),
+    [dispatch]
+  );
   const closeInspector = useCallback(() => dispatch({ type: "CLOSE_INSPECTOR" }), [dispatch]);
+  const setInspectorDockPosition = useCallback(
+    (position: InspectorDockPosition) =>
+      dispatch({ type: "SET_INSPECTOR_DOCK_POSITION", payload: position }),
+    [dispatch]
+  );
   const setTrayState = useCallback((trayState: TrayState) => dispatch({ type: "SET_TRAY_STATE", payload: trayState }), [dispatch]);
   const addActivity = useCallback((activity: Omit<Activity, "id" | "timestamp">) =>
     dispatch({
@@ -291,6 +315,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setIncidentContext,
       openInspector,
       closeInspector,
+      setInspectorDockPosition,
       setTrayState,
       addActivity,
       removeActivity,
@@ -307,6 +332,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       setIncidentContext,
       openInspector,
       closeInspector,
+      setInspectorDockPosition,
       setTrayState,
       addActivity,
       removeActivity,

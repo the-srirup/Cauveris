@@ -147,7 +147,25 @@ def _assert_download(harness: LiveHarness, incident_id: str, target: Path) -> No
         assert archive.read("rollback.patch").strip()
 
 
-def run(keep: bool = False) -> Path | None:
+def sanitize_log(text: str) -> str:
+    """Sanitize sensitive keys, tokens, or passwords before writing diagnostic logs."""
+    import re
+    text = re.sub(r"(Bearer\s+)[A-Za-z0-9_\-\.]+", r"\1[REDACTED_TOKEN]", text)
+    text = re.sub(
+        r'(api_key|secret|token|password)[\'"]?\s*[:=]\s*[\'"]?[^\s,\'\"\}]+',
+        r'\1: "[REDACTED]"',
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text
+
+
+def run(keep: bool = False, artifact_dir: Path | None = None) -> Path | None:
+    target_artifacts = artifact_dir or (
+        Path(os.environ["CAUVERIS_E2E_ARTIFACT_DIR"])
+        if "CAUVERIS_E2E_ARTIFACT_DIR" in os.environ
+        else None
+    )
     run_root = Path(tempfile.mkdtemp(prefix="cauveris-e2e-", dir=os.getenv("TEMP")))
     port = _free_port()
     evidence = run_root / "evidence"
@@ -265,10 +283,17 @@ def run(keep: bool = False) -> Path | None:
             _assert_download(harness, incident_id, run_root)
             print(f"PASS {package.name} ({expected} -> {incident_id})")
 
-        (run_root / "request-trace.json").write_text(json.dumps(harness.trace, indent=2), encoding="utf-8")
+        trace_json = json.dumps(harness.trace, indent=2)
+        (run_root / "request-trace.json").write_text(trace_json, encoding="utf-8")
+        if target_artifacts:
+            target_artifacts.mkdir(parents=True, exist_ok=True)
+            (target_artifacts / "request-trace.json").write_text(trace_json, encoding="utf-8")
+            for zip_file in run_root.glob("*-repair.zip"):
+                shutil.copy2(zip_file, target_artifacts / zip_file.name)
         return run_root if keep else None
     except Exception:
-        (run_root / "request-trace.json").write_text(json.dumps(harness.trace, indent=2), encoding="utf-8")
+        trace_json = json.dumps(harness.trace, indent=2)
+        (run_root / "request-trace.json").write_text(trace_json, encoding="utf-8")
         if server.poll() is None:
             server.terminate()
             try:
@@ -276,11 +301,18 @@ def run(keep: bool = False) -> Path | None:
             except subprocess.TimeoutExpired:
                 server.kill()
                 server.wait(timeout=5)
-        output = server.stdout.read() if server.stdout else ""
-        (run_root / "backend.log").write_text(output or "", encoding="utf-8")
+        raw_output = server.stdout.read() if server.stdout else ""
+        clean_output = sanitize_log(raw_output or "")
+        (run_root / "backend.log").write_text(clean_output, encoding="utf-8")
+        if target_artifacts:
+            target_artifacts.mkdir(parents=True, exist_ok=True)
+            (target_artifacts / "request-trace.json").write_text(trace_json, encoding="utf-8")
+            (target_artifacts / "backend.log").write_text(clean_output, encoding="utf-8")
+            for zip_file in run_root.glob("*-repair.zip"):
+                shutil.copy2(zip_file, target_artifacts / zip_file.name)
         print(f"E2E evidence retained at {run_root}", file=sys.stderr)
-        if output:
-            print(f"Backend log:\n{output}", file=sys.stderr)
+        if clean_output:
+            print(f"Backend log:\n{clean_output}", file=sys.stderr)
         raise
     finally:
         if server.poll() is None:
@@ -296,5 +328,6 @@ def run(keep: bool = False) -> Path | None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--keep", action="store_true", help="retain successful evidence too")
+    parser.add_argument("--artifact-dir", type=Path, default=None, help="Directory to save sanitized artifacts and logs")
     args = parser.parse_args()
-    run(keep=args.keep)
+    run(keep=args.keep, artifact_dir=args.artifact_dir)

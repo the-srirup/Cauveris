@@ -28,6 +28,7 @@ import {
   AlertTriangle,
   Eye,
   Check,
+  Terminal,
 } from "lucide-react";
 import { VirtualizedList } from "@/components/VirtualizedList";
 import { DataErrorBoundary } from "@/components/ErrorBoundary";
@@ -563,7 +564,7 @@ function EvidenceVaultContent() {
 
           <div className="p-2 border-t border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-subtle,#f8f9fa)] text-[10.5px] text-[var(--color-fg-subtle,#7b8794)] flex justify-between">
             <span>Showing {filteredItems.length} of {allItems.length}</span>
-            <span>Click row to open in Context Dock</span>
+            <span>Click row to open Command Line Center</span>
           </div>
         </div>
 
@@ -581,8 +582,22 @@ function EvidenceVaultContent() {
               )}
             </div>
 
-            {/* View Mode Tabs */}
-            <div className="flex items-center border border-[var(--color-border-default,#d9e0e7)] rounded-[var(--radius-lg,8px)] bg-[var(--color-canvas-subtle,#f8f9fa)] text-[10.5px]">
+            <div className="flex items-center gap-2">
+              {/* CLI Command Line Center Trigger Button */}
+              {selectedItem && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenArtifactInspector(selectedItem)}
+                  className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-cyan-400 hover:text-cyan-300 hover:bg-zinc-800 text-[11px] font-mono transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500"
+                  title="Open interactive bottom Command Line Center"
+                >
+                  <Terminal className="w-3 h-3" />
+                  <span>CLI Center</span>
+                </button>
+              )}
+
+              {/* View Mode Tabs */}
+              <div className="flex items-center border border-[var(--color-border-default,#d9e0e7)] rounded-[var(--radius-lg,8px)] bg-[var(--color-canvas-subtle,#f8f9fa)] text-[10.5px]">
               {(["parsed", "raw", "signals", "references", "warnings"] as const).map((tab) => (
                 <button
                   key={tab}
@@ -596,6 +611,7 @@ function EvidenceVaultContent() {
                   {tab}
                 </button>
               ))}
+              </div>
             </div>
           </div>
 

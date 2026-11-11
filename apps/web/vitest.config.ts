@@ -18,6 +18,20 @@ export default defineConfig({
       isolate: false,
       singleFork: true,
     },
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html', 'lcov'],
+      reportsDirectory: './coverage',
+      exclude: [
+        'node_modules/**',
+        '.next/**',
+        '**/*.test.{ts,tsx}',
+        '**/__tests__/**',
+        'vitest.setup.tsx',
+        'e2e/**',
+        'scripts/**',
+      ],
+    },
   },
   resolve: {
     alias: {

@@ -305,7 +305,7 @@ describe("Responsive Layout & Dynamic Sidebar Expansion", () => {
       const { openInspector, closeInspector } = useShell();
       return (
         <div>
-          <button onClick={() => openInspector("evidence", { mode: "evidence" })}>
+          <button onClick={() => openInspector("evidence", { mode: "evidence" }, "right")}>
             Open Inspector
           </button>
           <button onClick={() => closeInspector()}>Close Inspector</button>
@@ -328,12 +328,53 @@ describe("Responsive Layout & Dynamic Sidebar Expansion", () => {
     expect(grid?.style.getPropertyValue("--shell-inspector-current-width")).toBe("0px");
     expect(inspectorCol?.style.width).toBe("0px");
 
-    // Open inspector
+    // Open inspector in right dock mode
     fireEvent.click(screen.getByText("Open Inspector"));
 
     // Inspector allocated 360px column on desktop, preventing overlap with main content
     expect(grid?.style.getPropertyValue("--shell-inspector-current-width")).toBe("360px");
     expect(inspectorCol?.style.width).toBe("360px");
+
+    // Close inspector
+    fireEvent.click(screen.getByText("Close Inspector"));
+    expect(grid?.style.getPropertyValue("--shell-inspector-current-width")).toBe("0px");
+    expect(inspectorCol?.style.width).toBe("0px");
+  });
+
+  it("9b. opening the command center from bottom does not shift the main body or allocate right column width", () => {
+    function BottomInspectorTrigger() {
+      const { openInspector, closeInspector } = useShell();
+      return (
+        <div>
+          <button onClick={() => openInspector("evidence", { mode: "evidence" })}>
+            Open Bottom Command Center
+          </button>
+          <button onClick={() => closeInspector()}>Close Inspector</button>
+        </div>
+      );
+    }
+
+    render(
+      <ShellProvider>
+        <ShellLayout>
+          <BottomInspectorTrigger />
+        </ShellLayout>
+      </ShellProvider>
+    );
+
+    const grid = document.getElementById("cauveris-shell-grid");
+    const inspectorCol = document.getElementById("shell-inspector-col");
+
+    // Initially closed: 0px column
+    expect(grid?.style.getPropertyValue("--shell-inspector-current-width")).toBe("0px");
+    expect(inspectorCol?.style.width).toBe("0px");
+
+    // Open bottom command center (default dockPosition is "bottom")
+    fireEvent.click(screen.getByText("Open Bottom Command Center"));
+
+    // Bottom command center must NOT allocate right column width or shift main content
+    expect(grid?.style.getPropertyValue("--shell-inspector-current-width")).toBe("0px");
+    expect(inspectorCol?.style.width).toBe("0px");
 
     // Close inspector
     fireEvent.click(screen.getByText("Close Inspector"));
