@@ -31,6 +31,7 @@ export default defineConfig({
       timeout: 30_000,
       env: {
         CAUVERIS_DEMO_MODE: "true",
+        CAUVERIS_JWT_SECRET: "ci-secret-jwt-key-for-e2e-testing-32-chars-min",
         CAUVERIS_JOB_QUEUE_BACKEND: "memory",
         CAUVERIS_JOB_QUEUE_EMBEDDED_WORKER: "true",
         CAUVERIS_LOCAL_MODEL_ENDPOINTS: "",
