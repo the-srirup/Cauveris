@@ -1,5 +1,11 @@
 # Cauveris Incident Demonstration Package: DEMO-PERCEPTION-MEMORY-002
 
+> Part of the [Cauveris](../../../README.md) repository — a self-contained demonstration
+> incident bundle. The ready-to-upload zip form is
+> [`packages/perception-worker-memory-exhaustion.zip`](../../perception-worker-memory-exhaustion.zip),
+> and the one-command runner is
+> `python scripts/demo_incident_package.py --package packages/demo/perception-worker-memory-exhaustion --start-backend`.
+
 ## Incident Story
 During an intensive perception workload in staging, the `perception-worker` process was terminated by the host kernel after its resident set size (620 MiB) exceeded the configured container ceiling (`resources.memory_limit_mb: 512`). The failure caused dropped perception frames, leading to an automated emergency stop event.
 

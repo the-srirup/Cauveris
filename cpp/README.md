@@ -1,5 +1,9 @@
 # Cauveris CUDA Kernels
 
+> Optional GPU acceleration for [Cauveris](../README.md).  When no GPU is
+> available, the holographic engine automatically uses the NumPy reference
+> path with identical results — this extension changes speed, never answers.
+
 The compiled half of the holographic causal engine.  It evaluates the same
 Green's functions as the NumPy reference implementation in
 `cauveris/holographic/heu_kernel.py`, on the GPU.

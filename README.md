@@ -8,6 +8,7 @@
 [![Package Manager](https://img.shields.io/badge/packaging-uv-purple.svg)](https://docs.astral.sh/uv/)
 [![Model Integration](https://img.shields.io/badge/LLM-Nebius%20Token%20Factory%20%2F%20NVIDIA%20Nemotron-76B900.svg)](https://nebius.com/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/badge/release-v3.2.0-blue.svg)](https://github.com/the-srirup/Cauveris/releases/tag/v3.2.0)
 
 ---
 
@@ -120,6 +121,7 @@ Cauveris is 100% open-source software licensed under the **[Apache License 2.0](
 - **Counterfactual Physics & Simulation Validation**: Reproduces failure baselines in sandboxed simulation environments and executes parameter perturbation sweeps to verify invariant compliance prior to generating fixes.
 - **Reversible Repair Packaging**: Compiles verified configuration patches into deployable `.zip` repair packages containing patch diffs, metadata manifests, verification evidence, and self-contained zero-dependency rollback scripts (`rollback.sh` / `rollback.ps1`).
 - **Production-Grade Security**: Full JWT session-based RBAC, API rate limiting by cost class, strict path-traversal guards, and automatic secret redaction.
+- **Mission Control Web Console**: Next.js 14 dashboard with a dockable bottom command center, live SSE pipeline events, an overhauled reports suite, and real-time model-health and token/cost metering (current release **v3.2.0**).
 
 ---
 
@@ -175,6 +177,7 @@ cauveris/
 ├── cauveris/                      # Core backend application package
 │   ├── analysis/                  # System modeling, mechanism detectors, invariants
 │   ├── api/                       # FastAPI application, auth routers, SSE feeds, deps
+│   ├── capability/                # Capability assessment & reporting
 │   ├── holographic/               # Digital twin topology, compression, state machine
 │   ├── hypothesis/                # Causal hypothesis generator and scoring
 │   ├── ingestion/                 # Safe zip ingestion, validation, and unpacking
@@ -189,17 +192,26 @@ cauveris/
 │   ├── simulation/                # Numerical and digital-twin simulation runners
 │   ├── state_machine/             # Pipeline orchestrator and stage lifecycle manager
 │   ├── temporal/                  # Clock skew compensation and temporal event graphs
+│   ├── verifier/                  # Multi-point verification engine over the real source tree
 │   ├── config.py                  # Environment settings and configuration schema
 │   └── main.py                    # CLI application entrypoint
 ├── apps/
-│   └── web/                       # Next.js 14 frontend web console
+│   └── web/                       # Next.js 14 "Mission Control" web console
+├── cpp/                           # Optional CUDA kernels for the holographic engine (see cpp/README.md)
 ├── data/                          # SQLite execution and session databases (ignored by git)
-├── datasets/                      # Reference incident bundles and benchmark sets
-├── golden_incident/               # Reference golden incident bundle (CAU-0001)
+├── datasets/                      # Reference incident bundle generators and benchmark sets
+├── deploy/
+│   └── nebius/                    # Production Docker Compose / Kubernetes manifests (see deploy/nebius/README.md)
+├── packages/                      # Ready-to-ingest incident bundles and .zip archives
+│   ├── golden_incident/incident-CAU-0001/          # Reference golden incident bundle (AMR emergency stop)
+│   ├── payments-gateway-pool-exhaustion.zip       # Demo incident CAU-9001 (used in the workflow below)
+│   └── demo/                      # Additional demonstration packages
 ├── scripts/                       # Operational, testing, and demonstration scripts
 ├── tests/                         # Comprehensive pytest test suite (500+ tests)
 ├── pyproject.toml                 # Python project configuration and dependency tree
-└── Makefile                       # Operational convenience targets
+├── Makefile                       # Operational convenience targets
+├── PRODUCT.md                     # Product brief: positioning, capabilities, brand commitments
+└── LICENSE                        # Apache License 2.0
 ```
 
 ---
@@ -227,7 +239,7 @@ Ensure the following runtimes and tools are installed:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/the-srirup/cauveris.git
+git clone https://github.com/the-srirup/Cauveris.git
 cd cauveris
 ```
 
@@ -315,31 +327,35 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
 ```
 
 ### Step 2: Ingest an Incident Bundle
-Upload a raw incident zip archive containing logs, configuration, and telemetry:
+Upload a raw incident zip archive containing logs, configuration, and telemetry.
+The repo ships a ready-made demo bundle at `packages/payments-gateway-pool-exhaustion.zip`
+(incident `CAU-9001`); the golden reference incident lives at
+`packages/golden_incident/incident-CAU-0001/` and can be zipped with
+`python scripts/build_package_zip.py packages/golden_incident/incident-CAU-0001`:
 ```bash
 curl -X POST http://localhost:8000/api/v1/incidents/upload \
   -H "Authorization: Bearer <TOKEN>" \
-  -F "file=@golden_incident/CAU-0001.zip"
+  -F "file=@packages/payments-gateway-pool-exhaustion.zip"
 ```
 
 ### Step 3: Trigger Digital Twin Reconstruction
 Construct the physical topology and synchronized multi-channel timeline:
 ```bash
-curl -X POST http://localhost:8000/api/v1/incidents/CAU-0001/reconstruct \
+curl -X POST http://localhost:8000/api/v1/incidents/CAU-9001/reconstruct \
   -H "Authorization: Bearer <TOKEN>"
 ```
 
 ### Step 4: Generate Causal Hypotheses
 Invoke the Nebius/NVIDIA reasoning pipeline with deterministic fallback:
 ```bash
-curl -X POST http://localhost:8000/api/v1/incidents/CAU-0001/hypotheses/generate \
+curl -X POST http://localhost:8000/api/v1/incidents/CAU-9001/hypotheses/generate \
   -H "Authorization: Bearer <TOKEN>"
 ```
 
 ### Step 5: Execute Simulation Verification
 Run the counterfactual digital twin simulation to reproduce the baseline and verify candidate patches:
 ```bash
-curl -X POST http://localhost:8000/api/v1/incidents/CAU-0001/verify \
+curl -X POST http://localhost:8000/api/v1/incidents/CAU-9001/verify \
   -H "Authorization: Bearer <TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"hypothesis_id": "hyp-001"}'
@@ -348,9 +364,9 @@ curl -X POST http://localhost:8000/api/v1/incidents/CAU-0001/verify \
 ### Step 6: Download the Reversible Repair Package
 Download the self-contained repair package (`.zip`) containing the patch, manifest, verification report, and rollback scripts:
 ```bash
-curl -X GET http://localhost:8000/api/v1/incidents/CAU-0001/packages/latest/download \
+curl -X GET http://localhost:8000/api/v1/incidents/CAU-9001/packages/latest/download \
   -H "Authorization: Bearer <TOKEN>" \
-  --output repair_package_CAU-0001.zip
+  --output repair_package_CAU-9001.zip
 ```
 
 ---
@@ -478,7 +494,7 @@ Cauveris exposes dedicated operational probes for deployment orchestrators (Kube
 - **Liveness Probe** (`GET /health` or `GET /api/v1/health`):
   Confirms the process is responsive and accepting HTTP connections.
   ```json
-  {"status": "healthy", "service": "cauveris", "version": "3.1.0"}
+  {"status": "healthy", "service": "cauveris", "version": "3.2.0"}
   ```
 
 - **Readiness Probe** (`GET /ready` or `GET /api/v1/ready`):

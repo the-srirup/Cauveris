@@ -66,7 +66,8 @@ flowchart TD
 | `NEBIUS_MAX_CONCURRENT_REQUESTS` | No | `4` | Concurrency limiter to protect against thread starvation. |
 | `NEBIUS_DAILY_BUDGET_LIMIT` | No | `50.0` | Maximum estimated daily spending in USD before circuit breaker trips. |
 | `CAUVERIS_MODEL_PROVIDER_REQUIRED` | No | `true` | When true, container startup fails readiness if Nebius key is missing. |
-| `CAUVERIS_JWT_SECRET` | Yes | *None* | Shared secret for signing session and API tokens. |
+| `CAUVERIS_SECRET_KEY` | Yes | *None* | Application secret key (see the root README [Configuration Reference](../../README.md#configuration-reference)). Must never be committed. |
+| `CAUVERIS_JWT_SECRET` | Yes | *None* | Secret for signing auth session/API tokens. Must never be committed. |
 | `CAUVERIS_DEMO_MODE` | No | `false` | Disable sample/demo mock overrides in production. |
 | `CAUVERIS_DEMO_AUTH` | No | `false` | Enforce explicit user credentials; no automatic demo user login. |
 
@@ -76,13 +77,14 @@ flowchart TD
 
 ### 1. Clone & Set Environment
 ```bash
-git clone https://github.com/your-org/cauveris.git
+git clone https://github.com/the-srirup/Cauveris.git
 cd cauveris
 
 cat <<EOF > .env
 NEBIUS_API_KEY=your-actual-nebius-api-key
+CAUVERIS_SECRET_KEY=$(openssl rand -hex 32)
 CAUVERIS_JWT_SECRET=$(openssl rand -hex 32)
-MODEL_PROVIDER_REQUIRED=true
+CAUVERIS_MODEL_PROVIDER_REQUIRED=true
 EOF
 ```
 
@@ -115,6 +117,7 @@ kubectl apply -f deploy/nebius/k8s-deployment.yaml
 kubectl create secret generic cauveris-nebius-credentials \
   --namespace cauveris \
   --from-literal=NEBIUS_API_KEY="your-actual-nebius-api-key" \
+  --from-literal=CAUVERIS_SECRET_KEY="$(openssl rand -hex 32)" \
   --from-literal=CAUVERIS_JWT_SECRET="$(openssl rand -hex 32)" \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
