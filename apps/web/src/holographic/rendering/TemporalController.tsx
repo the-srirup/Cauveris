@@ -93,7 +93,7 @@ export function TemporalController({
   );
 
   return (
-    <div className="flex flex-col gap-2 p-3 bg-slate-900/80 backdrop-blur border border-slate-700/60 rounded-xl text-slate-200">
+    <div className="flex flex-col gap-2 p-3 bg-slate-900/80 backdrop-blur border border-slate-700/60 rounded-xl text-slate-200" data-console>
       <div className="flex items-center justify-between text-xs">
         <span className="font-semibold text-zinc-200">
           Reality Timeline: Stage {currentFrameIdx + 1} / {frameCount}

@@ -43,7 +43,9 @@ import { tv } from "tailwind-variants";
 import { useActiveIncident } from "@/lib/useIncident";
 import { useShell } from "@/lib/useShell";
 import { AuthGate } from "@/components/AuthGate";
+import { WebGLGate } from "@/components/WebGLGate";
 import { api } from "@/lib/api";
+import { asArray, toFiniteNumber, toText } from "@/lib/safeText";
 
 import {
   CausalNode,
@@ -73,6 +75,8 @@ import {
   TOTAL_BOUNDARY_LAYERS,
   type ViewModeValue,
   type VisualizationMetadata,
+  normalizeNodeType,
+  normalizeHealth,
 } from "@/holographic";
 
 const cardStyles = tv({
@@ -143,29 +147,39 @@ function HolographicReconstructionContent() {
           ? (response.metadata as VisualizationMetadata)
           : undefined;
       setProvenanceMetadata(meta);
-      const nodes = (response.bulk_nodes || []).map((n: any) => ({
-        id: n.id,
-        label: n.name,
-        name: n.name,
-        type: n.type,
-        position: { x: n.position[0], y: n.position[1], z: n.position[2] },
-        radius: n.size,
-        color: n.color,
-        health: n.health,
-        metrics: n.metrics,
-        confidence: n.confidence,
-        config_changed: n.config_changed,
-      }));
-      const links: CausalLink[] = (response.bulk_edges || []).map((e: any) => ({
-        source: e.source,
-        target: e.target,
-        strength: e.thickness ? e.thickness / 4 : 0.5,
+      // Every field is normalized: a malformed node (missing position, object
+      // id) degrades to a zero-position text node instead of crashing .map.
+      const nodes = asArray<any>(response.bulk_nodes)
+        .filter((n) => n && typeof n === "object")
+        .map((n: any, i: number) => ({
+          id: toText(n.id, `node-${i}`),
+          label: toText(n.name, `node-${i}`),
+          name: toText(n.name, `node-${i}`),
+          type: normalizeNodeType(n.type),
+          position: Array.isArray(n.position)
+            ? {
+                x: toFiniteNumber(n.position[0], 0),
+                y: toFiniteNumber(n.position[1], 0),
+                z: toFiniteNumber(n.position[2], 0),
+              }
+            : { x: 0, y: 0, z: 0 },
+          radius: toFiniteNumber(n.size, 1),
+          color: toText(n.color, "#8b8b8b"),
+          health: normalizeHealth(n.health, 1),
+          metrics: n.metrics && typeof n.metrics === "object" ? n.metrics : undefined,
+          confidence: toFiniteNumber(n.confidence, 0),
+          config_changed: Boolean(n.config_changed),
+        }));
+      const links: CausalLink[] = asArray<any>(response.bulk_edges).map((e: any) => ({
+        source: toText(e?.source, ""),
+        target: toText(e?.target, ""),
+        strength: e?.thickness != null ? toFiniteNumber(e.thickness, 2) / 4 : 0.5,
         type: "causes" as const,
-        latency_ms: e.latency_ms,
+        latency_ms: toFiniteNumber(e?.latency_ms, 0),
       }));
       setRawNodes(nodes);
       setRawLinks(links);
-      setTemporalFrames((response as any).temporal_frames || []);
+      setTemporalFrames(asArray((response as any).temporal_frames));
       setError(null);
     } catch (err: any) {
       if (seq !== fetchSeqRef.current) return;
@@ -424,6 +438,10 @@ function HolographicReconstructionContent() {
             </div>
           ) : (
             <>
+          {/* WebGLGate probes for a GL context on the client only, and a
+              context/render failure degrades to an accessible fallback
+              instead of taking down the page. */}
+          <WebGLGate>
           <Canvas
             camera={{ position: [0, 40, 220], fov: 45, near: 0.1, far: 2000 }}
             gl={{
@@ -473,6 +491,7 @@ function HolographicReconstructionContent() {
               dampingFactor={0.05}
             />
           </Canvas>
+          </WebGLGate>
 
           {fieldMode === "intensity_slice" && (
             <div className="absolute top-4 left-4 p-3 rounded-[2px] bg-[var(--panel-recessed,#0e0e11)]/95 border border-[var(--divider,#27272a)] text-xs flex flex-col gap-2 w-64 shadow-md font-mono">
@@ -526,16 +545,17 @@ function HolographicReconstructionContent() {
                     {QUALITY_TERMS.residual.label}
                   </span>
                   <span className="font-mono text-[var(--color-fg-default)]">
-                    {hologramState.quality.mse > 0
-                      ? hologramState.quality.mse.toExponential(3)
-                      : "Calculating..."}
+                    {(() => {
+                      const mse = toFiniteNumber(hologramState.quality?.mse, 0);
+                      return mse > 0 ? mse.toExponential(3) : "Calculating...";
+                    })()}
                   </span>
                 </div>
                 <div className="w-full h-1.5 bg-[var(--color-canvas-subtle)] rounded-full overflow-hidden">
                   <div
                     className="h-full bg-[var(--color-fg-default)] transition-all duration-300"
                     style={{
-                      width: `${Math.min(100, Math.max(5, (1 - hologramState.quality.mse * 10) * 100))}%`,
+                      width: `${Math.min(100, Math.max(5, (1 - toFiniteNumber(hologramState.quality?.mse, 0) * 10) * 100))}%`,
                     }}
                   />
                 </div>
@@ -547,13 +567,13 @@ function HolographicReconstructionContent() {
                     {QUALITY_TERMS.fidelity.label}
                   </span>
                   <span className="font-mono text-zinc-100 font-bold">
-                    {(hologramState.quality.ssim * 100).toFixed(1)}%
+                    {(toFiniteNumber(hologramState.quality?.ssim, 0) * 100).toFixed(1)}%
                   </span>
                 </div>
                 <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-zinc-200 transition-all duration-300"
-                    style={{ width: `${hologramState.quality.ssim * 100}%` }}
+                    style={{ width: `${toFiniteNumber(hologramState.quality?.ssim, 0) * 100}%` }}
                   />
                 </div>
               </div>
@@ -567,13 +587,13 @@ function HolographicReconstructionContent() {
                     {QUALITY_TERMS.peakRecovery.label}
                   </span>
                   <span className="font-mono text-zinc-300 font-bold">
-                    {(hologramState.quality.strehlRatio * 100).toFixed(1)}%
+                    {(toFiniteNumber(hologramState.quality?.strehlRatio, 0) * 100).toFixed(1)}%
                   </span>
                 </div>
                 <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-zinc-400 transition-all duration-300"
-                    style={{ width: `${hologramState.quality.strehlRatio * 100}%` }}
+                    style={{ width: `${toFiniteNumber(hologramState.quality?.strehlRatio, 0) * 100}%` }}
                   />
                 </div>
               </div>

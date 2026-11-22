@@ -42,6 +42,7 @@ import { api } from "@/lib/api";
 import { useActiveIncident } from "@/lib/useIncident";
 import { useShell } from "@/lib/useShell";
 import { AuthGate } from "@/components/AuthGate";
+import { asArray, escapeHtml, safeJsonStringify, toFiniteNumber, toText } from "@/lib/safeText";
 
 export interface Report {
   id: string;
@@ -174,9 +175,9 @@ export function buildExecutiveMarkdown(data: any, incidentId?: string): string {
   const ev = data?.evidence_summary || {};
   const verifs: any[] = Array.isArray(data?.verification_reports) ? data.verification_reports.filter((v: any) => v?.verified) : [];
 
-  const topHyp = hyps.length > 0 ? [...hyps].sort((a, b) => (b.confidence_posterior || 0) - (a.confidence_posterior || 0))[0] : null;
-  const confidence = topHyp ? Math.round((topHyp.confidence_posterior || topHyp.confidence_prior || 0) * 100) : 0;
-  const missing = ev.missing_required_evidence || [];
+  const topHyp = hyps.length > 0 ? [...hyps].sort((a, b) => toFiniteNumber(b?.confidence_posterior, 0) - toFiniteNumber(a?.confidence_posterior, 0))[0] : null;
+  const confidence = topHyp ? Math.round(toFiniteNumber(topHyp.confidence_posterior ?? topHyp.confidence_prior, 0) * 100) : 0;
+  const missing = asArray<unknown>(ev.missing_required_evidence);
 
   return `# Executive Summary — Incident Postmortem
 
@@ -195,17 +196,17 @@ ${topHyp ? `- **Most Likely Root Cause** (\`${topHyp.hypothesis_id}\`, **${confi
 ## Evidence Grounding & Data Integrity
 - Total Evidence Items: **${ev.total_evidence_items ?? 18}** observed
 - Required Evidence Items: **${ev.required_evidence_items ?? 14}** required for causal closure
-- Missing Required Evidence: **${missing.length > 0 ? missing.join(", ") : "None (Grounding complete)"}**
+- Missing Required Evidence: **${missing.length > 0 ? missing.map((m) => toText(m)).join(", ") : "None (Grounding complete)"}**
 
 ## Remediation & Invariant Safety Sign-Off
-${verifs.length > 0 ? `- **Verified Patch**: Candidate \`${verifs[0].patch_candidate_id || "patch_verification_01"}\` cleared **9 of 9 invariant gates** in digital-twin verification.
+${verifs.length > 0 ? `- **Verified Patch**: Candidate \`${toText(verifs[0]?.patch_candidate_id, "patch_verification_01")}\` cleared **9 of 9 invariant gates** in digital-twin verification.
 - **Rollback Safety**: State restorations validated with zero unconstrained side effects.
 - **Repair Package SHA-256**: \`${data?.patch_package_checksum_sha256 || "40b88cd6d42e047a51a6f6ce704ab4936d2046295bce351c67095fe26c913dc2"}\`` : `- **Verified Patch**: Candidate \`patch_candidate_01\` passed **9 of 9 invariant gates** in digital-twin verification.
 - **Rollback Safety**: State restorations validated with zero state mutations outside safety envelope.
 - **Repair Package SHA-256**: \`40b88cd6d42e047a51a6f6ce704ab4936d2046295bce351c67095fe26c913dc2\``}
 
 ## Model Assistance & Pipeline Determinism
-${(data?.model_executions || []).length > 0 ? `- Analysis assisted by ${data.model_executions.length} bounded model execution(s) under strict invariant verification.` : "- Analysis executed entirely on the local deterministic causal engine with zero external model calls."}`;
+${asArray(data?.model_executions).length > 0 ? `- Analysis assisted by ${asArray(data?.model_executions).length} bounded model execution(s) under strict invariant verification.` : "- Analysis executed entirely on the local deterministic causal engine with zero external model calls."}`;
 }
 
 /**
@@ -231,8 +232,8 @@ export function buildTechnicalMarkdown(data: any, incidentId?: string): string {
 +++ b/${targetFile}
 @@ -10,3 +10,3 @@
  [controller]
--${primaryPatch?.removed_line || "detection_batch_window_ms = 85"}
-+${primaryPatch?.added_line || "detection_batch_window_ms = 25"}
+-${toText(primaryPatch?.removed_line, "detection_batch_window_ms = 85")}
++${toText(primaryPatch?.added_line, "detection_batch_window_ms = 25")}
  sync_timeout_ms = 500
 \`\`\`
 
@@ -248,7 +249,7 @@ export function buildTechnicalMarkdown(data: any, incidentId?: string): string {
 - [PASS] Gate 09: Clean state rollback test
 
 ## Deterministic Sandbox Validation
-- Candidate ID: \`${primaryPatch?.candidate_id || "patch_candidate_01"}\`
+- Candidate ID: \`${toText(primaryPatch?.candidate_id, "patch_candidate_01")}\`
 - Verification Status: **VERIFIED**
 - Validation Sandbox: Digital Twin (Simulated Concurrency & Telemetry Scrape)`;
 }
@@ -280,7 +281,7 @@ export function buildComplianceMarkdown(data: any, incidentId?: string): string 
 ## 2. Evidence Grounding & Chain of Custody
 - Total Evidence Items: **${ev.total_evidence_items ?? 18}** observed
 - Required Evidence Items: **${ev.required_evidence_items ?? 14}** required
-- Missing Required Evidence: **${(ev.missing_required_evidence || []).length > 0 ? ev.missing_required_evidence.join(", ") : "None (All mandatory telemetry present)"}**
+- Missing Required Evidence: **${asArray(ev.missing_required_evidence).length > 0 ? asArray(ev.missing_required_evidence).map((m) => toText(m)).join(", ") : "None (All mandatory telemetry present)"}**
 - Manifest Digest: \`${data?.patch_package_checksum_sha256 || "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}\`
 
 ## 3. Regulatory Invariant Gate Audit Matrix
@@ -384,7 +385,7 @@ function buildVerificationSection(data: any): string {
     <div class="section-title">Verification & Remediation</div>
     <div class="card">
       <p><strong>Patch Status:</strong> Verified patch <code>${
-        report?.patch_candidate_id || patches[0]?.candidate_id || "unknown"
+        escapeHtml(report?.patch_candidate_id || patches[0]?.candidate_id || "unknown")
       }</code> passed ${passed} of ${INVARIANT_CHECKS.length} invariant gates.</p>
       <p><strong>Remediation:</strong> A verified patch candidate is available for this incident.</p>
       <table class="table">
@@ -696,16 +697,23 @@ function ReportsPageContent() {
   const generateHtmlDocument = (report: Report, data: any) => {
     const isDark = true;
     const verificationSection = buildVerificationSection(data);
-    const incId = report.incident_id;
-    const sysName = data?.system_name || "N/A";
-    const status = data?.status || "COMPLETED";
+    // All backend-derived values are escaped before they enter the generated
+    // HTML document (download-only artifact — the live app never injects it).
+    const esc = escapeHtml;
+    const incId = esc(report.incident_id);
+    const sysName = esc(data?.system_name || "N/A");
+    const status = esc(data?.status || "COMPLETED");
+    const reportTitle = esc(report.title);
+    const reportId = esc(report.id);
+    const reportType = esc(toText(report.type, "investigation").toUpperCase());
+    const generatedAt = esc(new Date(report.generated_at).toLocaleString());
 
     if (report.type === "executive") {
-      const hyps = Array.isArray(data?.hypotheses) ? data.hypotheses : [];
-      const topHyp = hyps.length > 0 ? [...hyps].sort((a, b) => (b.confidence_posterior || 0) - (a.confidence_posterior || 0))[0] : null;
-      const conf = topHyp ? Math.round((topHyp.confidence_posterior || topHyp.confidence_prior || 0) * 100) : 0;
+      const hyps = asArray<any>(data?.hypotheses);
+      const topHyp = hyps.length > 0 ? [...hyps].sort((a, b) => toFiniteNumber(b?.confidence_posterior, 0) - toFiniteNumber(a?.confidence_posterior, 0))[0] : null;
+      const conf = topHyp ? Math.round(toFiniteNumber(topHyp.confidence_posterior ?? topHyp.confidence_prior, 0) * 100) : 0;
       const ev = data?.evidence_summary || {};
-      const missing = ev.missing_required_evidence || [];
+      const missing = asArray<unknown>(ev.missing_required_evidence);
 
       return `<!DOCTYPE html>
 <html lang="en">
@@ -732,19 +740,19 @@ function ReportsPageContent() {
       <span class="badge badge-success">Status: ${status}</span>
       <span class="badge">Type: EXECUTIVE SUMMARY</span>
       <h1>Executive Summary Postmortem</h1>
-      <div class="meta">Incident: ${incId} | Target: ${sysName} | Generated: ${new Date(report.generated_at).toLocaleString()}</div>
+      <div class="meta">Incident: ${incId} | Target: ${sysName} | Generated: ${generatedAt}</div>
     </div>
     <div class="section">
       <div class="section-title">1. Primary Root Cause Verdict</div>
       <div class="card">
-        ${topHyp ? `<div style="display:flex; justify-content:space-between; align-items:center;"><strong>${topHyp.hypothesis_id}: ${topHyp.status}</strong><span class="badge badge-success">${conf}% Confidence</span></div><p style="margin-top:8px;">${topHyp.causal_claim}</p>` : `<p>No hypotheses were derived.</p>`}
+        ${topHyp ? `<div style="display:flex; justify-content:space-between; align-items:center;"><strong>${esc(topHyp.hypothesis_id)}: ${esc(topHyp.status)}</strong><span class="badge badge-success">${conf}% Confidence</span></div><p style="margin-top:8px;">${esc(topHyp.causal_claim)}</p>` : `<p>No hypotheses were derived.</p>`}
       </div>
     </div>
     <div class="section">
       <div class="section-title">2. Evidence Envelope & Grounding</div>
       <div class="card">
-        <p><strong>Total Telemetry Items:</strong> ${ev.total_evidence_items ?? 0} observed | <strong>Required:</strong> ${ev.required_evidence_items ?? 0}</p>
-        <p><strong>Missing Mandatory Evidence:</strong> ${missing.length ? missing.join(", ") : "None (Grounding complete)"}</p>
+        <p><strong>Total Telemetry Items:</strong> ${esc(ev.total_evidence_items ?? 0)} observed | <strong>Required:</strong> ${esc(ev.required_evidence_items ?? 0)}</p>
+        <p><strong>Missing Mandatory Evidence:</strong> ${missing.length ? esc(missing.map((m) => toText(m)).join(", ")) : "None (Grounding complete)"}</p>
       </div>
     </div>
     <div class="section">
@@ -761,7 +769,7 @@ function ReportsPageContent() {
 
     if (report.type === "compliance") {
       const ev = data?.evidence_summary || {};
-      const missing = ev.missing_required_evidence || [];
+      const missing = asArray<unknown>(ev.missing_required_evidence);
       const stages = [
         { name: "telemetry_ingestion", status: "COMPLETED" },
         { name: "evidence_extraction", status: "COMPLETED" },
@@ -799,7 +807,7 @@ function ReportsPageContent() {
       <span class="badge badge-success">COMPLIANT</span>
       <span class="badge">Type: REGULATORY AUDIT</span>
       <h1>Compliance & Security Audit Verification</h1>
-      <div class="meta">Incident: ${incId} | Scope: Deterministic Invariance | Generated: ${new Date(report.generated_at).toLocaleString()}</div>
+      <div class="meta">Incident: ${incId} | Scope: Deterministic Invariance | Generated: ${generatedAt}</div>
     </div>
     <div class="section">
       <div class="section-title">1. Pipeline Stage Audit</div>
@@ -813,9 +821,9 @@ function ReportsPageContent() {
     <div class="section">
       <div class="section-title">2. Evidence Chain of Custody</div>
       <div class="card">
-        <p><strong>Total Observed Artifacts:</strong> ${ev.total_evidence_items ?? 18} | <strong>Required:</strong> ${ev.required_evidence_items ?? 14}</p>
-        <p><strong>Missing Artifacts:</strong> ${missing.length ? missing.join(", ") : "None (Full Chain of Custody)"}</p>
-        <p><strong>Cryptographic SHA-256 Digest:</strong> <code>${data?.patch_package_checksum_sha256 || "40b88cd6d42e047a51a6f6ce704ab4936d2046295bce351c67095fe26c913dc2"}</code></p>
+        <p><strong>Total Observed Artifacts:</strong> ${esc(ev.total_evidence_items ?? 18)} | <strong>Required:</strong> ${esc(ev.required_evidence_items ?? 14)}</p>
+        <p><strong>Missing Artifacts:</strong> ${missing.length ? esc(missing.map((m) => toText(m)).join(", ")) : "None (Full Chain of Custody)"}</p>
+        <p><strong>Cryptographic SHA-256 Digest:</strong> <code>${esc(data?.patch_package_checksum_sha256 || "40b88cd6d42e047a51a6f6ce704ab4936d2046295bce351c67095fe26c913dc2")}</code></p>
       </div>
     </div>
     <div class="section">
@@ -831,9 +839,9 @@ function ReportsPageContent() {
     }
 
     if (report.type === "technical") {
-      const patches = Array.isArray(data?.patch_candidates) ? data.patch_candidates : [];
+      const patches = asArray<any>(data?.patch_candidates);
       const primaryPatch = patches[0] || null;
-      const targetFile = primaryPatch?.target_file || "config/motion_controller.toml";
+      const targetFile = esc(primaryPatch?.target_file || "config/motion_controller.toml");
 
       return `<!DOCTYPE html>
 <html lang="en">
@@ -861,14 +869,14 @@ function ReportsPageContent() {
       <span class="badge badge-success">READY</span>
       <span class="badge">Type: TECHNICAL DEEP DIVE</span>
       <h1>Technical Deep Dive & Code Mutation</h1>
-      <div class="meta">Incident: ${incId} | Target: ${sysName} | Generated: ${new Date(report.generated_at).toLocaleString()}</div>
+      <div class="meta">Incident: ${incId} | Target: ${sysName} | Generated: ${generatedAt}</div>
     </div>
     <div class="section">
       <div class="section-title">1. Target Subsystem & Root Cause Telemetry</div>
       <div class="card">
         <p><strong>Subsystem Target:</strong> <code>${sysName}</code></p>
         <p><strong>Target File / Code Knob:</strong> <code>${targetFile}</code></p>
-        <p><strong>Diagnostic:</strong> ${data?.description || "Anomalous metric divergence"}</p>
+        <p><strong>Diagnostic:</strong> ${esc(data?.description || "Anomalous metric divergence")}</p>
       </div>
     </div>
     <div class="section">
@@ -878,8 +886,8 @@ function ReportsPageContent() {
 +++ b/${targetFile}
 @@ -10,3 +10,3 @@
  [controller]
--${primaryPatch?.removed_line || "detection_batch_window_ms = 85"}
-+${primaryPatch?.added_line || "detection_batch_window_ms = 25"}
+-${toText(primaryPatch?.removed_line, "detection_batch_window_ms = 85")}
++${toText(primaryPatch?.added_line, "detection_batch_window_ms = 25")}
  connection_timeout_ms = 5000</pre>
       </div>
     </div>
@@ -900,7 +908,7 @@ function ReportsPageContent() {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>${report.title} - ${incId}</title>
+  <title>${reportTitle} - ${incId}</title>
   <style>
     @media print { body { background: #fff !important; color: #111 !important; } .no-print { display: none !important; } .container { max-width: 100% !important; margin: 0 !important; padding: 0 !important; } }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; color: #f4f4f5; background: #09090b; margin: 0; padding: 40px 20px; }
@@ -922,26 +930,26 @@ function ReportsPageContent() {
   <div class="container">
     <div class="header">
       <span class="badge badge-success">Status: ${status}</span>
-      <span class="badge">Type: ${report.type.toUpperCase()}</span>
-      <h1>${report.title}</h1>
-      <div class="meta">Incident: ${incId} | Report: ${report.id} | Generated: ${new Date(report.generated_at).toLocaleString()}</div>
+      <span class="badge">Type: ${reportType}</span>
+      <h1>${reportTitle}</h1>
+      <div class="meta">Incident: ${incId} | Report: ${reportId} | Generated: ${generatedAt}</div>
     </div>
     <div class="section">
       <div class="section-title">Incident Overview</div>
       <div class="card">
         <p><strong>System:</strong> ${sysName}</p>
-        <p><strong>Description:</strong> ${data?.description || "N/A"}</p>
+        <p><strong>Description:</strong> ${esc(data?.description || "N/A")}</p>
       </div>
     </div>
     <div class="section">
       <div class="section-title">Root Cause Hypotheses & Evidence</div>
-      ${(data?.hypotheses || []).map((h: any) => `
+      ${asArray<any>(data?.hypotheses).map((h: any) => `
         <div class="card">
           <div style="display:flex; justify-content:space-between; align-items:center;">
-            <strong>${h.hypothesis_id}: ${h.status}</strong>
-            <span class="badge">${Math.round((h.confidence_posterior || h.confidence_prior || 0) * 100)}% Confidence</span>
+            <strong>${esc(h?.hypothesis_id)}: ${esc(h?.status)}</strong>
+            <span class="badge">${Math.round(toFiniteNumber(h?.confidence_posterior ?? h?.confidence_prior, 0) * 100)}% Confidence</span>
           </div>
-          <p style="margin-top:8px;">${h.causal_claim}</p>
+          <p style="margin-top:8px;">${esc(h?.causal_claim)}</p>
         </div>
       `).join("") || '<div class="card"><p>No hypotheses were produced for this incident.</p></div>'}
     </div>
@@ -992,7 +1000,7 @@ function ReportsPageContent() {
         extension = "html";
       } else {
         // JSON format
-        content = JSON.stringify(data, null, 2);
+        content = safeJsonStringify(data, 2, toText(data));
         mimeType = "application/json;charset=utf-8";
         extension = "json";
       }
@@ -1051,15 +1059,16 @@ function ReportsPageContent() {
 
   const handleCopyJson = () => {
     if (!viewingReportData) return;
-    navigator.clipboard.writeText(JSON.stringify(viewingReportData, null, 2));
+    navigator.clipboard.writeText(safeJsonStringify(viewingReportData, 2, "Report data unavailable") || "Report data unavailable");
     setCopiedJson(true);
     setTimeout(() => setCopiedJson(false), 2000);
   };
 
-  const formatBytes = (bytes: number) => {
-    if (bytes < 1024) return `${bytes}B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  const formatBytes = (bytes: unknown) => {
+    const n = toFiniteNumber(bytes, 0);
+    if (n < 1024) return `${n}B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)}MB`;
   };
 
   // Everything below is derived from the loaded report payload only.  Nothing
@@ -1076,7 +1085,7 @@ function ReportsPageContent() {
     ? viewingReportData.patch_candidates.find((p: any) => p?.candidate_id === selectedPatchId)
     : undefined;
   const missingEvidence: string[] =
-    viewingReportData?.evidence_summary?.missing_required_evidence ?? [];
+    asArray<unknown>(viewingReportData?.evidence_summary?.missing_required_evidence).map((m) => toText(m));
   const hypotheses: any[] = Array.isArray(viewingReportData?.hypotheses)
     ? viewingReportData.hypotheses
     : [];
@@ -1863,7 +1872,7 @@ function ReportsPageContent() {
                       </div>
 
                       <p className="text-xs sm:text-sm text-[var(--color-fg-default)] leading-relaxed">
-                        {viewingReportData?.description || "No description recorded for this incident."}
+                        {toText(viewingReportData?.description, "No description recorded for this incident.")}
                       </p>
 
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-3.5 border-t border-[var(--color-border-default)]/70 text-xs">
@@ -2127,7 +2136,7 @@ function ReportsPageContent() {
                     <div className="space-y-2">
                       <h5 className="text-xs font-semibold text-[var(--color-fg-muted)] uppercase tracking-wider">Executive Summary</h5>
                       <div className="p-3.5 rounded-md bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)]/60 text-xs leading-relaxed text-[var(--color-fg-default)]">
-                        {viewingReportData?.description || "No description recorded for this incident."}
+                        {toText(viewingReportData?.description, "No description recorded for this incident.")}
                       </div>
                     </div>
 
@@ -2136,11 +2145,11 @@ function ReportsPageContent() {
                       <div className="rounded-md border border-[var(--color-border-default)]/60 bg-[var(--color-canvas-inset)] divide-y divide-[var(--color-border-default)]/60 text-xs">
                         <div className="flex justify-between items-center px-3.5 py-2.5">
                           <span className="text-[var(--color-fg-muted)]">Total Evidence Items:</span>
-                          <span className="text-[var(--color-fg-default)] font-mono font-medium">{viewingReportData?.evidence_summary?.total_evidence_items ?? 0}</span>
+                          <span className="text-[var(--color-fg-default)] font-mono font-medium">{toText(viewingReportData?.evidence_summary?.total_evidence_items, 0)}</span>
                         </div>
                         <div className="flex justify-between items-center px-3.5 py-2.5">
                           <span className="text-[var(--color-fg-muted)]">Required Evidence Items:</span>
-                          <span className="text-[var(--color-fg-default)] font-mono font-medium">{viewingReportData?.evidence_summary?.required_evidence_items ?? 0}</span>
+                          <span className="text-[var(--color-fg-default)] font-mono font-medium">{toText(viewingReportData?.evidence_summary?.required_evidence_items, 0)}</span>
                         </div>
                         <div className="flex justify-between items-center px-3.5 py-2.5">
                           <span className="text-[var(--color-fg-muted)]">Missing Evidence:</span>
@@ -2157,8 +2166,8 @@ function ReportsPageContent() {
                         {selectedPatchId ? (
                           <>
                             Deploy verified patch candidate{" "}
-                            <code className="text-[var(--color-accent-fg)] font-mono bg-[var(--color-canvas-subtle)] px-1 py-0.5 rounded">{selectedPatchId}</code>
-                            {selectedPatch?.target_file ? ` (${selectedPatch.target_file})` : ""}.
+                            <code className="text-[var(--color-accent-fg)] font-mono bg-[var(--color-canvas-subtle)] px-1 py-0.5 rounded">{toText(selectedPatchId)}</code>
+                            {selectedPatch?.target_file ? ` (${toText(selectedPatch.target_file)})` : ""}.
                           </>
                         ) : (
                           "No verified remediation is available for this incident."
@@ -2171,7 +2180,7 @@ function ReportsPageContent() {
                 /* Raw JSON / Document View */
                 <div className="rounded-lg border border-[var(--color-border-default)] bg-[#07090e] p-4 overflow-hidden">
                   <pre className="font-mono text-xs text-zinc-300 overflow-x-auto leading-relaxed max-h-[58vh]">
-                    {viewingArtifactText || JSON.stringify(viewingReportData, null, 2)}
+                    {toText(viewingArtifactText, "") || safeJsonStringify(viewingReportData, 2, "Report data unavailable") || "Report data unavailable"}
                   </pre>
                 </div>
               )}
@@ -2180,9 +2189,9 @@ function ReportsPageContent() {
             {/* Modal Footer */}
             <div className="px-6 py-3.5 border-t border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/60 flex items-center justify-between">
               <div className="flex items-center gap-2 text-xs text-[var(--color-fg-muted)] font-mono">
-                <span className="font-semibold text-[var(--color-fg-default)]">{viewingReport.id}</span>
+                <span className="font-semibold text-[var(--color-fg-default)]">{toText(viewingReport.id)}</span>
                 <span>•</span>
-                <span className="uppercase">{viewingReport.format}</span>
+                <span className="uppercase">{toText(viewingReport.format)}</span>
                 <span>•</span>
                 <span>{formatBytes(viewingReport.size_bytes)}</span>
               </div>
@@ -2288,16 +2297,23 @@ function ReportsPageContent() {
             <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/70">
               <div className="flex items-center gap-3.5">
                 <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-canvas)] border border-[var(--color-border-default)] text-[var(--color-accent-fg)] shrink-0">
-                  <previewingTemplate.icon className="h-4.5 w-4.5" />
+                  {(() => {
+                    const TplIcon = previewingTemplate?.icon;
+                    return typeof TplIcon === "function" ? (
+                      <TplIcon className="h-4.5 w-4.5" />
+                    ) : (
+                      <FileText className="h-4.5 w-4.5" />
+                    );
+                  })()}
                 </div>
                 <div>
                   <h3 id="template-modal-title" className="text-base font-semibold text-[var(--color-fg-default)]">
-                    Template: {previewingTemplate.name}
+                    Template: {toText(previewingTemplate.name)}
                   </h3>
                   <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--color-fg-muted)]">
-                    <Badge tone="muted" className="text-[10px] uppercase font-mono">{previewingTemplate.formatBadge}</Badge>
+                    <Badge tone="muted" className="text-[10px] uppercase font-mono">{toText(previewingTemplate.formatBadge)}</Badge>
                     <span className="opacity-40">•</span>
-                    <span>Incident: {incidentId || incident?.id || incidentsList[0]?.id || "Active Incident"}</span>
+                    <span>Incident: {toText(incidentId || incident?.id || incidentsList[0]?.id, "Active Incident")}</span>
                   </div>
                 </div>
               </div>
@@ -2340,23 +2356,23 @@ function ReportsPageContent() {
                 <>
                   <div className="p-4 rounded-lg bg-[var(--color-canvas-subtle)]/40 border border-[var(--color-border-default)] space-y-1.5">
                     <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)]">Overview</h4>
-                    <p className="text-xs text-[var(--color-fg-default)] leading-relaxed">{previewingTemplate.desc}</p>
+                    <p className="text-xs text-[var(--color-fg-default)] leading-relaxed">{toText(previewingTemplate.desc)}</p>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                     <div className="p-4 rounded-lg bg-[var(--color-canvas-subtle)]/40 border border-[var(--color-border-default)] space-y-1.5">
                       <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)]">Target Audience</h4>
-                      <p className="text-xs text-[var(--color-fg-default)] leading-relaxed">{previewingTemplate.targetAudience}</p>
+                      <p className="text-xs text-[var(--color-fg-default)] leading-relaxed">{toText(previewingTemplate.targetAudience)}</p>
                     </div>
                     <div className="p-4 rounded-lg bg-[var(--color-canvas-subtle)]/40 border border-[var(--color-border-default)] space-y-1.5">
                       <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)]">Compliance & Standards</h4>
                       <div className="flex flex-wrap gap-1.5 pt-0.5">
-                        {previewingTemplate.standards.map((st, idx) => (
+                        {asArray<unknown>(previewingTemplate.standards).map((st, idx) => (
                           <span
                             key={idx}
                             className="px-2 py-0.5 rounded text-[11px] font-mono bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] text-[var(--color-fg-default)]"
                           >
-                            {st}
+                            {toText(st)}
                           </span>
                         ))}
                       </div>
@@ -2366,13 +2382,13 @@ function ReportsPageContent() {
                   <div className="p-4 rounded-lg bg-[var(--color-canvas-subtle)]/40 border border-[var(--color-border-default)] space-y-2.5">
                     <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)]">Included Report Sections</h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {previewingTemplate.sections.map((sec, idx) => (
+                      {asArray<unknown>(previewingTemplate.sections).map((sec, idx) => (
                         <div
                           key={idx}
                           className="flex items-center gap-2.5 p-2.5 rounded-md bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)]/70 text-xs font-medium text-[var(--color-fg-default)]"
                         >
                           <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                          <span>{sec}</span>
+                          <span>{toText(sec)}</span>
                         </div>
                       ))}
                     </div>
@@ -2381,7 +2397,7 @@ function ReportsPageContent() {
               ) : (
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between text-xs text-[var(--color-fg-muted)] px-1">
-                    <span className="font-medium text-[var(--color-fg-default)]">{previewingTemplate.sampleTitle}</span>
+                    <span className="font-medium text-[var(--color-fg-default)]">{toText(previewingTemplate.sampleTitle)}</span>
                     <button
                       onClick={() => {
                         const dynamicExcerpt = getDynamicSampleExcerpt(previewingTemplate, incident || viewingReportData, incidentId);

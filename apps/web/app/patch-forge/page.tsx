@@ -10,6 +10,8 @@ import { useShell } from "@/lib/useShell";
 import type { InspectorData } from "@/lib/useShell";
 import { AuthGate } from "@/components/AuthGate";
 import { readDeepLink } from "@/holographic";
+import { CodePreview } from "@/components/CodePreview";
+import { asArray, splitLines, toFiniteNumber, toText } from "@/lib/safeText";
 import { Check, XCircle, Wrench, Package, Download, ArrowLeft, Loader2 } from "lucide-react";
 
 function PatchForgeContent() {
@@ -113,8 +115,11 @@ function PatchForgeContent() {
   ];
 
   // Generate annotated source view (before/after comparison) - returns JSX
+  // Input is normalized through toText() first: the API field may be missing,
+  // null, or a non-string, and .split on the wrong type is a render crash.
   const generateAnnotatedSource = (patch: PatchCandidate) => {
-    const lines = (patch.unified_diff || patch.diff || "").split("\n");
+    const text = toText(patch.unified_diff ?? patch.diff, "");
+    const lines = text.length === 0 ? [] : splitLines(text);
     if (lines.length === 0) return <span className="text-[var(--color-fg-muted)]">No diff available</span>;
 
     return (
@@ -214,7 +219,7 @@ function PatchForgeContent() {
       patchData: {
         ...patch,
         type: "Code Fix",
-        confidence: patch.score * 100,
+        confidence: toFiniteNumber(patch.score, 0) * 100,
         limitations: patch.verified
           ? ["Limited to simulated verification", "No production deployment data"]
           : ["Failed one or more invariant gates", "Cannot be safely deployed"],
@@ -235,7 +240,7 @@ function PatchForgeContent() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const repairSuffix = selectedPatch?.candidate_id ? `-${selectedPatch.candidate_id}` : '';
+      const repairSuffix = selectedPatch?.candidate_id ? `-${toText(selectedPatch.candidate_id)}` : '';
       a.download = `cauveris-repair-package-${incidentId.slice(0, 8)}${repairSuffix}.zip`;
       document.body.appendChild(a);
       a.click();
@@ -318,14 +323,14 @@ function PatchForgeContent() {
             {activePatches.map((patch, idx) => (
               <PanelCard
                 key={patch.candidate_id || patch.id || idx}
-                title={patch.title || patch.candidate_id}
+                title={toText(patch.title || patch.candidate_id, "Untitled candidate")}
                 subtitle={
                   <div className="flex items-center gap-3 text-xs text-[var(--color-fg-muted)]">
-                    <span>Score: <strong className="font-mono text-[var(--color-fg-default)]">{patch.score}</strong></span>
+                    <span>Score: <strong className="font-mono text-[var(--color-fg-default)]">{toText(patch.score, "—")}</strong></span>
                     <span>•</span>
-                    <span>Files: <strong className="font-mono text-[var(--color-fg-default)]">{patch.affected_files?.join(", ") || "1 file"}</strong></span>
+                    <span>Files: <strong className="font-mono text-[var(--color-fg-default)]">{asArray<string>(patch.affected_files).map((f) => toText(f)).join(", ") || "1 file"}</strong></span>
                     <span>•</span>
-                    <span>Lines: <strong className="font-mono text-[var(--color-fg-default)]">±{patch.lines_changed || 1}</strong></span>
+                    <span>Lines: <strong className="font-mono text-[var(--color-fg-default)]">±{toText(patch.lines_changed, 1)}</strong></span>
                   </div>
                 }
                 trailing={
@@ -362,15 +367,18 @@ function PatchForgeContent() {
               <PanelSection title="Universal Unified Diff">
                 <div className="relative">
                   <span className="text-[10px] uppercase font-bold text-[var(--color-fg-muted)] tracking-wider block mb-2">
-                    {selectedPatch.affected_files?.[0] || "config/inference.yaml"}
+                    {toText(asArray<unknown>(selectedPatch.affected_files)[0], "config/inference.yaml")}
                   </span>
-                  <pre
+                  {/* CodePreview renders the diff as escaped text per line — never HTML, never executed. */}
+                  <CodePreview
                     ref={(el) => { paneRefs.current[0] = el; }}
                     onScroll={(e) => handleScroll(0, e)}
-                    className="p-3 h-96 max-h-96 rounded-[var(--radius-md)] bg-[var(--color-canvas)]/60 border border-[var(--color-border-default)] text-xs font-mono text-[var(--color-fg-default)] overflow-auto leading-relaxed whitespace-pre-wrap"
-                  >
-                    {selectedPatch.unified_diff || selectedPatch.diff || "No diff available"}
-                  </pre>
+                    mode="diff"
+                    fileName={toText(asArray<unknown>(selectedPatch.affected_files)[0], "patch.diff")}
+                    source={selectedPatch.unified_diff ?? selectedPatch.diff}
+                    emptyMessage="No diff available for this candidate."
+                    className="p-3 h-96 max-h-96 rounded-[var(--radius-md)] bg-[var(--color-canvas)]/60 border border-[var(--color-border-default)] text-xs text-[var(--color-fg-default)] leading-relaxed"
+                  />
                 </div>
               </PanelSection>
 
@@ -378,7 +386,7 @@ function PatchForgeContent() {
               <PanelSection title="Annotated Source (Before/After)">
                 <div className="relative">
                   <span className="text-[10px] uppercase font-bold text-[var(--color-fg-muted)] tracking-wider block mb-2">
-                    {selectedPatch.affected_files?.[0] || "config/inference.yaml"} - Annotated
+                    {toText(asArray<unknown>(selectedPatch.affected_files)[0], "config/inference.yaml")} - Annotated
                   </span>
                   <div
                     ref={(el) => { paneRefs.current[1] = el; }}
@@ -477,7 +485,7 @@ function PatchForgeContent() {
               <Stat label="Total Generated" value={activePatches.length} sub="Experiment branches" trend="flat" />
               <Stat label="Verified" value={verifiedCount} sub="Passed 9/9 gates" trend="success" />
               <Stat label="Rejected" value={activePatches.length - verifiedCount} sub="Failed safety gates" trend="danger" />
-              <Stat label="Top Score" value={activePatches.length > 0 ? activePatches[0].score : "0.97"} sub={activePatches.length > 0 ? activePatches[0].candidate_id : "patch-exp-h1"} trend="success" />
+              <Stat label="Top Score" value={activePatches.length > 0 ? toText(activePatches[0].score, "—") : "0.97"} sub={activePatches.length > 0 ? toText(activePatches[0].candidate_id, "patch-exp-h1") : "patch-exp-h1"} trend="success" />
             </div>
 
             {/* Action Buttons */}

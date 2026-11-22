@@ -92,7 +92,7 @@ export function BottomActivityTray() {
         <button
           className={`
             absolute top-0 left-1/2 -translate-x-1/2 w-20 h-2.5
-            bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] border-t-0
+            bg-[var(--color-canvas-subtle)] border border-[var(--color-border-default)] border-t-0 hover:bg-[var(--color-canvas-muted)] hover:border-[var(--color-border-strong)]
             rounded-b-[var(--radius-md)] cursor-pointer flex items-center justify-center
             transition-all duration-200 ease-out
             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-canvas)]
@@ -210,7 +210,7 @@ export function BottomActivityTray() {
                       activities.map((activity) => (
                         <div
                           key={activity.id}
-                          className="flex items-start gap-3 p-3 rounded-[var(--radius-md)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] hover:bg-[var(--color-canvas-subtle)] transition-colors"
+                          className="flex items-start gap-3 p-3 rounded-[var(--radius-md)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] transition-colors"
                           role="article"
                           aria-label={`${typeLabels[activity.type as keyof typeof typeLabels]} activity: ${activity.message}`}
                         >
@@ -254,7 +254,7 @@ export function BottomActivityTray() {
                   filteredActivities.map((activity) => (
                     <div
                       key={activity.id}
-                      className="flex items-start gap-3 p-3 rounded-[var(--radius-md)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] hover:bg-[var(--color-canvas-subtle)] transition-colors"
+                      className="flex items-start gap-3 p-3 rounded-[var(--radius-md)] bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] transition-colors"
                       role="article"
                       aria-label={`${typeLabels[activity.type as keyof typeof typeLabels]} activity: ${activity.message}`}
                     >

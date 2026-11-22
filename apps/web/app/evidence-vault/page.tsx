@@ -32,6 +32,8 @@ import {
 } from "lucide-react";
 import { VirtualizedList } from "@/components/VirtualizedList";
 import { DataErrorBoundary } from "@/components/ErrorBoundary";
+import { CodePreview } from "@/components/CodePreview";
+import { asArray, safeJsonStringify, toText } from "@/lib/safeText";
 import {
   InstrumentPanel,
   SignalTag,
@@ -625,35 +627,39 @@ function EvidenceVaultContent() {
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
                     <span className="text-[var(--color-fg-subtle,#7b8794)]">Path: </span>
-                    <span className="text-zinc-200">{selectedItem?.path || selectedItem?.name}</span>
+                    <span className="text-zinc-200">{toText(selectedItem?.path || selectedItem?.name)}</span>
                   </div>
                   <div>
                     <span className="text-[var(--color-fg-subtle,#7b8794)]">Type: </span>
-                    <span className="text-[var(--color-fg-default,#1f2933)] uppercase">{selectedItem?.type}</span>
+                    <span className="text-[var(--color-fg-default,#1f2933)] uppercase">{toText(selectedItem?.type)}</span>
                   </div>
                   <div>
                     <span className="text-[var(--color-fg-subtle,#7b8794)]">Status: </span>
-                    <span className="text-zinc-100 font-bold">{selectedItem?.status}</span>
+                    <span className="text-zinc-100 font-bold">{toText(selectedItem?.status)}</span>
                   </div>
                   <div>
                     <span className="text-[var(--color-fg-subtle,#7b8794)]">Checksum: </span>
-                    <span className="text-zinc-400 font-mono">{selectedItem?.checksum || "SHA256: verified"}</span>
+                    <span className="text-zinc-400 font-mono">{toText(selectedItem?.checksum, "SHA256: verified")}</span>
                   </div>
                 </div>
 
                 <div className="mt-4 pt-3 border-t border-[var(--color-border-default,#d9e0e7)]">
                   <div className="text-[11px] text-[var(--color-fg-subtle,#7b8794)] mb-1">DESCRIPTION & AUDIT LOG</div>
                   <p className="text-xs text-[var(--color-fg-muted,#5f6b76)] font-sans">
-                    {selectedItem?.description || "Forensic artifact registered during package ingestion."}
+                    {toText(selectedItem?.description, "Forensic artifact registered during package ingestion.")}
                   </p>
                 </div>
               </div>
             )}
 
             {previewTab === "raw" && (
-              <pre className="text-[var(--color-fg-muted,#5f6b76)] font-mono text-xs whitespace-pre">
-                {JSON.stringify(selectedItem, null, 2)}
-              </pre>
+              <CodePreview
+                mode="source"
+                source={safeJsonStringify(selectedItem, 2, null) ?? toText(selectedItem)}
+                fileName={toText(selectedItem?.name, "artifact.json")}
+                emptyMessage="Artifact payload is empty."
+                className="text-[var(--color-fg-muted,#5f6b76)] text-xs max-h-[46vh]"
+              />
             )}
 
             {previewTab === "signals" && (
@@ -683,11 +689,14 @@ function EvidenceVaultContent() {
 
             {previewTab === "warnings" && (
               <div className="p-3 border border-zinc-700 bg-zinc-850/40 text-xs font-mono text-zinc-300">
-                {selectedItem?.warnings && selectedItem.warnings.length > 0 ? (
-                  selectedItem.warnings.join("\n")
-                ) : (
-                  <span className="text-zinc-200">0 anomalies or structural warnings detected.</span>
-                )}
+                {(() => {
+                  const warnings = asArray<unknown>(selectedItem?.warnings).map((w) => toText(w));
+                  return warnings.length > 0 ? (
+                    warnings.join("\n")
+                  ) : (
+                    <span className="text-zinc-200">0 anomalies or structural warnings detected.</span>
+                  );
+                })()}
               </div>
             )}
           </div>

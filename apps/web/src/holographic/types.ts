@@ -5,6 +5,74 @@
  */
 
 export type NodeType = "service" | "database" | "cache" | "gateway" | "message_queue" | "monitoring";
+
+/**
+ * Graph backends report node types in whatever vocabulary the incident
+ * system uses. Map the common ones onto the six the renderer understands
+ * and fall back to "service" rather than letting an unrecognised string
+ * reach the scene as an untyped node.
+ */
+const NODE_TYPE_ALIASES: Record<string, NodeType> = {
+  service: "service",
+  api: "service",
+  web: "service",
+  http: "service",
+  grpc: "service",
+  external_service: "service",
+  microservice: "service",
+  application: "service",
+  component: "service",
+  worker: "service",
+  lambda: "service",
+  database: "database",
+  db: "database",
+  postgres: "database",
+  postgresql: "database",
+  mysql: "database",
+  sqlite: "database",
+  mongo: "database",
+  cache: "cache",
+  redis: "cache",
+  memcached: "cache",
+  gateway: "gateway",
+  proxy: "gateway",
+  ingress: "gateway",
+  load_balancer: "gateway",
+  envoy: "gateway",
+  message_queue: "message_queue",
+  queue: "message_queue",
+  kafka: "message_queue",
+  rabbitmq: "message_queue",
+  topic: "message_queue",
+  monitoring: "monitoring",
+  otel: "monitoring",
+  telemetry: "monitoring",
+  prometheus: "monitoring",
+  grafana: "monitoring",
+};
+
+export function normalizeNodeType(value: unknown, fallback: NodeType = "service"): NodeType {
+  const raw = typeof value === "string" ? value : "";
+  const key = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return NODE_TYPE_ALIASES[key] ?? fallback;
+}
+
+/**
+ * Health is a [0, 1] scalar in the contract, but some incident
+ * reporters send a status word instead. Accept both so the scene never
+ * receives a string where a number belongs.
+ */
+export function normalizeHealth(value: unknown, fallback = 1): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (Number.isFinite(n)) return n;
+  if (raw === "healthy" || raw === "ok" || raw === "nominal" || raw === "up") return 1;
+  if (raw === "degraded" || raw === "warning" || raw === "partial") return 0.5;
+  if (raw === "critical" || raw === "failed" || raw === "down" || raw === "unhealthy") return 0;
+  return fallback;
+}
 export type LinkType = "causal" | "network" | "causes" | "enables" | "inhibits" | "correlates";
 export type ComponentType = "service" | "database" | "cache" | "gateway" | "message_queue";
 export type AnomalySeverity = "INFO" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";

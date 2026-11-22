@@ -2,6 +2,8 @@
 
 import React, { useState } from "react";
 import { FileCode, Download } from "lucide-react";
+import { CodePreview } from "@/components/CodePreview";
+import { asArray, toText } from "@/lib/safeText";
 
 export interface PatchCandidateData {
   candidateId: string;
@@ -41,8 +43,10 @@ export function PatchWorkbench({
   className = "",
   ...props
 }: PatchWorkbenchProps) {
+  // candidates may arrive as a non-array from a partial backend payload — guard before .find/.map.
+  const candidateList = asArray<PatchCandidateData>(candidates);
   const selectedCandidate =
-    candidates.find((c) => c.candidateId === selectedCandidateId) || candidates[0];
+    candidateList.find((c) => c?.candidateId === selectedCandidateId) || candidateList[0] || null;
 
   const [diffMode, setDiffMode] = useState<"unified" | "split">("unified");
 
@@ -57,16 +61,16 @@ export function PatchWorkbench({
         <div className="flex items-center gap-3 min-w-0">
           <FileCode className="w-4 h-4 text-[var(--color-fg-muted,#5f6b76)] shrink-0" />
           <span className="font-semibold text-[var(--color-fg-default,#1f2933)] text-xs truncate font-mono">
-            {selectedCandidate?.targetFile || "No candidate selected"}
+            {selectedCandidate ? toText(selectedCandidate.targetFile, "No candidate selected") : "No candidate selected"}
           </span>
           {selectedCandidate?.structuralLocator && (
             <span className="text-[11px] text-[var(--color-fg-muted,#5f6b76)] font-mono truncate">
-              loc: {selectedCandidate.structuralLocator}
+              loc: {toText(selectedCandidate.structuralLocator)}
             </span>
           )}
           {selectedCandidate?.verificationLevel && (
             <span className="text-[10px] px-2 py-0.5 border border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold rounded-[var(--radius-sm,4px)] shrink-0 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
-              {selectedCandidate.verificationLevel}
+              {toText(selectedCandidate.verificationLevel)}
             </span>
           )}
         </div>
@@ -113,15 +117,16 @@ export function PatchWorkbench({
         {/* Left Candidate Navigator */}
         <div className="col-span-12 md:col-span-4 border-r border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-default,#ffffff)] flex flex-col">
           <div className="px-4 py-2.5 border-b border-[var(--color-border-default,#d9e0e7)] text-xs uppercase font-semibold text-[var(--color-fg-muted,#5f6b76)]">
-            Repair Candidates ({candidates.length})
+            Repair Candidates ({candidateList.length})
           </div>
           <div className="divide-y divide-[var(--color-border-default,#d9e0e7)] overflow-y-auto">
-            {candidates.map((cand) => {
+            {candidateList.map((cand, idx) => {
+              if (!cand || typeof cand !== "object") return null;
               const isSelected = cand.candidateId === selectedCandidate?.candidateId;
               return (
                 <div
-                  key={cand.candidateId}
-                  onClick={() => onSelectCandidate?.(cand.candidateId)}
+                  key={toText(cand.candidateId, `candidate-${idx}`)}
+                  onClick={() => onSelectCandidate?.(toText(cand.candidateId))}
                   role="button"
                   tabIndex={0}
                   className={`p-3.5 transition-colors cursor-pointer ${
@@ -132,17 +137,17 @@ export function PatchWorkbench({
                 >
                   <div className="flex items-center justify-between text-xs mb-1">
                     <span className="font-semibold text-[var(--color-fg-default,#1f2933)] font-mono">
-                      #{cand.rank} {cand.candidateId}
+                      #{toText(cand.rank, idx + 1)} {toText(cand.candidateId)}
                     </span>
                     <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
-                      {cand.verificationLevel}
+                      {toText(cand.verificationLevel)}
                     </span>
                   </div>
                   <div className="text-xs text-[var(--color-fg-default,#1f2933)] font-mono truncate mb-1">
-                    {cand.parameterName}: {String(cand.originalValue)} → {String(cand.proposedValue)}
+                    {toText(cand.parameterName)}: {toText(cand.originalValue)} → {toText(cand.proposedValue)}
                   </div>
                   <div className="text-[11px] text-[var(--color-fg-muted,#5f6b76)] truncate font-sans">
-                    {cand.rationale}
+                    {toText(cand.rationale)}
                   </div>
                 </div>
               );
@@ -155,38 +160,22 @@ export function PatchWorkbench({
           {/* Metadata bar */}
           <div className="px-4 py-2 border-b border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-subtle,#f8f9fa)] text-xs flex items-center justify-between text-[var(--color-fg-muted,#5f6b76)]">
             <span>
-              SOURCE SHA-256: <code className="text-[var(--color-fg-default,#1f2933)] font-mono">{selectedCandidate?.sourceHashSha256?.substring(0, 16) || "verified"}...</code>
+              SOURCE SHA-256: <code className="text-[var(--color-fg-default,#1f2933)] font-mono">{toText(selectedCandidate?.sourceHashSha256, "").substring(0, 16) || "verified"}...</code>
             </span>
             <span>
-              EVIDENCE LINKS: <span className="text-[var(--color-fg-default,#1f2933)] font-mono">{selectedCandidate?.evidenceLinks.join(", ") || "1 telemetry link"}</span>
+              EVIDENCE LINKS: <span className="text-[var(--color-fg-default,#1f2933)] font-mono">{asArray<unknown>(selectedCandidate?.evidenceLinks).map((l) => toText(l)).join(", ") || "1 telemetry link"}</span>
             </span>
           </div>
 
-          {/* Unified Diff content */}
+          {/* Unified Diff content — rendered as text via CodePreview (normalized, never executed) */}
           <div className="flex-1 p-4 overflow-x-auto font-mono text-xs leading-relaxed text-[var(--color-fg-default,#1f2933)]">
-            {selectedCandidate?.diffUnified ? (
-              <pre className="whitespace-pre">
-                {selectedCandidate.diffUnified.split("\n").map((line, idx) => {
-                  let lineStyle = "text-[var(--color-fg-muted,#5f6b76)]";
-                  if (line.startsWith("+") && !line.startsWith("+++")) {
-                    lineStyle = "text-emerald-900 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-200 border-l-2 border-emerald-500 pl-2";
-                  } else if (line.startsWith("-") && !line.startsWith("---")) {
-                    lineStyle = "text-rose-900 bg-rose-50 dark:bg-rose-950/40 dark:text-rose-200 border-l-2 border-rose-500 pl-2 line-through opacity-85";
-                  } else if (line.startsWith("@@")) {
-                    lineStyle = "text-blue-900 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300 font-semibold";
-                  }
-                  return (
-                    <div key={idx} className={`px-2 py-0.5 ${lineStyle}`}>
-                      {line}
-                    </div>
-                  );
-                })}
-              </pre>
-            ) : (
-              <div className="p-8 text-center text-xs text-[var(--color-fg-muted,#5f6b76)] italic font-sans">
-                Select a candidate to view unified code diff and structural locator.
-              </div>
-            )}
+            <CodePreview
+              mode="diff"
+              source={selectedCandidate?.diffUnified}
+              fileName={selectedCandidate ? toText(selectedCandidate.targetFile, "patch.diff") : "patch.diff"}
+              emptyMessage="Select a candidate to view unified code diff and structural locator."
+              className="whitespace-pre"
+            />
           </div>
         </div>
       </div>

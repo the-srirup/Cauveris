@@ -14,11 +14,11 @@ const panelStyles = tv({
     bg-[var(--color-canvas-inset)]
     border border-[var(--color-border-default)]
     rounded-[var(--radius-lg)]
-    transition-colors duration-80 ease-out
+    transition-[color,background-color,border-color,box-shadow] duration-80 ease-out
   `,
   variants: {
     variant: {
-      default: "",
+      default: "shadow-[var(--shadow-sm)]",
       elevated: "shadow-[var(--shadow-md)]",
       inset: "bg-[var(--color-canvas-subtle)]",
       flush: "border-0 rounded-none shadow-none",
@@ -222,9 +222,9 @@ export const PanelCard = forwardRef<HTMLDivElement, PanelCardProps>(
           bg-[var(--color-canvas-inset)]
           border border-[var(--color-border-default)]
           rounded-[var(--radius-md)]
-          transition-colors duration-80 ease-out
-          ${selected ? "border-[var(--color-accent-emphasis)] bg-[var(--color-accent-subtle)]" : ""}
-          ${hoverable ? "hover:bg-[var(--color-canvas-subtle)] cursor-pointer" : ""}
+          transition-[color,background-color,border-color,box-shadow] duration-80 ease-out
+          ${selected ? "border-[var(--color-accent-fg)] bg-[var(--color-accent-muted)] shadow-[var(--shadow-sm)]" : ""}
+          ${hoverable ? "hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] cursor-pointer" : ""}
           ${onClick ? "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-canvas)]" : ""}
           ${className || ""}
         `}

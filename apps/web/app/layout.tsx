@@ -31,14 +31,22 @@ export default function RootLayout({
                     if (s.theme) theme = s.theme;
                   }
                   var root = document.documentElement;
-                  if (theme === 'light') {
+                  var resolved = theme;
+                  if (theme === 'system') {
+                    resolved = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches)
+                      ? 'light'
+                      : 'dark';
+                  }
+                  if (resolved === 'light') {
                     root.classList.add('light');
                     root.classList.remove('dark');
                     root.setAttribute('data-theme', 'light');
+                    root.style.colorScheme = 'light';
                   } else {
                     root.classList.add('dark');
                     root.classList.remove('light');
                     root.setAttribute('data-theme', 'dark');
+                    root.style.colorScheme = 'dark';
                   }
                   if (raw) {
                     var s = JSON.parse(raw);

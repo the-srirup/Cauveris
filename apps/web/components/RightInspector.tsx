@@ -32,6 +32,7 @@ import { Tooltip } from "./Tooltip";
 import { useShell } from "@/lib/useShell";
 import { useShellLayout } from "@/hooks/useMediaQuery";
 import type { InspectorData, InspectorMode } from "@/lib/useShell";
+import { asArray, isProbablyBinary, splitLines, toFiniteNumber, toText } from "@/lib/safeText";
 
 export function RightInspector() {
   const {
@@ -91,26 +92,33 @@ export function RightInspector() {
   // Sidebar takes 240px (expanded) or 64px (collapsed) on desktop.
   const leftOffsetPx = isDrawer || isSidebarDrawer ? 0 : isNavCollapsed ? 64 : 240;
 
-  // Extract artifact name and info
-  const artifactName =
+  // Extract artifact name and info — normalized to text so a wrong-typed
+  // backend field can never become an invalid React child or break .split().
+  const artifactName = toText(
     inspectorData.evidenceData?.name ||
     inspectorData.evidenceData?.path ||
     inspectorData.elementData?.name ||
     inspectorData.patchData?.title ||
     inspectorData.hypothesisData?.title ||
-    "artifact";
+    "artifact",
+    "artifact"
+  );
 
-  const fileType =
+  const fileType = toText(
     inspectorData.evidenceData?.type ||
     inspectorData.evidenceData?.file_type ||
     inspectorData.elementData?.type ||
-    "text/x-source";
+    "text/x-source",
+    "text/x-source"
+  );
 
-  const checksum =
+  const checksum = toText(
     inspectorData.evidenceData?.checksum ||
     inspectorData.evidenceData?.checksum_sha256 ||
     inspectorData.elementData?.checksum ||
-    "40b88cd6d42e047a51a6f6ce704ab4936d2046295bce351c67095fe26c913dc2";
+    "40b88cd6d42e047a51a6f6ce704ab4936d2046295bce351c67095fe26c913dc2",
+    "40b88cd6d42e047a51a6f6ce704ab4936d2046295bce351c67095fe26c913dc2"
+  );
 
   const bufferData = useMemo(() => {
     return getArtifactBufferContent(artifactName, fileType, inspectorData.evidenceData);
@@ -274,6 +282,7 @@ export function RightInspector() {
       aria-label={`Inspector: ${inspectorMode}`}
       data-mode={inspectorMode}
       data-context-dock
+      data-console
       data-dock-position={dockPosition}
     >
       {/* ==================================================================== */}
@@ -532,7 +541,7 @@ export function RightInspector() {
                         <div
                           key={idx}
                           className={`flex items-start hover:bg-zinc-800/40 py-0.5 px-1 rounded transition-colors ${
-                            isHighlighted ? "bg-zinc-800/80 border-l-2 border-l-amber-300" : ""
+                            isHighlighted ? "bg-amber-400/10" : ""
                           }`}
                         >
                           {showLineNumbers && (
@@ -575,37 +584,37 @@ export function RightInspector() {
               <span className="text-zinc-400 text-[11px] mr-1">RUN:</span>
               <button
                 onClick={() => runCliCommand("cat -n")}
-                className="px-2 py-0.5 rounded bg-zinc-850 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
+                className="px-2 py-0.5 rounded bg-zinc-800/70 hover:bg-zinc-700/80 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
               >
                 cauveris cat -n
               </button>
               <button
                 onClick={() => runCliCommand("grep timeout")}
-                className="px-2 py-0.5 rounded bg-zinc-850 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
+                className="px-2 py-0.5 rounded bg-zinc-800/70 hover:bg-zinc-700/80 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
               >
                 cauveris grep "timeout"
               </button>
               <button
                 onClick={() => runCliCommand("head -n 15")}
-                className="px-2 py-0.5 rounded bg-zinc-850 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
+                className="px-2 py-0.5 rounded bg-zinc-800/70 hover:bg-zinc-700/80 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
               >
                 cauveris head -n 15
               </button>
               <button
                 onClick={() => runCliCommand("sha256sum")}
-                className="px-2 py-0.5 rounded bg-zinc-850 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
+                className="px-2 py-0.5 rounded bg-zinc-800/70 hover:bg-zinc-700/80 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
               >
                 cauveris sha256sum
               </button>
               <button
                 onClick={() => runCliCommand("stat")}
-                className="px-2 py-0.5 rounded bg-zinc-850 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
+                className="px-2 py-0.5 rounded bg-zinc-800/70 hover:bg-zinc-700/80 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
               >
                 cauveris stat
               </button>
               <button
                 onClick={() => runCliCommand("verify")}
-                className="px-2 py-0.5 rounded bg-zinc-850 hover:bg-zinc-800 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
+                className="px-2 py-0.5 rounded bg-zinc-800/70 hover:bg-zinc-700/80 text-zinc-300 border border-zinc-700/80 text-[11px] transition-colors"
               >
                 cauveris verify
               </button>
@@ -749,9 +758,10 @@ export function RightInspector() {
 /* -------------------------------------------------------------------------- */
 /* Helper Highlight Renderer                                                  */
 /* -------------------------------------------------------------------------- */
-function renderHighlightedText(text: string, query: string): ReactNode {
-  if (!query.trim()) return text;
-  const parts = text.split(new RegExp(`(${escapeRegExp(query)})`, "gi"));
+function renderHighlightedText(text: unknown, query: string): ReactNode {
+  const str = toText(text, "");
+  if (!query.trim()) return str;
+  const parts = str.split(new RegExp(`(${escapeRegExp(query)})`, "gi"));
   return (
     <>
       {parts.map((part, i) =>
@@ -784,7 +794,7 @@ function ProvenancePanel({ data }: { data: InspectorData }) {
           Source Artifacts
         </h4>
         <div className="space-y-2">
-          {data.elementData?.source_artifacts?.map((artifact: any, i: number) => (
+          {asArray<any>(data.elementData?.source_artifacts).map((artifact: any, i: number) => (
             <ArtifactRow key={i} artifact={artifact} />
           )).length || (
             <div className="text-sm text-zinc-500 text-center py-4">
@@ -819,7 +829,7 @@ function ProvenancePanel({ data }: { data: InspectorData }) {
               timestamp: new Date().toISOString(),
             }}
           />
-          {data.elementData?.lineage?.map((step: any, i: number) => (
+          {asArray<any>(data.elementData?.lineage).map((step: any, i: number) => (
             <LineageStep key={i} step={step} />
           ))}
         </div>
@@ -867,7 +877,7 @@ function ProvenancePanel({ data }: { data: InspectorData }) {
               label="SHA-256"
               value={
                 <code className="font-mono text-xs text-zinc-400 bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 rounded">
-                  {data.elementData.checksum}
+                  {toText(data.elementData.checksum)}
                 </code>
               }
             />
@@ -877,7 +887,7 @@ function ProvenancePanel({ data }: { data: InspectorData }) {
               label="SHA-256"
               value={
                 <code className="font-mono text-xs text-zinc-400 bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 rounded">
-                  {data.evidenceData.checksum}
+                  {toText(data.evidenceData.checksum)}
                 </code>
               }
             />
@@ -887,7 +897,7 @@ function ProvenancePanel({ data }: { data: InspectorData }) {
               label="SHA-256"
               value={
                 <code className="font-mono text-xs text-zinc-400 bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 rounded">
-                  {data.hypothesisData.checksum}
+                  {toText(data.hypothesisData.checksum)}
                 </code>
               }
             />
@@ -911,13 +921,19 @@ function ProvenancePanel({ data }: { data: InspectorData }) {
 function ConfidencePanel({ data }: { data: InspectorData }) {
   if (!data.mode) return <EmptyState message="No element selected" />;
 
-  const confidence =
+  // Coerced to finite numbers — a string/object field would otherwise produce
+  // NaN in the ring math and crash .toFixed below.
+  const confidence = toFiniteNumber(
     data.elementData?.confidence ??
     data.hypothesisData?.confidence ??
     data.evidenceData?.confidence ??
-    85;
-  const uncertainty =
-    data.elementData?.uncertainty ?? data.hypothesisData?.uncertainty ?? 4.2;
+    85,
+    0
+  );
+  const uncertainty = toFiniteNumber(
+    data.elementData?.uncertainty ?? data.hypothesisData?.uncertainty ?? 4.2,
+    0
+  );
 
   return (
     <div className="space-y-4">
@@ -1005,7 +1021,7 @@ function ConfidencePanel({ data }: { data: InspectorData }) {
             />
             <KVRow
               label="Method"
-              value={data.elementData?.uncertainty_method || data.hypothesisData?.uncertainty_method || "Bayesian"}
+              value={toText(data.elementData?.uncertainty_method || data.hypothesisData?.uncertainty_method || "Bayesian")}
             />
           </div>
         </div>
@@ -1020,8 +1036,8 @@ function ConfidencePanel({ data }: { data: InspectorData }) {
         <div className="space-y-2">
           <LimitationRow text="Forensic evidence reflects system state captured at ingestion timestamp." />
           <LimitationRow text="AST analysis restricts executable modifications outside declared sandbox boundary." />
-          {data.elementData?.limitations?.map((lim: string, i: number) => (
-            <LimitationRow key={i} text={lim} />
+          {asArray<unknown>(data.elementData?.limitations).map((lim, i: number) => (
+            <LimitationRow key={i} text={toText(lim)} />
           ))}
         </div>
       </div>
@@ -1048,13 +1064,19 @@ function ConfidencePanel({ data }: { data: InspectorData }) {
 function RelatedPanel({ data }: { data: InspectorData }) {
   if (!data.mode) return <EmptyState message="No element selected" />;
 
+  // Every list is array-guarded: a truthy non-array from the API falls back to
+  // the default item instead of crashing on .length/.map.
+  const arrOr = <T,>(value: unknown, fallback: T[]): T[] => {
+    const arr = asArray<T>(value);
+    return arr.length > 0 ? arr : fallback;
+  };
   const related = {
-    nodes: data.elementData?.related_nodes || [{ id: "node-1", label: "payments-gateway", type: "Service" }],
-    edges: data.elementData?.related_edges || [{ id: "edge-1", label: "calls -> pg-orders.internal", type: "TCP/DB" }],
-    evidence: data.elementData?.related_evidence || data.hypothesisData?.supporting_evidence || [],
-    hypotheses: data.elementData?.related_hypotheses || [{ id: "h1", label: "Connection Pool Exhaustion", type: "Root Cause" }],
-    experiments: data.hypothesisData?.related_experiments || [{ id: "exp-1", label: "Digital Twin Replay S-1", type: "Simulation" }],
-    patches: data.hypothesisData?.candidate_patches || [{ id: "p-1", label: "Increase max_connections 10 -> 53", type: "Config Fix" }],
+    nodes: arrOr<any>(data.elementData?.related_nodes, [{ id: "node-1", label: "payments-gateway", type: "Service" }]),
+    edges: arrOr<any>(data.elementData?.related_edges, [{ id: "edge-1", label: "calls -> pg-orders.internal", type: "TCP/DB" }]),
+    evidence: arrOr<any>(data.elementData?.related_evidence, asArray<any>(data.hypothesisData?.supporting_evidence)),
+    hypotheses: arrOr<any>(data.elementData?.related_hypotheses, [{ id: "h1", label: "Connection Pool Exhaustion", type: "Root Cause" }]),
+    experiments: arrOr<any>(data.hypothesisData?.related_experiments, [{ id: "exp-1", label: "Digital Twin Replay S-1", type: "Simulation" }]),
+    patches: arrOr<any>(data.hypothesisData?.candidate_patches, [{ id: "p-1", label: "Increase max_connections 10 -> 53", type: "Config Fix" }]),
   };
 
   return (
@@ -1106,9 +1128,9 @@ function RelatedPanel({ data }: { data: InspectorData }) {
 function EvidencePanel({ data }: { data: InspectorData }) {
   if (!data.mode) return <EmptyState message="No element selected" />;
 
-  const supporting = data.hypothesisData?.supporting_evidence || [];
-  const contradicting = data.hypothesisData?.contradicting_evidence || [];
-  const evidenceItems = data.evidenceData ? [data.evidenceData] : data.elementData?.related_evidence || [];
+  const supporting = asArray<any>(data.hypothesisData?.supporting_evidence);
+  const contradicting = asArray<any>(data.hypothesisData?.contradicting_evidence);
+  const evidenceItems = data.evidenceData ? [data.evidenceData] : asArray<any>(data.elementData?.related_evidence);
 
   return (
     <div className="space-y-4">
@@ -1173,11 +1195,11 @@ function ArtifactRow({ artifact }: { artifact: any }) {
   return (
     <div className="p-2.5 rounded-lg bg-zinc-900/70 border border-zinc-800/80 hover:bg-zinc-800/60 transition-colors">
       <div className="flex items-center justify-between gap-2 mb-1">
-        <span className="text-xs font-medium text-zinc-200 truncate">{artifact.name || artifact.id}</span>
-        <Badge variant="muted" className="text-[10px]">{artifact.type || "YAML"}</Badge>
+        <span className="text-xs font-medium text-zinc-200 truncate">{toText(artifact?.name || artifact?.id, "artifact")}</span>
+        <Badge variant="muted" className="text-[10px]">{toText(artifact?.type, "YAML")}</Badge>
       </div>
       <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-        <span className="font-mono">{artifact.checksum?.slice(0, 16) || "sha256"}…</span>
+        <span className="font-mono">{toText(artifact?.checksum, "").slice(0, 16) || "sha256"}…</span>
         {artifact.size && <span>{formatBytes(artifact.size)}</span>}
         {artifact.timestamp && <span>{formatTimestamp(artifact.timestamp)}</span>}
       </div>
@@ -1189,11 +1211,11 @@ function LineageStep({ step }: { step: any }) {
   return (
     <div className="flex items-start gap-2.5 p-2 rounded-lg bg-zinc-900/70 border border-zinc-800/80">
       <div className="flex h-5 w-5 items-center justify-center rounded bg-zinc-800 border border-zinc-700/80 text-zinc-300 text-[10px] font-mono">
-        {step.order || "01"}
+        {toText(step?.order, "01")}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-xs font-medium text-zinc-200 truncate">{step.operation || step.transform}</div>
-        <div className="text-[11px] text-zinc-500 truncate">{step.input} → {step.output}</div>
+        <div className="text-xs font-medium text-zinc-200 truncate">{toText(step?.operation || step?.transform, "step")}</div>
+        <div className="text-[11px] text-zinc-500 truncate">{toText(step?.input)} → {toText(step?.output)}</div>
         {step.timestamp && <div className="text-[10px] text-zinc-600">{formatTimestamp(step.timestamp)}</div>}
       </div>
     </div>
@@ -1239,8 +1261,8 @@ function EntityRow({ entity, type }: { entity: any; type: string }) {
   return (
     <div className="w-full flex items-center gap-2 p-2 rounded-lg bg-zinc-900/70 border border-zinc-800/80 hover:bg-zinc-800/60 transition-colors text-left text-xs">
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-zinc-200 truncate">{entity.label || entity.id}</div>
-        <div className="text-[10px] text-zinc-500 truncate">{entity.type || type}</div>
+        <div className="font-medium text-zinc-200 truncate">{toText(entity?.label || entity?.id, "entity")}</div>
+        <div className="text-[10px] text-zinc-500 truncate">{toText(entity?.type, type)}</div>
       </div>
     </div>
   );
@@ -1256,10 +1278,10 @@ function EvidenceSubRow({ evidence, stance }: { evidence: any; stance: "supporti
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="font-medium text-zinc-200 truncate">{evidence.name || evidence.id}</span>
-          <Badge variant="muted" className="text-[10px]">{evidence.type || "YAML"}</Badge>
+          <span className="font-medium text-zinc-200 truncate">{toText(evidence?.name || evidence?.id, "evidence")}</span>
+          <Badge variant="muted" className="text-[10px]">{toText(evidence?.type, "YAML")}</Badge>
         </div>
-        <div className="text-[11px] text-zinc-500 truncate">{evidence.type || "Forensic Artifact"}</div>
+        <div className="text-[11px] text-zinc-500 truncate">{toText(evidence?.type, "Forensic Artifact")}</div>
       </div>
     </div>
   );
@@ -1293,10 +1315,11 @@ function formatTimestamp(ts: string | number): string {
   });
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+function formatBytes(bytes: unknown): string {
+  const n = toFiniteNumber(bytes, 0);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function getConfidenceColor(confidence: number): string {
@@ -1310,16 +1333,26 @@ function getArtifactBufferContent(
   fileType?: string,
   data?: any
 ): { lines: string[]; mime: string; lang: string } {
-  if (data?.rawContent) {
-    const raw = String(data.rawContent);
+  const safeName = toText(name, "artifact");
+  if (data?.rawContent != null) {
+    // Normalize first: rawContent may be an object, and binary payloads get a
+    // clear unavailable state instead of thousands of garbage lines.
+    const raw = toText(data.rawContent, "");
+    if (isProbablyBinary(raw)) {
+      return {
+        lines: ["[binary content — text preview unavailable for this artifact]"],
+        mime: fileType || "application/octet-stream",
+        lang: "binary",
+      };
+    }
     return {
-      lines: raw.split("\n"),
+      lines: splitLines(raw),
       mime: fileType || "text/x-source",
-      lang: detectLanguage(name),
+      lang: detectLanguage(safeName),
     };
   }
 
-  const lower = (name || "").toLowerCase();
+  const lower = safeName.toLowerCase();
 
   if (lower.endsWith(".toml") || lower.includes("payments.toml") || lower.includes("settings.toml")) {
     return {
@@ -1487,11 +1520,11 @@ function getArtifactBufferContent(
     mime: fileType || "text/x-source",
     lang: "text",
     lines: [
-      `# Artifact: ${name}`,
+      `# Artifact: ${safeName}`,
       `# Type: ${fileType || "text/x-source"}`,
-      `# Status: ${data?.status || "OBSERVED"}`,
-      `# Checksum: ${data?.checksum || "SHA256 verified"}`,
-      `# Ingested: ${data?.ingested_at || new Date().toISOString()}`,
+      `# Status: ${toText(data?.status, "OBSERVED")}`,
+      `# Checksum: ${toText(data?.checksum, "SHA256 verified")}`,
+      `# Ingested: ${toText(data?.ingested_at, new Date().toISOString())}`,
       "",
       "# Forensic verification passed. Byte checksum matches manifest record.",
       "# Security scan complete: Zero AST violations or network egress calls detected.",
@@ -1499,8 +1532,8 @@ function getArtifactBufferContent(
   };
 }
 
-function detectLanguage(filename: string): string {
-  const f = filename.toLowerCase();
+function detectLanguage(filename: unknown): string {
+  const f = toText(filename, "").toLowerCase();
   if (f.endsWith(".py")) return "python";
   if (f.endsWith(".toml")) return "toml";
   if (f.endsWith(".yaml") || f.endsWith(".yml")) return "yaml";

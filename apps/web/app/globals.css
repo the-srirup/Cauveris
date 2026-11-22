@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* The workbench ships both themes, so `dark:` must follow the theme the
+   operator actually picked (the .light / .dark class on <html>) rather than
+   the operating system's colour preference. Without this, a light-mode
+   operator on a dark laptop gets light panels inside a dark application. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* ============================================================
      CAUVERIS SYSTEMS WORKBENCH - CORE DESIGN TOKENS
@@ -223,7 +229,9 @@
   --color-text-secondary: var(--color-fg-muted);
   --color-text-muted: var(--color-fg-subtle);
   --color-border: var(--color-border-default);
-  --color-border-strong: var(--color-border-muted);
+  /* "strong" must actually be stronger than default — pointing it at
+     border-muted made every hover:border-strong quietly darken instead. */
+  --color-border-strong: var(--divider-strong);
 
   --color-accent-primary: var(--color-accent-emphasis);
   --color-accent-secondary: var(--color-attention-emphasis);
@@ -270,64 +278,192 @@
 }
 
 /* ============================================================
-   LIGHT MODE TOKENS - GRAPHITE NEUTRAL WITH BLUE ACCENT
+   LIGHT THEME - GRAPHITE NEUTRAL WITH BLUE ACCENT
+
+   Opt-in, driven by the class / data-theme attribute the settings
+   toggle writes onto <html> (.light / data-theme="light"). It is
+   deliberately NOT keyed off prefers-color-scheme: the workbench
+   defaults to dark, and an operating-system preference must not
+   silently repaint a surface the operator explicitly chose.
+
+   Every tone here is a real dark-mode counterpart of the token
+   above -- the accents keep their hue, the neutrals invert, so
+   the two themes read as one product rather than two.
    ============================================================ */
 
-@media (prefers-color-scheme: light) {
-  :root {
-    /* Core Backgrounds (Light Graphite) */
-    --color-canvas: #f4f4f5;
-    --color-canvas-inset: #ffffff;
-    --color-canvas-subtle: #e4e4e7;
-    --color-canvas-muted: #d4d4d8;
+.light,
+[data-theme="light"] {
+  color-scheme: light;
 
-    /* Borders */
-    --color-border-default: #d4d4d8;
-    --color-border-muted: #e4e4e7;
-    --color-border-subtle: #e4e4e7;
+  /* Primitives - the same ladder, inverted */
+  --canvas: #f4f4f5;
+  --workspace: #ffffff;
+  --panel: #ffffff;
+  --panel-raised: #fafafa;
+  --panel-recessed: #e4e4e7;
+  --divider: #d4d4d8;
+  --divider-strong: #a1a1aa;
 
-    /* Foreground / Text */
-    --color-fg-default: #18181b;
-    --color-fg-muted: #71717a;
-    --color-fg-subtle: #a1a1aa;
-    --color-fg-on-emphasis: #ffffff;
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-tertiary: #71717a;
+  --text-inverse: #ffffff;
+  --text-disabled: #a1a1aa;
 
-    /* Brand / Accent (Monotone Neutral) */
-    --color-accent-fg: #18181b;
-    --color-accent-emphasis: #27272a;
-    --color-accent-muted: rgba(24, 24, 27, 0.08);
-    --color-accent-subtle: rgba(24, 24, 27, 0.04);
+  /* Provenance strengths - weight now reads as depth, not luminance */
+  --signal-observed: #18181b;
+  --signal-declared: #27272a;
+  --signal-derived: #3f3f46;
+  --signal-calibrated: #52525b;
+  --signal-inferred: #3f3f46;
+  --signal-simulated: #52525b;
+  --signal-verified: #18181b;
+  --signal-warning: #52525b;
+  --signal-failure: #3f3f46;
+  --signal-unknown: #a1a1aa;
+  --signal-sample: #52525b;
 
-    /* Success (Monotone Light Neutral) */
-    --color-success-fg: #27272a;
-    --color-success-emphasis: #3f3f46;
-    --color-success-muted: rgba(39, 39, 42, 0.08);
-    --color-success-subtle: rgba(39, 39, 42, 0.04);
+  /* Core Backgrounds (Light Graphite) */
+  --color-canvas: #f4f4f5;
+  --color-canvas-default: #ffffff;
+  --color-canvas-subtle: #f4f4f5;
+  --color-canvas-inset: #e4e4e7;
+  --color-canvas-muted: #d4d4d8;
 
-    /* Danger (Monotone Controlled Neutral) */
-    --color-danger-fg: #27272a;
-    --color-danger-emphasis: #52525b;
-    --color-danger-muted: rgba(82, 82, 91, 0.1);
-    --color-danger-subtle: rgba(82, 82, 91, 0.05);
+  /* Borders */
+  --color-border-default: #d4d4d8;
+  --color-border-muted: #e4e4e7;
+  --color-border-subtle: #e4e4e7;
 
-    /* Warning (Monotone Subdued Gray) */
-    --color-attention-fg: #3f3f46;
-    --color-attention-emphasis: #52525b;
-    --color-attention-muted: rgba(63, 63, 70, 0.08);
-    --color-attention-subtle: rgba(63, 63, 70, 0.04);
+  /* Foreground / Text */
+  --color-fg-default: #18181b;
+  --color-fg-muted: #52525b;
+  --color-fg-subtle: #71717a;
+  --color-fg-on-emphasis: #ffffff;
 
-    /* Done (Monotone Muted Zinc) */
-    --color-done-fg: #3f3f46;
-    --color-done-emphasis: #52525b;
-    --color-done-muted: rgba(63, 63, 70, 0.08);
-    --color-done-subtle: rgba(63, 63, 70, 0.04);
+  /* Brand / Accent (Primer blue, darkened for daylight) */
+  --color-accent-fg: #0969da;
+  --color-accent-emphasis: #0550ae;
+  --color-accent-muted: rgba(9, 105, 218, 0.12);
+  --color-accent-subtle: rgba(9, 105, 218, 0.06);
 
-    /* Shadows */
-    --shadow-sm: 0 1px 2px rgba(1, 4, 9, 0.1);
-    --shadow-md: 0 4px 8px rgba(1, 4, 9, 0.1);
-    --shadow-lg: 0 8px 24px rgba(1, 4, 9, 0.12);
-    --shadow-focus: 0 0 0 3px rgba(255, 255, 255, 0.2);
-  }
+  /* Success */
+  --color-success-fg: #1a7f37;
+  --color-success-emphasis: #116329;
+  --color-success-muted: rgba(26, 127, 55, 0.12);
+  --color-success-subtle: rgba(26, 127, 55, 0.06);
+
+  /* Danger */
+  --color-danger-fg: #cf222e;
+  --color-danger-emphasis: #a40e26;
+  --color-danger-muted: rgba(207, 34, 46, 0.12);
+  --color-danger-subtle: rgba(207, 34, 46, 0.06);
+
+  /* Warning */
+  --color-attention-fg: #9a6700;
+  --color-attention-emphasis: #7d4e00;
+  --color-attention-muted: rgba(154, 103, 0, 0.12);
+  --color-attention-subtle: rgba(154, 103, 0, 0.06);
+
+  /* Done */
+  --color-done-fg: #0969da;
+  --color-done-emphasis: #0550ae;
+  --color-done-muted: rgba(9, 105, 218, 0.12);
+  --color-done-subtle: rgba(9, 105, 218, 0.06);
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(1, 4, 9, 0.1);
+  --shadow-md: 0 4px 8px rgba(1, 4, 9, 0.1);
+  --shadow-lg: 0 8px 24px rgba(1, 4, 9, 0.12);
+  --shadow-focus: 0 0 0 3px rgba(9, 105, 218, 0.35);
+}
+
+/* ------------------------------------------------------------
+   The Zinc / Slate ramps carry meaning, not just colour.
+
+   In this codebase a step in the 100-600 range states "this much
+   emphasis" for copy, and a step in the 700-950 range states "this
+   much recession" for a surface. Flipping the canvas from
+   near-black to white without touching them leaves light-grey
+   copy on a light ground and near-black wells on a light one.
+
+   So in daylight the ramps invert: the step that carried the
+   brightest copy now carries the darkest, and the step that was
+   the darkest well now cuts the lightest.
+   ------------------------------------------------------------ */
+
+.light,
+[data-theme="light"] {
+  /* Copy: emphasis (100-200) -> metadata (600) */
+  --color-zinc-100: #27272a;
+  --color-zinc-200: #3f3f46;
+  --color-zinc-300: #52525b;
+  --color-zinc-400: #71717a;
+  --color-zinc-500: #71717a;
+  --color-zinc-600: #a1a1aa;
+
+  /* Surfaces: recess (700) -> canvas (950) */
+  --color-zinc-700: #d4d4d8;
+  --color-zinc-800: #e4e4e7;
+  --color-zinc-900: #f4f4f5;
+  --color-zinc-950: #fafafa;
+
+  --color-slate-300: #475569;
+  --color-slate-400: #64748b;
+  --color-slate-500: #64748b;
+  --color-slate-600: #94a3b8;
+  --color-slate-700: #64748b;
+  --color-slate-800: #e2e8f0;
+  --color-slate-900: #f1f5f9;
+  --color-slate-950: #f8fafc;
+
+  /* Status hues, darkened so they hold up on a white ground */
+  --color-emerald-400: #059669;
+  --color-emerald-500: #059669;
+  --color-red-400: #dc2626;
+  --color-red-500: #dc2626;
+  --color-sky-400: #0284c7;
+  --color-sky-500: #0284c7;
+  --color-amber-400: #b45309;
+  --color-blue-400: #2563eb;
+  --color-blue-500: #2563eb;
+}
+
+/* ------------------------------------------------------------
+   The command-line inspector, the timeline scrubber and the 3D
+   viewport are instruments, not documents.
+
+   They are dark consoles by design - a terminal you read evidence
+   out of, a scene you look into. They keep their own dark ramp in
+   daylight so the console reads exactly the same way in both
+   themes, and so a light surface never ends up behind light copy.
+   ------------------------------------------------------------ */
+
+.light [data-console],
+.light [data-viewport] {
+  --color-zinc-50: #fafafa;
+  --color-zinc-100: #f4f4f5;
+  --color-zinc-200: #e4e4e7;
+  --color-zinc-300: #d4d4d8;
+  --color-zinc-400: #a1a1aa;
+  --color-zinc-500: #71717a;
+  --color-zinc-600: #52525b;
+  --color-zinc-700: #3f3f46;
+  --color-zinc-800: #27272a;
+  --color-zinc-900: #18181b;
+  --color-zinc-950: #09090b;
+
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #020617;
 }
 
 /* ============================================================
@@ -344,10 +480,18 @@
     --color-accent: var(--color-accent-emphasis);
     --color-accent-hover: var(--color-accent-fg);
     --color-accent-dim: var(--color-accent-muted);
+
+    /* Legacy alias used by the tab strip, toggles, the lazy page loader and
+       the error fallback. It was referenced in six components but never
+       declared, so those surfaces were rendering transparent. */
+    --theme-background: var(--color-canvas);
   }
 
   html {
     font-size: 16px;
+    /* Firefox has no ::-webkit-scrollbar — theme it with the standard props */
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-default) transparent;
   }
 
   body {
@@ -373,6 +517,27 @@
 
   ::selection {
     background: var(--color-accent-muted);
+    color: var(--color-fg-default);
+  }
+
+  /* The parts the browser draws still carry the design: caret, placeholder
+     fallback, and tabular numerals so columns of figures don't jitter. */
+  input,
+  textarea,
+  [contenteditable="true"] {
+    caret-color: var(--color-accent-fg);
+  }
+
+  ::placeholder {
+    color: var(--color-fg-subtle);
+    opacity: 1;
+  }
+
+  code,
+  kbd,
+  samp,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
   }
 
   /* Scrollbar - GitHub Style */

@@ -125,7 +125,7 @@ export function CausalConstellationView({
               onClick={() => setIsolateChain(!isolateChain)}
               className={`px-2 py-0.5 text-[11px] border rounded-[2px] transition-colors ${
                 isolateChain
-                  ? "border-zinc-500 bg-zinc-800 text-white font-bold"
+                  ? "border-[#a1a1aa] bg-[#27272a] text-white font-bold"
                   : "border-[var(--divider,#27272a)] text-[var(--text-tertiary,#71717a)] hover:text-[var(--text-primary,#f4f4f5)]"
               }`}
             >
@@ -320,21 +320,21 @@ export function CausalConstellationView({
           )}
 
           {/* Floating Context Legend */}
-          <div className="absolute bottom-3 left-3 flex items-center gap-3 bg-[var(--panel,#18181b)]/95 p-2 border border-[var(--divider,#27272a)] text-[10px] text-[var(--text-tertiary,#71717a)] rounded-[2px]">
+          <div className="absolute bottom-3 left-3 flex items-center gap-3 bg-[#18181b]/95 p-2 border border-[#30363d] text-[10px] text-[#8b949e] rounded-[2px]">
             <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-zinc-300 inline-block" /> Observed
+              <span className="w-2 h-2 rounded-full bg-[#d4d4d8] inline-block" /> Observed
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-zinc-500 inline-block" /> Inferred
+              <span className="w-2 h-2 rounded-full bg-[#71717a] inline-block" /> Inferred
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-zinc-400 inline-block" /> Simulated
+              <span className="w-2 h-2 rounded-full bg-[#a1a1aa] inline-block" /> Simulated
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-zinc-200 inline-block" /> Verified
+              <span className="w-2 h-2 rounded-full bg-[#e4e4e7] inline-block" /> Verified
             </span>
-            <span className="flex items-center gap-1.5 text-zinc-300">
-              <AlertTriangle className="w-3 h-3 text-zinc-400" /> Contradiction
+            <span className="flex items-center gap-1.5 text-[#d4d4d8]">
+              <AlertTriangle className="w-3 h-3 text-[#a1a1aa]" /> Contradiction
             </span>
           </div>
         </div>

@@ -95,8 +95,10 @@ export function useHolographicReconstruction(
   const workerRef = useRef<Worker | null>(null);
   const depthStackRef = useRef<DepthStack | null>(null);
 
-  // Initialize Web Worker for phase retrieval
+  // Initialize Web Worker for phase retrieval — client only. The window guard
+  // keeps this safe if the hook is ever evaluated during SSR.
   useEffect(() => {
+    if (typeof window === "undefined") return;
     if (useWorkerEnabled && typeof Worker !== "undefined") {
       try {
         workerRef.current = new Worker(
@@ -212,24 +214,10 @@ export function useHolographicReconstruction(
           erIterations2: 20,
         };
 
-        if (worker && useWorkerEnabled) {
-          // Offload to Web Worker. Transfer the amplitude/support buffers
-          // (256KB+ each at grid 256, ~8MB at 1024) with the message instead
-          // of letting postMessage structured-clone them — a full copy per
-          // reconstruction on both sides of the channel. Ownership moves to
-          // the worker; the main-thread views become detached.
-          worker.postMessage(
-            {
-              type: "RUN",
-              amplitudeTarget: targetRes.amplitude,
-              supportMask: targetRes.supportMask,
-              gridSize,
-              options,
-            },
-            [targetRes.amplitude.buffer, targetRes.supportMask.buffer]
-          );
-        } else {
-          // Fallback to main thread
+        // Main-thread fallback path, shared by "worker disabled" and
+        // "postMessage failed" (e.g. a detached ArrayBuffer throws
+        // DataCloneError — the page falls back instead of dying).
+        const runOnMainThread = async () => {
           if (!phaseEngineRef.current || phaseEngineRef.current["N"] !== gridSize) {
             phaseEngineRef.current = new PhaseRetrievalEngine(gridSize);
           }
@@ -275,6 +263,35 @@ export function useHolographicReconstruction(
             pixelPitch,
             gridSize,
           });
+        };
+
+        if (worker && useWorkerEnabled) {
+          // Offload to Web Worker. Transfer the amplitude/support buffers
+          // (256KB+ each at grid 256, ~8MB at 1024) with the message instead
+          // of letting postMessage structured-clone them — a full copy per
+          // reconstruction on both sides of the channel. Ownership moves to
+          // the worker; the main-thread views become detached.
+          try {
+            worker.postMessage(
+              {
+                type: "RUN",
+                amplitudeTarget: targetRes.amplitude,
+                supportMask: targetRes.supportMask,
+                gridSize,
+                options,
+              },
+              [targetRes.amplitude.buffer, targetRes.supportMask.buffer]
+            );
+          } catch (postErr) {
+            console.warn("Worker postMessage failed, falling back to main thread:", postErr);
+            setUseWorkerEnabled(false);
+            workerRef.current?.terminate();
+            workerRef.current = null;
+            await runOnMainThread();
+          }
+        } else {
+          // Fallback to main thread
+          await runOnMainThread();
         }
       } catch (err) {
         console.error("Holographic reconstruction error:", err);

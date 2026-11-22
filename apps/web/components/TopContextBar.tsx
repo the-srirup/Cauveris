@@ -187,7 +187,7 @@ export function TopContextBar() {
                 disabled={engineerMode}
                 className={`flex items-center gap-1 px-2 py-0.5 rounded-[var(--radius-sm,4px)] text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
                   judgeMode
-                    ? "bg-[var(--color-canvas-inset)] text-[var(--color-fg-default)] shadow-xs"
+                    ? "bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)] shadow-[var(--shadow-sm)]"
                     : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
                 }`}
                 aria-pressed={judgeMode}
@@ -202,7 +202,7 @@ export function TopContextBar() {
                 disabled={judgeMode}
                 className={`flex items-center gap-1 px-2 py-0.5 rounded-[var(--radius-sm,4px)] text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
                   engineerMode
-                    ? "bg-[var(--color-canvas-inset)] text-[var(--color-fg-default)] shadow-xs"
+                    ? "bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)] shadow-[var(--shadow-sm)]"
                     : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
                 }`}
                 aria-pressed={engineerMode}

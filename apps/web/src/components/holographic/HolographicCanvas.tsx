@@ -706,24 +706,24 @@ export function HolographicCanvas({
       </div>
 
       {/* Legend */}
-      <div className="absolute top-4 right-4 p-3 rounded-lg bg-[var(--theme-background)]/90 backdrop-blur border border-[var(--color-border)] text-xs">
-        <div className="font-semibold text-[var(--color-text-primary)] mb-2">Legend</div>
+      <div className="absolute top-4 right-4 p-3 rounded-lg bg-[var(--panel,#18181b)]/90 backdrop-blur border border-[var(--divider,#27272a)] text-xs">
+        <div className="font-semibold text-[var(--text-primary,#f4f4f5)] mb-2">Legend</div>
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-zinc-200" />
-            <span className="text-[var(--color-text-muted)]">Healthy</span>
+            <div className="w-3 h-3 rounded-full bg-[#e4e4e7]" />
+            <span className="text-[var(--text-tertiary,#71717a)]">Healthy</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-zinc-400" />
-            <span className="text-[var(--color-text-muted)]">Degraded</span>
+            <div className="w-3 h-3 rounded-full bg-[#a1a1aa]" />
+            <span className="text-[var(--text-tertiary,#71717a)]">Degraded</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-zinc-600" />
-            <span className="text-[var(--color-text-muted)]">Critical</span>
+            <div className="w-3 h-3 rounded-full bg-[#52525b]" />
+            <span className="text-[var(--text-tertiary,#71717a)]">Critical</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full border-2 border-dashed border-zinc-400" />
-            <span className="text-[var(--color-text-muted)]">Ambiguous</span>
+            <div className="w-3 h-3 rounded-full border-2 border-dashed border-[#a1a1aa]" />
+            <span className="text-[var(--text-tertiary,#71717a)]">Ambiguous</span>
           </div>
         </div>
       </div>

@@ -117,7 +117,7 @@ export default function Sidebar() {
         <div className="flex items-center justify-between h-[var(--topbar-height,54px)] px-3 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-inset)]">
           {!state.isNavCollapsed && (
             <Link href="/" className="flex items-center gap-2.5 min-w-0" aria-label="Cauveris Home">
-              <div className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-sm,4px)] bg-[var(--color-accent)] text-white shrink-0 shadow-xs">
+              <div className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] text-[var(--color-fg-on-emphasis)] shrink-0 shadow-[var(--shadow-sm)] ring-1 ring-[var(--color-accent-hover)]/30">
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7Z" />
                 </svg>
@@ -189,7 +189,7 @@ export default function Sidebar() {
                               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]
                               ${
                                 active
-                                  ? "bg-[var(--color-canvas-subtle)] text-[var(--color-accent)] font-semibold border-l-2 border-[var(--color-accent)]"
+                                  ? "bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)] font-semibold shadow-[var(--shadow-sm)]"
                                   : "text-[var(--color-fg-muted)] hover:bg-[var(--color-canvas-subtle)] hover:text-[var(--color-fg-default)]"
                               }
                             `}
@@ -209,14 +209,14 @@ export default function Sidebar() {
                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]
                             ${
                               active
-                                ? "bg-[var(--color-canvas-subtle)] text-[var(--color-accent)] font-semibold border-l-2 border-[var(--color-accent)] pl-2"
+                                ? "bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)] font-semibold shadow-[var(--shadow-sm)]"
                                 : "text-[var(--color-fg-muted)] hover:bg-[var(--color-canvas-subtle)] hover:text-[var(--color-fg-default)]"
                             }
                           `}
                           aria-current={active ? "page" : undefined}
                           onClick={() => handleDrawerToggle(false)}
                         >
-                          <Icon className={`h-4 w-4 shrink-0 ${active ? "text-[var(--color-accent)]" : "text-[var(--color-fg-muted)]"}`} aria-hidden="true" />
+                          <Icon className={`h-4 w-4 shrink-0 ${active ? "text-[var(--color-accent-fg)]" : "text-[var(--color-fg-muted)]"}`} aria-hidden="true" />
                           <span className="truncate">{item.label}</span>
                         </Link>
                       )}

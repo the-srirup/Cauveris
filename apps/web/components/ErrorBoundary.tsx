@@ -5,6 +5,36 @@ import { Button, Card } from "@/components/ui";
 import { AlertTriangle, RotateCcw, Home, Bug } from "lucide-react";
 import { notify } from "@/components/Notification";
 
+/**
+ * Error categories keep root failures distinguishable — a WebGL crash is
+ * never flattened into a generic "RenderError". The category is exposed on the
+ * fallback root as data-error-category so tests and a11y tooling can assert it.
+ */
+export type ErrorCategory = "render" | "preview" | "webgl" | "data" | "worker";
+
+const CATEGORY_COPY: Record<ErrorCategory, { title: string; body: string }> = {
+  render: {
+    title: "Something went wrong",
+    body: "An unexpected error occurred while rendering this component.",
+  },
+  preview: {
+    title: "Preview could not be rendered",
+    body: "The source or diff preview hit an unexpected error. The raw content was not executed and nothing was lost — try again or view the raw artifact.",
+  },
+  webgl: {
+    title: "3D visualization failed",
+    body: "The WebGL view could not start or crashed mid-render. Text and data views on this page are unaffected.",
+  },
+  data: {
+    title: "Data could not be displayed",
+    body: "A data panel received something it could not render. The rest of the page is still usable.",
+  },
+  worker: {
+    title: "Background task failed",
+    body: "A background worker could not be started or crashed. The page falls back to on-device processing where possible.",
+  },
+};
+
 interface ErrorBoundaryState {
   hasError: boolean;
   error: Error | null;
@@ -17,6 +47,8 @@ interface ErrorBoundaryProps {
   onError?: (error: Error, errorInfo: ErrorInfo) => void;
   resetKeys?: unknown[];
   resetOnPropsChange?: boolean;
+  /** Safe root category preserved on the fallback UI. Defaults to "render". */
+  category?: ErrorCategory;
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
@@ -26,6 +58,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     errorInfo: null,
   };
 
+  /**
+   * Snapshot of the props in force when the error was caught. `resetOnPropsChange`
+   * compares against this instead of resetting unconditionally: an unconditional
+   * reset turns every update into reset -> render -> update -> reset, and the
+   * boundary never settles.
+   */
+  private erroredProps: ErrorBoundaryProps | null = null;
+
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
     return {
       hasError: true,
@@ -34,6 +74,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    this.erroredProps = this.props;
     this.setState({
       error,
       errorInfo,
@@ -47,20 +88,46 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       this.props.onError(error, errorInfo);
     }
 
-    // Show notification to user
-    notify("An unexpected error occurred. Please try refreshing the page.", "error");
+    // Show notification to user — guarded: a broken notification system must
+    // never turn a caught render error into a new crash inside the catch path.
+    try {
+      notify("An unexpected error occurred. Please try refreshing the page.", "error");
+    } catch (notifyError) {
+      console.warn("ErrorBoundary: notify() failed while handling an error:", notifyError);
+    }
   }
 
   componentDidUpdate(prevProps: ErrorBoundaryProps): void {
-    if (this.state.hasError && this.props.resetKeys) {
-      const hasResetKeyChanged = this.props.resetKeys.some((key, index) => key !== prevProps.resetKeys?.[index]);
+    if (!this.state.hasError) return;
+
+    // Reset only on an actual key change. setState here is conditional on
+    // hasError + a changed key, so it converges in one step — no render loop.
+    if (this.props.resetKeys) {
+      const hadKeys = Array.isArray(prevProps.resetKeys);
+      const hasResetKeyChanged =
+        !hadKeys ||
+        this.props.resetKeys.length !== prevProps.resetKeys!.length ||
+        this.props.resetKeys.some((key, index) => key !== prevProps.resetKeys?.[index]);
       if (hasResetKeyChanged) {
         this.reset();
+        return;
       }
     }
 
-    if (this.state.hasError && this.props.resetOnPropsChange) {
-      this.reset();
+    if (this.props.resetOnPropsChange) {
+      // Reset when the inputs actually changed since the failure — not on
+      // every update. Comparing against the snapshot means one change
+      // produces one reset, and the boundary settles.
+      const snapshot = this.erroredProps;
+      const changed =
+        snapshot !== null &&
+        (snapshot.children !== this.props.children ||
+          snapshot.fallback !== this.props.fallback ||
+          snapshot.resetKeys !== this.props.resetKeys);
+      if (changed) {
+        this.erroredProps = this.props;
+        this.reset();
+      }
     }
   }
 
@@ -79,18 +146,24 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         return this.props.fallback;
       }
 
-      // Default fallback UI
+      // Default fallback UI — category-aware so root failures stay labeled
+      const category = this.props.category ?? "render";
+      const copy = CATEGORY_COPY[category] ?? CATEGORY_COPY.render;
       return (
-        <div className="min-h-screen bg-[var(--theme-background)] text-foreground flex items-center justify-center p-6">
+        <div
+          className="min-h-screen bg-[var(--theme-background)] text-foreground flex items-center justify-center p-6"
+          data-error-category={category}
+          role="alert"
+        >
           <Card className="max-w-md w-full p-6 text-center space-y-6">
             <div className="w-16 h-16 mx-auto bg-[var(--color-brand-danger)]/10 border border-danger/20 rounded-2xl flex items-center justify-center">
               <AlertTriangle className="h-8 w-8 text-[var(--color-brand-danger)]" />
             </div>
 
             <div className="space-y-2">
-              <h2 className="text-xl font-semibold text-[var(--color-text-primary)]">Something went wrong</h2>
+              <h2 className="text-xl font-semibold text-[var(--color-text-primary)]">{copy.title}</h2>
               <p className="text-[var(--color-text-muted)] text-sm">
-                An unexpected error occurred while rendering this component.
+                {copy.body}
               </p>
             </div>
 
