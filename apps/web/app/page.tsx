@@ -2,15 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Check,
   X,
   Divide,
   AlertTriangle,
   HelpCircle,
-  Plus,
-  Upload,
-  Download,
   Play,
   Square,
   RotateCcw,
@@ -23,16 +21,18 @@ import {
   Info,
   Loader2,
   Server,
-  FileArchive,
+  FolderOpen,
   ArrowRight,
   ShieldCheck,
   Activity,
   Layers,
   Globe,
+  Download,
 } from "lucide-react";
 import {
   Button,
   Badge,
+  EmptyState,
   PageHeader,
   Toolbar,
   ToolbarGroup,
@@ -44,8 +44,7 @@ import {
 import { Dialog, ConfirmDialog } from "@/components/ui/Dialog";
 import { Table, type Column } from "@/components/ui/Table";
 import { AuthGate } from "@/components/AuthGate";
-import { IntakePanel, type IntakeResult } from "@/components/IntakePanel";
-import { CreateIncidentModal } from "@/components/CreateIncidentModal";
+import { SessionExportDialog } from "@/components/workspace/SessionExportDialog";
 import {
   api,
   Incident,
@@ -77,16 +76,9 @@ interface ActionableError {
   onAction?: () => void;
 }
 
-// Picker accept list: archive extensions are refreshed from the deployment's
-// intake capabilities at mount. The fallback never offers formats the backend
-// cannot read (.rar is unsupported; .7z needs the optional 'archives' extra).
-const EVIDENCE_ACCEPT_EXTENSIONS = ".json,.jsonl,.ndjson,.csv,.yaml,.yml,.toml,.ini,.log,.txt,.md,.mcap";
-const FALLBACK_FILE_ACCEPT =
-  ".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz,.gz,.bz2,.xz," + EVIDENCE_ACCEPT_EXTENSIONS;
-
 export default function MissionControl() {
   return (
-    <AuthGate redirect="/" loadingLabel="Initializing Systems Workbench...">
+    <AuthGate redirect="/workspace" loadingLabel="Initializing Systems Workbench...">
       <MissionControlContent />
     </AuthGate>
   );
@@ -94,7 +86,8 @@ export default function MissionControl() {
 
 function MissionControlContent() {
   const { incidentId, setIncidentId, judgeMode, setJudgeMode, engineerMode, setEngineerMode } = useActiveIncident();
-  const { setIncidentContext, openInspector } = useShell();
+  const { setIncidentContext, openInspector, setWorkspacePrompt } = useShell();
+  const router = useRouter();
 
   // Primary data state
   const [incidentData, setIncidentData] = useState<Incident | null>(null);
@@ -114,6 +107,7 @@ function MissionControlContent() {
   const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
 
   // Pipeline progression state
+  const [isSessionExportOpen, setIsSessionExportOpen] = useState<boolean>(false);
   const [pipelineState, setPipelineState] = useState<string>("IDLE");
   const [pipelineProgress, setPipelineProgress] = useState<number>(0);
   const [activeStageId, setActiveStageId] = useState<string | null>(null);
@@ -126,17 +120,8 @@ function MissionControlContent() {
   const [isCancelling, setIsCancelling] = useState<boolean>(false);
   const [isResetting, setIsResetting] = useState<boolean>(false);
   const [isValidating, setIsValidating] = useState<boolean>(false);
-  const [isDraggingPackage, setIsDraggingPackage] = useState<boolean>(false);
-  const [uploadManifest, setUploadManifest] = useState<{ name: string; size: number } | null>(null);
-  const [ingestSource, setIngestSource] = useState<string>("");
-  const [isIngesting, setIsIngesting] = useState<boolean>(false);
-
   // Actionable errors
   const [actionableError, setActionableError] = useState<ActionableError | null>(null);
-
-  // Modals & UI controls
-  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [showEvidenceDrawer, setShowEvidenceDrawer] = useState<boolean>(false);
 
   // Engineer mode interactive simulation state
   const [simBatchWindow, setSimBatchWindow] = useState<number>(100);
@@ -145,24 +130,7 @@ function MissionControlContent() {
   const [simRunning, setSimRunning] = useState<boolean>(false);
   const [simResult, setSimResult] = useState<any>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Picker accept list derived from the deployment's intake capabilities, so
-  // the file dialog never offers formats the backend cannot actually read.
-  const [fileAccept, setFileAccept] = useState<string>(FALLBACK_FILE_ACCEPT);
-  useEffect(() => {
-    let cancelled = false;
-    try {
-      Promise.resolve(api.getIngestCapabilities?.())
-        .then((caps: any) => {
-          if (cancelled || !caps?.supported_archive_extensions?.length) return;
-          setFileAccept([...caps.supported_archive_extensions, EVIDENCE_ACCEPT_EXTENSIONS].join(","));
-        })
-        .catch(() => { /* keep the fallback list */ });
-    } catch { /* API unavailable in this context: keep the fallback list */ }
-    return () => { cancelled = true; };
-  }, []);
 
   // Health check
   const checkHealth = useCallback(async () => {
@@ -307,8 +275,13 @@ function MissionControlContent() {
       loadIncidentDetails(incidentId);
     } else {
       loadIncidentDetails(null);
+      // If no active incident is open, route to workspace launcher to pick or create one
+      const stored = typeof window !== "undefined" ? localStorage.getItem("cauveris_active_incident_id") : null;
+      if (!stored) {
+        router.replace("/workspace");
+      }
     }
-  }, [incidentId, loadIncidentDetails]);
+  }, [incidentId, loadIncidentDetails, router]);
 
   // Sync shell topbar
   useEffect(() => {
@@ -410,34 +383,6 @@ function MissionControlContent() {
   }, [pipelineState, incidentId, loadIncidentDetails]);
 
   // Handlers
-  const handleLoadGolden = async () => {
-    setLoading(true);
-    setActionableError(null);
-    try {
-      const res = await api.create(true);
-      if (!res.incident_id) {
-        throw new Error("Backend did not return an incident ID");
-      }
-      const newId = res.incident_id;
-      setIncidentId(newId);
-      setIsDemonstration(true);
-      await loadIncidentsList();
-      await loadIncidentDetails(newId);
-      notify("Golden incident loaded! Real local pipeline ready for investigation.", "success");
-    } catch (e: any) {
-      setActionableError({
-        title: "Failed to Load Golden Incident",
-        message: e.message || "Could not initialize golden benchmark incident from backend.",
-        type: "backend",
-        actionLabel: "Retry",
-        onAction: () => handleLoadGolden(),
-      });
-      notify(e.message || "Failed to load golden incident", "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleStartInvestigation = async () => {
     if (!incidentId) return;
     if (isStarting || pipelineState === "RUNNING") {
@@ -519,100 +464,6 @@ function MissionControlContent() {
     } finally {
       setIsValidating(false);
     }
-  };
-
-  const handleTriggerUpload = () => {
-    fileInputRef.current?.click();
-  };
-
-  const processUploadFile = async (file: File) => {
-    setLoading(true);
-    setUploadManifest({ name: file.name, size: file.size });
-    try {
-      notify(`Uploading incident package: ${file.name}...`, "info");
-      const uploadRes = await api.uploadPackage(file);
-      const newId = uploadRes.incident_id;
-      setIncidentId(newId);
-      setIsDemonstration(false);
-      await loadIncidentsList();
-      await loadIncidentDetails(newId);
-      notify(`Package ingested: ${uploadRes.evidence_count} artifacts indexed for ${newId}`, "success");
-    } catch (err: any) {
-      setUploadManifest(null);
-      setActionableError({
-        title: "Upload Failed",
-        message: "Upload failed. The backend did not accept this package.",
-        type: "upload",
-        actionLabel: "Try Again",
-        onAction: () => handleTriggerUpload(),
-      });
-      notify("Upload failed. The backend did not accept this package.", "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      processUploadFile(file);
-    }
-    e.target.value = "";
-  };
-
-  const handleIngestFromSource = async () => {
-    const source = ingestSource.trim();
-    if (!source || isIngesting) return;
-    setIsIngesting(true);
-    try {
-      notify(`Ingesting from ${source} ...`, "info");
-      const job = await api.ingestFromSource(source);
-      notify(`Ingest job queued (${job.source_kind}); fetching and extracting...`, "info");
-      // Poll the ingest job until it reaches a terminal state (downloads can take a while).
-      const deadline = Date.now() + 10 * 60 * 1000;
-      let status = job.status;
-      let result: any = null;
-      let jobError: string | null = null;
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const polled = await api.getIngestJob(job.job_id);
-        status = polled.status;
-        result = polled.result ?? null;
-        jobError = polled.error ?? null;
-        if (["completed", "failed", "dead_letter", "cancelled"].includes(status)) break;
-      }
-      if (status !== "completed" || !result?.incident_id) {
-        throw new Error(jobError || result?.error || `Ingest job ended with status "${status}"`);
-      }
-      const newId = result.incident_id;
-      setIncidentId(newId);
-      setIsDemonstration(false);
-      await loadIncidentsList();
-      await loadIncidentDetails(newId);
-      notify(`Ingested from link: ${result.evidence_count ?? 0} artifacts indexed for ${newId}`, "success");
-      setIngestSource("");
-    } catch (err: any) {
-      notify(err.message || "Link ingestion failed", "error");
-    } finally {
-      setIsIngesting(false);
-    }
-  };
-
-  const handleIntakeSuccess = async (result: IntakeResult) => {
-    setIncidentId(result.incident_id);
-    setIsDemonstration(false);
-    await loadIncidentsList();
-    await loadIncidentDetails(result.incident_id);
-    notify(`Ingested ${result.incident_id}: ${result.evidence_count ?? 0} artifacts indexed`, "success");
-  };
-
-  const handleIncidentCreated = async (createdId: string) => {
-    setIncidentId(createdId);
-    setIsDemonstration(false);
-    setShowCreateModal(false);
-    await loadIncidentsList();
-    await loadIncidentDetails(createdId);
-    notify(`Created incident ${createdId}`, "success");
   };
 
   const isPipelineActive = pipelineState === "RUNNING";
@@ -743,71 +594,26 @@ function MissionControlContent() {
 
   return (
     <div className="w-full space-y-5">
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        accept={fileAccept}
-        className="hidden"
-      />
+      {/*
+        Standard Page Header.
 
-      {/* Standard Page Header */}
+        The header is incident-scoped: it acts on the incident that is open.
+        Creating, uploading and loading the sample benchmark moved to the
+        workspace launcher, which owns those actions exactly once — this page
+        used to carry a third copy of each.
+      */}
       <PageHeader
         title="Overview"
         subtitle="Operational entry point & autonomous reality debugger for robotic systems"
+        actionsBelow
         breadcrumbs={[{ label: "Overview" }]}
         badge={
-          <div className="flex items-center gap-2">
-            {isDemonstration && (
-              <Badge tone="attention" size="sm">SAMPLE DATA</Badge>
-            )}
-            <Badge tone={incidentId ? "info" : "neutral"} size="sm">
-              {incidentId ? `INCIDENT: ${incidentId}` : "STANDBY"}
-            </Badge>
-          </div>
+          isDemonstration ? (
+            <Badge tone="attention" size="sm">SAMPLE DATA</Badge>
+          ) : undefined
         }
         actions={
           <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setShowCreateModal(true)}
-              disabled={loading || isPipelineActive}
-              leadingIcon={<Plus className="h-3.5 w-3.5" />}
-              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] shadow-xs"
-            >
-              Create Incident
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleTriggerUpload}
-              disabled={loading || isPipelineActive}
-              leadingIcon={<Upload className="h-3.5 w-3.5" />}
-              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-            >
-              Upload incident package
-            </Button>
-
-            <IntakePanel
-              onIngestSuccess={handleIntakeSuccess}
-              disabled={loading || isPipelineActive}
-            />
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLoadGolden}
-              disabled={loading || isPipelineActive}
-              leadingIcon={<Download className="h-3.5 w-3.5" />}
-              loading={loading}
-              loadingText="Initializing..."
-              className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-            >
-              Load Golden
-            </Button>
-
             <Button
               variant="outline"
               size="sm"
@@ -845,7 +651,7 @@ function MissionControlContent() {
                 loadingText="Starting..."
                 className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
               >
-                Start Investigation
+                Start
               </Button>
             )}
 
@@ -861,8 +667,39 @@ function MissionControlContent() {
                 {isResetting ? "Resetting..." : "Reset"}
               </Button>
             )}
+
+            {incidentId && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsSessionExportOpen(true)}
+                disabled={isPipelineActive}
+                leadingIcon={<Download className="h-3.5 w-3.5" />}
+                className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              >
+                Export Session
+              </Button>
+            )}
+
+            {incidentId && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setWorkspacePrompt(true)}
+                leadingIcon={<FolderOpen className="h-3.5 w-3.5" />}
+                className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              >
+                Switch Workspace
+              </Button>
+            )}
           </div>
         }
+      />
+
+      <SessionExportDialog
+        open={isSessionExportOpen}
+        onClose={() => setIsSessionExportOpen(false)}
+        incidentId={incidentId}
       />
 
       {/* System Pulse Diagnostic Strip */}
@@ -916,80 +753,25 @@ function MissionControlContent() {
         </div>
       )}
 
-      {/* WORKBENCH VIEW 1: INTAKE WORKBENCH (Rendered when no incident is loaded) */}
+      {/*
+        No incident open.
+
+        This used to be a drag-and-drop intake workbench with its own Upload,
+        Create and Load Sample buttons — a second copy of three actions that
+        also lived in the top bar and in the page header.  Intake now happens
+        once, in the workspace launcher, so this page only points there.
+      */}
       {!incidentId && (
-        <InstrumentPanel
-          title="Welcome to Cauveris Reality Debugger"
-          subtitle="Forensic archive ingestion & security perimeter"
-          className="border-dashed"
-        >
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDraggingPackage(true);
-            }}
-            onDragLeave={() => setIsDraggingPackage(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setIsDraggingPackage(false);
-              const file = e.dataTransfer.files?.[0];
-              if (file) processUploadFile(file);
-            }}
-            className={`p-8 flex flex-col items-center justify-center text-center transition-colors rounded-[var(--radius-sm,4px)] border ${
-              isDraggingPackage
-                ? "bg-blue-50/50 border-[var(--color-accent,#0969da)]"
-                : "bg-[var(--color-canvas-subtle,#f8f9fa)] border-[var(--color-border-default,#d9e0e7)] border-dashed border-2"
-            }`}
-          >
-            <div className="w-12 h-12 flex items-center justify-center rounded-[var(--radius-sm,4px)] border border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-subtle,#f8f9fa)] text-[var(--color-fg-muted,#5f6b76)] mb-3">
-              <FileArchive className="w-6 h-6" />
-            </div>
-
-            <h2 className="text-base font-bold text-[var(--text-primary,#f4f4f5)] mb-1">
-              Drop Incident Package (any archive or evidence file)
-            </h2>
-            <p className="text-xs text-[var(--text-tertiary,#71717a)] max-w-md mb-4 font-sans">
-              Cauveris securely inspects magic bytes, calculates SHA-256 hashes, normalizes telemetry signals with strict provenance, and refuses unsupported repairs safely.
-            </p>
-
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleTriggerUpload}
-                leadingIcon={<Upload className="w-3.5 h-3.5" />}
-                className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-              >
-                Upload incident package
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowCreateModal(true)}
-                leadingIcon={<Plus className="w-3.5 h-3.5" />}
-                className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-              >
-                Create Incident Workspace
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleLoadGolden}
-                leadingIcon={<Download className="w-3.5 h-3.5" />}
-                loading={loading}
-                className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-              >
-                Load Sample Incident
-              </Button>
-            </div>
-
-            <div className="mt-6 pt-4 border-t border-[var(--divider,#27272a)] flex items-center gap-6 text-[11px] text-[var(--text-tertiary,#71717a)]">
-              <span>Limit: 50MB</span>
-              <span>Formats: ZIP / TAR / GZ / BZ2 / XZ / JSON / JSONL / YAML / CSV / LOG / MCAP &amp; more — or paste a GitHub / PyPI / npm / HTTPS link above</span>
-              <span>Execution: Sandboxed / No untrusted code execution</span>
-            </div>
-          </div>
-        </InstrumentPanel>
+        <div className="rounded-[var(--radius-lg,8px)] border border-dashed border-[var(--color-border-default)] bg-[var(--color-canvas-default)]">
+          <EmptyState
+            icon={<FolderOpen className="h-10 w-10" />}
+            title="No workspace open"
+            description="Create an incident from an evidence archive, a source repository, or an empty investigation — or resume a session you saved earlier."
+            action="Open the workspace"
+            actionOnClick={() => router.push("/workspace")}
+            size="lg"
+          />
+        </div>
       )}
 
       {/* WORKBENCH VIEW 2: INCIDENT OVERVIEW & BRIEFING (Rendered when incident is loaded) */}
@@ -1166,13 +948,6 @@ function MissionControlContent() {
           </div>
         </InstrumentPanel>
       )}
-
-      {/* Create Incident Modal */}
-      <CreateIncidentModal
-        isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSuccess={handleIncidentCreated}
-      />
     </div>
   );
 }

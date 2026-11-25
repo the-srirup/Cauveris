@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   ChevronRight,
   ChevronLeft,
@@ -17,9 +17,11 @@ import {
   Database,
   FileText,
   Settings,
+  FolderOpen,
 } from "lucide-react";
-import { Tooltip } from "./Tooltip";
+import { Tooltip } from "./ui/Tooltip";
 import { useShell } from "@/lib/useShell";
+import { useActiveIncident } from "@/lib/useIncident";
 import { APP_VERSION_TAG, APP_FULL_VERSION } from "@/lib/version";
 
 export interface NavItem {
@@ -66,8 +68,20 @@ export const MAIN_NAV: NavItem[] = NAV_SECTIONS.flatMap((s) => s.items);
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { state, setNavDrawer, toggleNavCollapse } = useShell();
+  const router = useRouter();
+  const { state, setNavDrawer, toggleNavCollapse, setWorkspacePrompt } = useShell();
+  const { incidentId } = useActiveIncident();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+  const handleBackToWorkspace = () => {
+    handleDrawerToggle(false);
+    const activeId = incidentId || state.incidentContext?.id;
+    if (activeId && typeof setWorkspacePrompt === "function") {
+      setWorkspacePrompt(true);
+    } else {
+      router.push("/workspace");
+    }
+  };
 
   useEffect(() => {
     setIsDrawerOpen(state.isNavDrawerOpen);
@@ -97,10 +111,10 @@ export default function Sidebar() {
         />
       )}
 
-      {/* Main Sidebar */}
+      {/* Main Sidebar (sits below the full-width fixed top navbar on desktop) */}
       <aside
         className={`
-          fixed inset-y-0 left-0 z-[var(--z-nav-sidebar)]
+          fixed top-0 bottom-0 lg:top-[var(--topbar-height,54px)] left-0 z-40 lg:z-[var(--z-nav-sidebar)]
           flex flex-col
           bg-[var(--color-canvas-inset)]
           border-r border-[var(--color-border-default)]
@@ -113,29 +127,36 @@ export default function Sidebar() {
         data-collapsed={state.isNavCollapsed}
         data-drawer={state.isNavDrawerOpen}
       >
-        {/* Brand / Logo Header */}
-        <div className="flex items-center justify-between h-[var(--topbar-height,54px)] px-3 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-inset)]">
+        {/* Mobile Brand Header (hidden on desktop since navbar spans full top width) */}
+        <div className="flex lg:hidden items-center justify-between h-[var(--topbar-height,54px)] px-3 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-inset)]">
+          <Link href="/workspace" className="flex items-center gap-2.5 min-w-0" aria-label="Cauveris Home">
+            <div className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] text-[var(--color-fg-on-emphasis)] shrink-0 shadow-[var(--shadow-sm)] ring-1 ring-[var(--color-accent-hover)]/30">
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7Z" />
+              </svg>
+            </div>
+            <div className="leading-tight min-w-0">
+              <span className="text-sm font-semibold tracking-tight text-[var(--color-fg-default)] block truncate">
+                Cauveris
+              </span>
+              <span className="text-xs text-[var(--color-fg-muted)] block truncate">
+                Incident Engineering
+              </span>
+              <span className="sr-only">Reality Debugger</span>
+            </div>
+          </Link>
+        </div>
+
+        {/* Desktop Sidebar Utility Header (below navbar) */}
+        <div className={`hidden lg:flex items-center h-10 px-2.5 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-inset)] ${state.isNavCollapsed ? "justify-center" : "justify-between"}`}>
           {!state.isNavCollapsed && (
-            <Link href="/" className="flex items-center gap-2.5 min-w-0" aria-label="Cauveris Home">
-              <div className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] text-[var(--color-fg-on-emphasis)] shrink-0 shadow-[var(--shadow-sm)] ring-1 ring-[var(--color-accent-hover)]/30">
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7Z" />
-                </svg>
-              </div>
-              <div className="leading-tight min-w-0">
-                <span className="text-sm font-semibold tracking-tight text-[var(--color-fg-default)] block truncate">
-                  Cauveris
-                </span>
-                <span className="text-xs text-[var(--color-fg-muted)] block truncate">
-                  Incident Engineering
-                </span>
-                <span className="sr-only">Reality Debugger</span>
-              </div>
-            </Link>
+            <span className="px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)]">
+              Navigation
+            </span>
           )}
 
           {/* Collapse/Expand Toggle */}
-          <Tooltip content={state.isNavCollapsed ? "Expand sidebar" : "Collapse sidebar"} position="bottom">
+          <Tooltip content={state.isNavCollapsed ? "Expand sidebar" : "Collapse sidebar"} position="right">
             <button
               onClick={toggleNavCollapse}
               className="p-1.5 rounded-[var(--radius-sm,4px)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-subtle)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
@@ -165,6 +186,31 @@ export default function Sidebar() {
 
         {/* Navigation Links grouped by section */}
         <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-3" aria-label="Navigation sections">
+          {/* Switch Workspace / Back to Workspace Hub */}
+          <div className="pb-2.5 border-b border-[var(--color-border-default)]">
+            {state.isNavCollapsed ? (
+              <Tooltip content="Back to Workspace (switch incident)" position="right">
+                <button
+                  type="button"
+                  onClick={handleBackToWorkspace}
+                  aria-label="Back to workspace"
+                  className="flex items-center justify-center h-8.5 w-full rounded-[var(--radius-sm,4px)] text-[var(--color-fg-muted)] hover:bg-[var(--color-canvas-subtle)] hover:text-[var(--color-fg-default)] transition-colors duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                >
+                  <FolderOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
+                </button>
+              </Tooltip>
+            ) : (
+              <button
+                type="button"
+                onClick={handleBackToWorkspace}
+                aria-label="Back to workspace"
+                className="flex items-center gap-2.5 w-full h-8.5 px-2.5 rounded-[var(--radius-sm,4px)] text-sm font-medium text-[var(--color-fg-default)] bg-[var(--color-canvas-subtle)]/70 border border-[var(--color-border-default)] hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] transition-colors duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              >
+                <FolderOpen className="h-4 w-4 shrink-0 text-[var(--color-accent-fg)]" aria-hidden="true" />
+                <span className="truncate">Workspace Hub</span>
+              </button>
+            )}
+          </div>
           {NAV_SECTIONS.map((section) => (
             <div key={section.title} className="space-y-1">
               {!state.isNavCollapsed && (

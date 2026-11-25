@@ -63,7 +63,7 @@ export function useActiveIncident() {
     };
   }, []);
 
-  const setIncidentId = (newId: string | null) => {
+  const setIncidentId = useCallback((newId: string | null) => {
     setIncidentIdState((prevId) => {
       if (prevId !== newId) {
         setIncidentState(null);
@@ -78,7 +78,7 @@ export function useActiveIncident() {
       }
     } catch {}
     globalListeners.forEach(listener => listener({ incidentId: newId }));
-  };
+  }, []);
 
   const loadIncident = useCallback(async (id: string | null) => {
     if (!id) {
@@ -108,21 +108,21 @@ export function useActiveIncident() {
     }
   }, []);
 
-  const setJudgeMode = (enabled: boolean) => {
+  const setJudgeMode = useCallback((enabled: boolean) => {
     setJudgeModeState(enabled);
     try {
       localStorage.setItem(STORAGE_JUDGE_KEY, String(enabled));
     } catch {}
     globalListeners.forEach(listener => listener({ judgeMode: enabled }));
-  };
+  }, []);
 
-  const setEngineerMode = (enabled: boolean) => {
+  const setEngineerMode = useCallback((enabled: boolean) => {
     setEngineerModeState(enabled);
     try {
       localStorage.setItem(STORAGE_ENGINEER_KEY, String(enabled));
     } catch {}
     globalListeners.forEach(listener => listener({ engineerMode: enabled }));
-  };
+  }, []);
 
   return {
     incidentId,

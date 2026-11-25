@@ -46,6 +46,7 @@ vi.mock('lucide-react', () => ({
   User: (props: any) => <svg data-testid="icon-user" {...props} />,
   LogOut: (props: any) => <svg data-testid="icon-logout" {...props} />,
   Settings: (props: any) => <svg data-testid="icon-settings" {...props} />,
+  FolderOpen: (props: any) => <svg data-testid="icon-folder-open" {...props} />,
 }));
 
 // Mock all dependencies before importing the component

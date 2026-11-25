@@ -25,10 +25,7 @@ import {
   LayoutDashboard,
   Settings,
 } from "lucide-react";
-import { Tabs } from "./Tabs";
-import { Divider } from "./Divider";
-import { Badge, Button } from "./ui";
-import { Tooltip } from "./Tooltip";
+import { Tabs, Divider, Badge, Button, Tooltip } from "./ui";
 import { useShell } from "@/lib/useShell";
 import { useShellLayout } from "@/hooks/useMediaQuery";
 import type { InspectorData, InspectorMode } from "@/lib/useShell";
@@ -263,7 +260,7 @@ export function RightInspector() {
             ? `border border-zinc-700/80 rounded-xl overflow-hidden ${
                 inspectorOpen ? "translate-y-0" : "translate-y-full"
               }`
-            : `inset-y-0 right-0 border-l border-zinc-800 ${
+            : `${isDrawer ? "inset-y-0" : "top-0 bottom-0 lg:top-[var(--topbar-height,54px)]"} right-0 border-l border-zinc-800 ${
                 isDrawer ? "w-full max-w-[90vw]" : "w-[var(--shell-inspector-width)]"
               } ${inspectorOpen ? "translate-x-0" : "translate-x-full"}`
         }

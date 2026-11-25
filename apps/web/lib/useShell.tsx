@@ -101,6 +101,9 @@ export interface ShellState {
 
   // Command Palette (opened by clicking the search bar — no global hotkey)
   commandPaletteOpen: boolean;
+
+  // Switch Workspace confirmation prompt (asks to save session before leaving)
+  workspacePromptOpen: boolean;
 }
 
 export type ShellAction =
@@ -117,7 +120,8 @@ export type ShellAction =
   | { type: "REMOVE_ACTIVITY"; payload: string }
   | { type: "CLEAR_ACTIVITIES" }
   | { type: "TOGGLE_COMMAND_PALETTE" }
-  | { type: "SET_COMMAND_PALETTE"; payload: boolean };
+  | { type: "SET_COMMAND_PALETTE"; payload: boolean }
+  | { type: "SET_WORKSPACE_PROMPT"; payload: boolean };
 
 /* -------------------------------------------------------------------------- */
 /* Reducer                                                                    */
@@ -192,6 +196,9 @@ function shellReducer(state: ShellState, action: ShellAction): ShellState {
     case "SET_COMMAND_PALETTE":
       return { ...state, commandPaletteOpen: action.payload };
 
+    case "SET_WORKSPACE_PROMPT":
+      return { ...state, workspacePromptOpen: action.payload };
+
     default:
       return state;
   }
@@ -213,6 +220,7 @@ const initialState: ShellState = {
   trayState: "closed",
   activities: [],
   commandPaletteOpen: false,
+  workspacePromptOpen: false,
 };
 
 /* -------------------------------------------------------------------------- */
@@ -237,6 +245,7 @@ interface ShellContextValue {
   clearActivities: () => void;
   toggleCommandPalette: () => void;
   setCommandPalette: (open: boolean) => void;
+  setWorkspacePrompt: (open: boolean) => void;
 }
 
 const ShellContext = createContext<ShellContextValue | null>(null);
@@ -303,6 +312,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const clearActivities = useCallback(() => dispatch({ type: "CLEAR_ACTIVITIES" }), [dispatch]);
   const toggleCommandPalette = useCallback(() => dispatch({ type: "TOGGLE_COMMAND_PALETTE" }), [dispatch]);
   const setCommandPalette = useCallback((open: boolean) => dispatch({ type: "SET_COMMAND_PALETTE", payload: open }), [dispatch]);
+  const setWorkspacePrompt = useCallback((open: boolean) => dispatch({ type: "SET_WORKSPACE_PROMPT", payload: open }), [dispatch]);
 
   const value = useMemo<ShellContextValue>(
     () => ({
@@ -322,6 +332,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       clearActivities,
       toggleCommandPalette,
       setCommandPalette,
+      setWorkspacePrompt,
     }),
     [
       state,
@@ -339,6 +350,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       clearActivities,
       toggleCommandPalette,
       setCommandPalette,
+      setWorkspacePrompt,
     ]
   );
 

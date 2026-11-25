@@ -11,7 +11,7 @@ vi.mock('lucide-react', () => {
     'Play', 'Square', 'ExternalLink', 'Search', 'Bot', 'Scale', 'Shield',
     'Link', 'Check', 'HelpCircle', 'Info', 'Loader2', 'Terminal', 'WifiOff',
     'AlertCircle', 'CheckCircle', 'XCircle', 'ChevronUp', 'ChevronDown', 'Filter', 'Trash2',
-    'User', 'LogOut'
+    'User', 'LogOut', 'FolderOpen', 'ArrowLeftRight', 'FileArchive', 'History', 'Package'
   ];
   const mocks: Record<string, any> = {};
   icons.forEach(name => {
@@ -188,7 +188,6 @@ import { ShellProvider } from "@/lib/useShell";
 import Sidebar from "@/components/Sidebar";
 import { TopContextBar } from "@/components/TopContextBar";
 import { RightInspector } from "@/components/RightInspector";
-import { BottomActivityTray } from "@/components/BottomActivityTray";
 import { NotificationContainer } from "@/components/Notification";
 
 describe("Shell Layout Integration", () => {
@@ -198,13 +197,12 @@ describe("Shell Layout Integration", () => {
         <Sidebar />
         <TopContextBar />
         <RightInspector />
-        <BottomActivityTray />
         <NotificationContainer />
       </ShellProvider>
     );
   };
 
-  it("renders all four persistent zones", () => {
+  it("renders all persistent zones", () => {
     renderShell();
     // Top Context Bar - has role="banner" with specific aria-label
     expect(screen.getByRole("banner", { name: /incident context and global actions/i })).toBeInTheDocument();
@@ -213,8 +211,6 @@ describe("Shell Layout Integration", () => {
     expect(screen.getByRole("navigation", { name: /navigation sections/i })).toBeInTheDocument();
     // Main content area would be filled by children
     // Right Inspector (closed by default)
-    // Bottom Activity Tray
-    expect(screen.getByRole("region", { name: /activity tray/i })).toBeInTheDocument();
   });
 
   it("sidebar has correct navigation structure", () => {
@@ -259,13 +255,6 @@ describe("Shell Layout Integration", () => {
     // Inspector is closed by default
     // Would need to trigger via shell context
     expect(true).toBeTruthy();
-  });
-
-  it("activity tray shows activities", () => {
-    renderShell();
-    expect(screen.getByText("Pipeline started")).toBeInTheDocument();
-    expect(screen.getByText("Backend connected")).toBeInTheDocument();
-    expect(screen.getByText("Validation failed")).toBeInTheDocument();
   });
 
   it("no horizontal overflow at desktop viewport", () => {

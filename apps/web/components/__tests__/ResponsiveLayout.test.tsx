@@ -14,7 +14,7 @@ vi.mock("lucide-react", () => {
     "Play", "Square", "ExternalLink", "Search", "Bot", "Scale", "Shield",
     "Link", "Check", "HelpCircle", "Info", "Loader2", "Terminal", "WifiOff",
     "AlertCircle", "CheckCircle", "XCircle", "ChevronUp", "ChevronDown", "Filter", "Trash2",
-    "User", "LogOut"
+    "User", "LogOut", "FolderOpen", "ArrowLeftRight", "FileArchive", "History", "Package"
   ];
   const mocks: Record<string, any> = {};
   icons.forEach((name) => {

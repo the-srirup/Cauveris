@@ -37,7 +37,19 @@ function LoginForm() {
     mfa_code: '',
   });
 
-  const redirectTo = searchParams.get('redirect') || '/';
+  // Signing in always lands on the workspace launcher (/workspace), not straight on the
+  // dashboard: an operator opens the console by choosing what to work on first
+  // (create a new incident or load an existing one). Only explicit subtools
+  // (like /reports or /settings) override this.
+  const rawRedirect = searchParams.get('redirect');
+  const isDedicatedSubtool = Boolean(
+    rawRedirect &&
+    rawRedirect !== '/' &&
+    rawRedirect !== '/workspace' &&
+    rawRedirect !== '/workspace/new' &&
+    !rawRedirect.startsWith('/login')
+  );
+  const redirectTo = isDedicatedSubtool ? (rawRedirect as string) : '/workspace';
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value, type } = e.target;

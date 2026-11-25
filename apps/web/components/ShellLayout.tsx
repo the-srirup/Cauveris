@@ -10,6 +10,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { RightInspector } from "@/components/RightInspector";
 import { NotificationContainer } from "@/components/Notification";
 import { ClientErrorBoundary } from "@/components/ClientErrorBoundary";
+import { SwitchWorkspaceDialog } from "@/components/workspace/SwitchWorkspaceDialog";
 
 export interface ShellLayoutProps {
   children?: React.ReactNode;
@@ -22,7 +23,17 @@ export function ShellLayout({ children }: ShellLayoutProps) {
   const pathname = usePathname();
 
   const isInspectorVisible = Boolean(inspectorOpen && inspectorMode);
-  const isLoginPage = pathname === "/login";
+  /*
+   * Chrome-less routes render the page on its own — no top bar, no sidebar,
+   * no inspector.
+   *
+   * The workspace routes belong here because they are an *interstitial*
+   * between signing in and working: the launcher's job is to pick an
+   * incident, so wrapping it in the console's incident furniture (whose top
+   * bar chip is bound to an active incident) would put "no incident" chrome
+   * on the one page whose whole purpose is choosing one.
+   */
+  const isChromeLessRoute = pathname === "/login" || pathname.startsWith("/workspace");
 
   // Dynamic widths for CSS grid tracks:
   // Desktop:
@@ -75,7 +86,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
 
   return (
     <>
-      {!isLoginPage && <TopContextBar />}
+      {!isChromeLessRoute && <TopContextBar />}
 
       {/* Main Shell Grid - 3-Zone Dynamic Layout: Sidebar | Main Content | Contextual Inspector */}
       <div
@@ -84,12 +95,14 @@ export function ShellLayout({ children }: ShellLayoutProps) {
         data-inspector-open={isInspectorVisible}
         data-inspector-dock={inspectorDockPosition || "bottom"}
         className={
-          isLoginPage
-            ? "relative h-full w-full flex items-center justify-center bg-[var(--color-canvas)]"
+          isChromeLessRoute
+            ? pathname === "/login"
+              ? "relative h-full w-full flex items-center justify-center bg-[var(--color-canvas)]"
+              : "relative h-full w-full bg-[var(--color-canvas)]"
             : "relative h-full w-full lg:grid lg:grid-rows-[var(--shell-topbar-height)_1fr] transition-[grid-template-columns] duration-150 ease-out motion-reduce:transition-none"
         }
         style={
-          isLoginPage
+          isChromeLessRoute
             ? undefined
             : {
                 "--shell-sidebar-current-width": `${sidebarWidthPx}px`,
@@ -98,7 +111,7 @@ export function ShellLayout({ children }: ShellLayoutProps) {
               } as React.CSSProperties
         }
       >
-        {!isLoginPage && (
+        {!isChromeLessRoute && (
           <>
             {/* Top Context Bar Spacer - Row 1, spans full width */}
             <div className="lg:col-span-full lg:row-span-1 pointer-events-none" aria-hidden="true" />
@@ -133,10 +146,14 @@ export function ShellLayout({ children }: ShellLayoutProps) {
           </>
         )}
 
-        {isLoginPage && (
+        {isChromeLessRoute && (
           <main
             id="main-content"
-            className="relative min-w-0 w-full overflow-y-auto flex items-center justify-center min-h-screen p-4"
+            className={
+              pathname === "/login"
+                ? "relative min-w-0 w-full overflow-y-auto flex items-center justify-center min-h-screen p-4"
+                : "relative min-w-0 w-full min-h-screen flex flex-col"
+            }
             role="main"
           >
             <ClientErrorBoundary>{children}</ClientErrorBoundary>
@@ -146,6 +163,9 @@ export function ShellLayout({ children }: ShellLayoutProps) {
 
       {/* Global search palette — opened by clicking the search bar (no hotkey) */}
       <CommandPalette />
+
+      {/* Switch Workspace confirmation dialog (asks to save session before leaving) */}
+      {!isChromeLessRoute && <SwitchWorkspaceDialog />}
 
       {/* Notifications */}
       <NotificationContainer />

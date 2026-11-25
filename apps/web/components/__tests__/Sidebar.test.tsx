@@ -10,7 +10,7 @@ vi.mock('lucide-react', () => {
     'X', 'ChevronRight', 'Zap', 'Download', 'AlertTriangle', 'Plus', 'Upload',
     'Play', 'Square', 'ExternalLink', 'Search', 'Bot', 'Scale', 'Shield',
     'Link', 'Check', 'HelpCircle', 'Info', 'Loader2', 'Terminal', 'WifiOff',
-    'AlertCircle', 'CheckCircle', 'XCircle', 'ChevronUp', 'ChevronDown', 'Filter', 'Trash2'
+    'AlertCircle', 'CheckCircle', 'XCircle', 'ChevronUp', 'ChevronDown', 'Filter', 'Trash2', 'FolderOpen'
   ];
   const mocks: Record<string, any> = {};
   icons.forEach(name => {
@@ -22,6 +22,15 @@ vi.mock('lucide-react', () => {
 // Mock next/navigation
 vi.mock("next/navigation", () => ({
   usePathname: vi.fn(() => "/"),
+  useRouter: () => ({
+    push: vi.fn(),
+  }),
+}));
+
+vi.mock("@/lib/useIncident", () => ({
+  useActiveIncident: () => ({
+    incidentId: "CAU-0001",
+  }),
 }));
 
 // Mock next/link
