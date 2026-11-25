@@ -23,7 +23,16 @@ import {
   ErrorCodes,
 } from "./errors";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000/api/v1";
+export function getApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (process.env.NEXT_PUBLIC_BACKEND_URL) return process.env.NEXT_PUBLIC_BACKEND_URL;
+  if (typeof window !== "undefined" && window.location.hostname === "127.0.0.1") {
+    return "http://127.0.0.1:8000/api/v1";
+  }
+  return "http://localhost:8000/api/v1";
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 export type IncidentStatus = "RECEIVED" | "VALIDATED" | "REJECTED" | "PROCESSING" | "COMPLETED" | "FAILED" | "IDLE" | "RUNNING" | "SUCCESS" | "DEGRADED" | "CANCELLED" | string;
 

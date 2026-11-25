@@ -95,6 +95,15 @@ function parseApiErrorMessage(errorData: any, fallback: string): string {
   return fallback;
 }
 
+export function getAuthApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (process.env.NEXT_PUBLIC_BACKEND_URL) return process.env.NEXT_PUBLIC_BACKEND_URL;
+  if (typeof window !== 'undefined' && window.location.hostname === '127.0.0.1') {
+    return 'http://127.0.0.1:8000/api/v1';
+  }
+  return 'http://localhost:8000/api/v1';
+}
+
 function storeTokens(accessToken: string, refreshToken: string, expiresIn: number) {
   if (typeof window !== 'undefined') {
     const expiry = Date.now() + expiresIn * 1000;
@@ -197,7 +206,7 @@ export const useAuthStore = create<AuthState>()(
         initAuthPromise = (async () => {
           set({ isLoading: true, status: 'CHECKING' });
           const { accessToken, refreshToken, expiry } = getStoredTokens();
-          const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1';
+          const apiBase = getAuthApiBase();
 
           try {
             const headers: Record<string, string> = { 'Accept': 'application/json' };
@@ -293,7 +302,7 @@ export const useAuthStore = create<AuthState>()(
       login: async (credentials: LoginRequest) => {
         set({ isLoading: true, error: null, status: 'CHECKING' });
         try {
-          const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1';
+          const apiBase = getAuthApiBase();
           const response = await fetch(`${apiBase}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -345,7 +354,7 @@ export const useAuthStore = create<AuthState>()(
       register: async (data: RegisterRequest) => {
         set({ isLoading: true, error: null, status: 'CHECKING' });
         try {
-          const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1';
+          const apiBase = getAuthApiBase();
           const response = await fetch(`${apiBase}/auth/signup`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -398,7 +407,7 @@ export const useAuthStore = create<AuthState>()(
         const { refreshToken, accessToken } = get();
         if (refreshToken || accessToken) {
           try {
-            const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1';
+            const apiBase = getAuthApiBase();
             await fetch(`${apiBase}/auth/logout`, {
               method: 'POST',
               headers: {
@@ -437,7 +446,7 @@ export const useAuthStore = create<AuthState>()(
 
         refreshPromise = (async () => {
           try {
-            const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1';
+            const apiBase = getAuthApiBase();
             const response = await fetch(`${apiBase}/auth/refresh`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -527,7 +536,7 @@ export async function authenticatedFetch<T>(
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
-  const url = `${process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000/api/v1'}${endpoint}`;
+  const url = `${getAuthApiBase()}${endpoint}`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);

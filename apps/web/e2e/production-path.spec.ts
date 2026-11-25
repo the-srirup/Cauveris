@@ -27,6 +27,7 @@ async function signIn(page: any): Promise<void> {
   await page.locator("#password").fill("Operator123456!");
   await page.getByRole("button", { name: /sign in/i }).click();
   await expect(page).toHaveURL(/\/workspace/);
+  await expect(page.getByRole("heading", { name: "Workspace", exact: true })).toBeVisible({ timeout: 15_000 });
 }
 
 test("real upload observes stages and exposes the verified repair", async ({ page }) => {
@@ -36,8 +37,8 @@ test("real upload observes stages and exposes the verified repair", async ({ pag
   try {
     await signIn(page);
 
-    // Open upload wizard from Workspace Hub
-    await page.goto("/workspace/new?mode=upload");
+    // Open upload wizard from Workspace Hub via primary CTA
+    await page.getByRole("button", { name: /New Incident Investigation/i }).click();
     await expect(page).toHaveURL(/\/workspace\/new/);
 
     // Step 1: Attach evidence archive ZIP and continue
