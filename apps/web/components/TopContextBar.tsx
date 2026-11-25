@@ -1,10 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Tooltip } from "./ui";
 import { useShell } from "@/lib/useShell";
 import { useActiveIncident } from "@/lib/useIncident";
-import { Plus, Upload, Scale, Wrench, Menu, Search, FolderOpen } from "lucide-react";
+import { exportAndDownloadSession } from "@/lib/sessionDownload";
+import { notify } from "./Notification";
+import { Plus, Scale, Wrench, Menu, Search, FolderOpen, Download, Terminal } from "lucide-react";
 import { UserMenu } from "./UserMenu";
 
 /**
@@ -14,9 +17,18 @@ import { UserMenu } from "./UserMenu";
  * panel and the main investigation body.
  */
 export function TopContextBar() {
-  const { state: shellState, addActivity, setNavDrawer, setCommandPalette, setWorkspacePrompt } = useShell();
+  const {
+    state: shellState,
+    addActivity,
+    setNavDrawer,
+    setCommandPalette,
+    setWorkspacePrompt,
+    openInspector,
+    closeInspector,
+  } = useShell();
   const { incident, incidentId: activeIncidentId, judgeMode, engineerMode, setJudgeMode, setEngineerMode } = useActiveIncident();
   const router = useRouter();
+  const [isSavingSession, setIsSavingSession] = useState(false);
 
   const handleToggleJudgeMode = () => {
     if (engineerMode) return;
@@ -50,6 +62,8 @@ export function TopContextBar() {
   const incidentTitle = shellState.incidentContext?.title || incident?.title || "No Incident Selected";
   const incidentState = shellState.incidentContext?.state || incident?.status || (incidentId ? "LOADED" : "STANDBY");
   const activeStage = shellState.incidentContext?.pipelineStage;
+  const backendStatus = shellState.incidentContext?.backendStatus || "online";
+  const modelProvider = shellState.incidentContext?.modelProvider || "Local Fixtures";
 
   /*
    * The status badge names the active stage while the pipeline is running,
@@ -64,6 +78,30 @@ export function TopContextBar() {
       setWorkspacePrompt(true);
     } else {
       router.push("/workspace");
+    }
+  };
+
+  const handleQuickSaveSession = async () => {
+    if (!incidentId || isSavingSession) return;
+    setIsSavingSession(true);
+    try {
+      await exportAndDownloadSession(incidentId);
+      notify(`Saved session package for ${incidentId}`, "success");
+    } catch (err: unknown) {
+      notify(
+        err instanceof Error ? err.message : "Could not export session package.",
+        "error"
+      );
+    } finally {
+      setIsSavingSession(false);
+    }
+  };
+
+  const handleToggleConsole = () => {
+    if (shellState.inspectorOpen) {
+      closeInspector?.();
+    } else {
+      openInspector?.("evidence", { mode: "evidence" }, shellState.inspectorDockPosition || "bottom");
     }
   };
 
@@ -88,7 +126,7 @@ export function TopContextBar() {
           <button
             type="button"
             onClick={handleGoToWorkspace}
-            className="hidden lg:flex items-center gap-2 pr-2.5 border-r border-[var(--color-border-default)] rounded-[var(--radius-sm,4px)] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] shrink-0"
+            className="hidden lg:flex items-center gap-2 pr-3 border-r border-[var(--color-border-default)] rounded-[var(--radius-sm,4px)] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] shrink-0"
             aria-label="Cauveris Workspace Home"
           >
             <span className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] text-[var(--color-fg-on-emphasis)] shadow-[var(--shadow-sm)] ring-1 ring-[var(--color-accent-hover)]/30">
@@ -105,13 +143,13 @@ export function TopContextBar() {
         {/* Active Incident Badge / Selector */}
         <div className="flex items-center gap-2 min-w-0">
           <div
-            className="flex items-center gap-2 px-2.5 py-1 rounded-[var(--radius-sm,4px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] transition-colors min-w-0 cursor-default"
+            className="flex items-center gap-2 px-2.5 h-8.5 rounded-[var(--radius-sm,4px)] bg-[var(--color-canvas-default)] transition-colors min-w-0 cursor-default"
             title={incidentTitle}
           >
             <span className="text-xs font-mono font-medium text-[var(--color-fg-muted)] shrink-0">
               {incidentId ? incidentId : "STANDBY"}
             </span>
-            <span className="text-xs font-semibold text-[var(--color-fg-default)] truncate max-w-[160px] sm:max-w-[240px]">
+            <span className="text-xs font-semibold text-[var(--color-fg-default)] truncate max-w-[150px] sm:max-w-[220px]">
               {incidentTitle}
             </span>
           </div>
@@ -141,7 +179,7 @@ export function TopContextBar() {
         <button
           type="button"
           onClick={() => setCommandPalette(true)}
-          className="w-full flex items-center justify-between px-3 py-1.5 rounded-[var(--radius-md,6px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/70 hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] text-xs text-[var(--color-fg-muted)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-canvas)]"
+          className="w-full h-8.5 flex items-center justify-between px-3 rounded-[var(--radius-md,6px)] bg-[var(--color-canvas-default)] hover:bg-[var(--color-canvas-muted)] text-xs text-[var(--color-fg-muted)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-canvas)]"
           aria-label="Open command palette"
         >
           <span className="flex items-center gap-2 truncate">
@@ -153,13 +191,34 @@ export function TopContextBar() {
 
       {/* Right: Actions, System Status & User Menu */}
       <div className="flex items-center gap-2 shrink-0" aria-label="System status and global actions">
+        {/* Live Backend Health Indicator */}
+        <Tooltip content={`Backend: ${backendStatus} • Provider: ${modelProvider}`} position="bottom">
+          <button
+            type="button"
+            onClick={() => router.push("/settings")}
+            className="hidden xl:inline-flex items-center gap-1.5 h-8.5 px-2.5 rounded-[var(--radius-sm,4px)] text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-muted)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+            aria-label={`System status: ${backendStatus}`}
+          >
+            <span
+              className={`h-2 w-2 rounded-full shrink-0 ${
+                backendStatus === "online"
+                  ? "bg-[var(--color-success-fg,#3fb950)]"
+                  : backendStatus === "degraded"
+                    ? "bg-[var(--color-attention-fg,#d29922)]"
+                    : "bg-[var(--color-danger-fg,#f85149)]"
+              }`}
+            />
+            <span className="capitalize">{backendStatus}</span>
+          </button>
+        </Tooltip>
+
         {/* Mode Toggles */}
-        <div className="hidden lg:flex items-center border border-[var(--color-border-default)] rounded-[var(--radius-md,6px)] p-0.5 bg-[var(--color-canvas-subtle)]">
+        <div className="hidden lg:flex items-center rounded-[var(--radius-sm,4px)] p-0.5 bg-[var(--color-canvas-default)]">
           <Tooltip content={judgeMode ? "Judge Mode: Active (Formal verification)" : "Judge Mode: Off"} position="bottom">
             <button
               onClick={handleToggleJudgeMode}
               disabled={engineerMode}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded-[var(--radius-sm,4px)] text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
+              className={`flex items-center gap-1 px-2 h-7.5 rounded-[var(--radius-sm,4px)] text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
                 judgeMode
                   ? "bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)] shadow-[var(--shadow-sm)]"
                   : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
@@ -174,7 +233,7 @@ export function TopContextBar() {
             <button
               onClick={handleToggleEngineerMode}
               disabled={judgeMode}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded-[var(--radius-sm,4px)] text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
+              className={`flex items-center gap-1 px-2 h-7.5 rounded-[var(--radius-sm,4px)] text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
                 engineerMode
                   ? "bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)] shadow-[var(--shadow-sm)]"
                   : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
@@ -187,6 +246,41 @@ export function TopContextBar() {
           </Tooltip>
         </div>
 
+        {/* Forensic Console Drawer Toggle */}
+        <Tooltip content={shellState.inspectorOpen ? "Close forensic console" : "Open forensic console"} position="bottom">
+          <button
+            type="button"
+            onClick={handleToggleConsole}
+            className={`inline-flex items-center justify-center h-8.5 w-8.5 rounded-[var(--radius-sm,4px)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
+              shellState.inspectorOpen
+                ? "bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)]"
+                : "bg-[var(--color-canvas-muted)]/65 dark:bg-[var(--color-canvas-muted)] text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-muted)] dark:hover:bg-[var(--color-border-default)]"
+            }`}
+            aria-label="Toggle forensic console"
+            aria-pressed={Boolean(shellState.inspectorOpen)}
+          >
+            <Terminal className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </Tooltip>
+
+        {/* Quick Save Session — export archive from anywhere while multitasking */}
+        {incidentId && (
+          <Tooltip content="Save / export current session (.zip)" position="bottom">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleQuickSaveSession()}
+              loading={isSavingSession}
+              loadingText="Saving..."
+              className="h-8.5 text-xs font-medium"
+              leadingIcon={isSavingSession ? undefined : <Download className="h-3.5 w-3.5" />}
+              aria-label="Save session package"
+            >
+              <span className="hidden md:inline">Save</span>
+            </Button>
+          </Tooltip>
+        )}
+
         {/* Workspace — switch incident or return to Workspace Hub */}
         <Tooltip content="Switch workspace (change incident)" position="bottom">
           <Button
@@ -198,20 +292,6 @@ export function TopContextBar() {
             aria-label="Back to workspace"
           >
             <span className="hidden md:inline">Workspace</span>
-          </Button>
-        </Tooltip>
-
-        {/* Upload — a shortcut into the wizard's source step. */}
-        <Tooltip content="Upload evidence bundle" position="bottom">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => router.push("/workspace/new?mode=upload")}
-            className="h-8.5 text-xs font-medium"
-            leadingIcon={<Upload className="h-3.5 w-3.5" />}
-            aria-label="Upload evidence bundle"
-          >
-            <span className="hidden sm:inline">Upload</span>
           </Button>
         </Tooltip>
 
@@ -238,7 +318,7 @@ export function TopContextBar() {
           className="hidden"
         />
 
-        <span className="sr-only focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]">
+        <span className="sr-only">
           {shellState.incidentContext?.processingMode === "judge"
             ? "Judge Mode"
             : shellState.incidentContext?.processingMode === "engineer"
@@ -246,15 +326,11 @@ export function TopContextBar() {
             : "Autonomous"}
         </span>
 
-        <span className="sr-only focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]">
-          {shellState.incidentContext?.modelProvider || "Local Fixtures"}
+        <span className="sr-only">
+          {modelProvider}
         </span>
 
-        <span className="sr-only focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]">
-          {shellState.incidentContext?.backendStatus || "online"}
-        </span>
-
-        {/* User Menu Dropdown */}
+        {/* User Menu Dropdown (icon button matching navbar button height) */}
         <UserMenu />
       </div>
     </header>

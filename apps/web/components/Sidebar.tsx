@@ -204,7 +204,7 @@ export default function Sidebar() {
                 type="button"
                 onClick={handleBackToWorkspace}
                 aria-label="Back to workspace"
-                className="flex items-center gap-2.5 w-full h-8.5 px-2.5 rounded-[var(--radius-sm,4px)] text-sm font-medium text-[var(--color-fg-default)] bg-[var(--color-canvas-subtle)]/70 border border-[var(--color-border-default)] hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] transition-colors duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                className="flex items-center gap-2.5 w-full h-8.5 px-2.5 rounded-[var(--radius-sm,4px)] text-sm font-medium text-[var(--color-fg-default)] bg-[var(--color-canvas-muted)]/65 dark:bg-[var(--color-canvas-muted)] hover:bg-[var(--color-canvas-muted)] dark:hover:bg-[var(--color-border-default)] transition-colors duration-100 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
               >
                 <FolderOpen className="h-4 w-4 shrink-0 text-[var(--color-accent-fg)]" aria-hidden="true" />
                 <span className="truncate">Workspace Hub</span>

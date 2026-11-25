@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, User, Settings, Shield, ChevronDown } from "lucide-react";
+import { LogOut, User, Settings } from "lucide-react";
 import { useAuthStore } from "@/lib/auth";
-import { Badge } from "./ui";
 import { Dropdown, type DropdownItem } from "./ui/Dropdown";
 
 export function UserMenu() {
@@ -23,11 +22,11 @@ export function UserMenu() {
       <button
         onClick={() => router.push("/login")}
         className="
-          inline-flex items-center gap-1.5 px-2.5 h-7
-          rounded-[var(--radius-sm)]
-          bg-[var(--color-canvas-subtle)]
-          border border-[var(--color-border-default)]
-          hover:bg-[var(--color-border-default)]
+          inline-flex items-center justify-center px-3 h-8.5
+          rounded-[var(--radius-sm,4px)]
+          bg-[var(--color-canvas-muted)]/65 dark:bg-[var(--color-canvas-muted)]
+          hover:bg-[var(--color-canvas-muted)] dark:hover:bg-[var(--color-border-default)]
+          text-xs font-medium text-[var(--color-fg-default)]
           transition-colors duration-100
           focus-visible:outline-none
           focus-visible:ring-2
@@ -38,21 +37,21 @@ export function UserMenu() {
         "
         aria-label="Sign In"
       >
-        <span className="text-xs font-medium text-[var(--color-fg-muted)] hidden sm:inline-flex items-center leading-none">Sign In</span>
-        <ChevronDown className="h-3 w-3 text-[var(--color-fg-muted)] shrink-0" aria-hidden="true" />
+        <span>Sign In</span>
       </button>
     );
   }
 
-  const roleColors: Record<string, "default" | "primary" | "success" | "danger" | "warning" | "done" | "muted"> = {
-    viewer: "muted",
-    analyst: "primary",
-    engineer: "warning",
-    admin: "danger",
-    super_admin: "success",
-  };
+  const displayName = user.full_name || user.email || "Operator";
 
   const items: DropdownItem[] = [
+    {
+      key: "identity",
+      label: displayName,
+      description: user.email && user.email !== displayName ? user.email : user.role,
+      disabled: true,
+    },
+    { divider: true },
     {
       key: "settings",
       label: "Settings",
@@ -60,17 +59,6 @@ export function UserMenu() {
       onClick: () => router.push("/settings"),
     },
     { divider: true },
-    ...(user.role === "admin" || user.role === "super_admin"
-      ? [
-          {
-            key: "admin",
-            label: "Admin Panel",
-            leadingIcon: <Shield className="h-4 w-4" aria-hidden="true" />,
-            onClick: () => router.push("/admin"),
-          },
-          { divider: true },
-        ]
-      : []),
     {
       key: "logout",
       label: "Sign Out",
@@ -92,12 +80,12 @@ export function UserMenu() {
       {({ open, onClick }: { open: boolean; onClick: () => void }) => (
         <button
           onClick={onClick}
-          className="
-            inline-flex items-center gap-2 px-2.5 h-7 max-w-[180px]
-            rounded-[var(--radius-sm)]
-            bg-[var(--color-canvas-subtle)]
-            border border-[var(--color-border-default)]
-            hover:bg-[var(--color-border-default)]
+          title={`${displayName}${user.role ? ` • ${user.role}` : ""}`}
+          className={`
+            inline-flex items-center justify-center h-8.5 w-8.5
+            rounded-[var(--radius-sm,4px)]
+            bg-[var(--color-canvas-muted)]/65 dark:bg-[var(--color-canvas-muted)]
+            hover:bg-[var(--color-canvas-muted)] dark:hover:bg-[var(--color-border-default)]
             transition-colors duration-100
             focus-visible:outline-none
             focus-visible:ring-2
@@ -105,18 +93,13 @@ export function UserMenu() {
             focus-visible:ring-offset-2
             focus-visible:ring-offset-[var(--color-canvas)]
             shrink-0 select-none
-          "
+            ${open ? "ring-2 ring-[var(--color-accent)]/60" : ""}
+          `}
           aria-label="User menu"
           aria-expanded={open}
           aria-haspopup="true"
         >
-          <div className="h-4.5 w-4.5 rounded-full bg-[var(--color-accent-muted)] flex items-center justify-center shrink-0">
-            <User className="h-3 w-3 text-[var(--color-accent-fg)]" aria-hidden="true" />
-          </div>
-          <span className="text-xs font-medium truncate max-w-[100px] xl:max-w-[130px] whitespace-nowrap text-[var(--color-fg-default)] hidden sm:inline-flex items-center leading-none">
-            {user.full_name || user.email}
-          </span>
-          <ChevronDown className={`h-3 w-3 text-[var(--color-fg-muted)] shrink-0 transition-transform duration-150 ${open ? "rotate-180" : ""}`} aria-hidden="true" />
+          <User className="h-4.5 w-4.5 text-[var(--color-fg-default)]" aria-hidden="true" />
         </button>
       )}
     </Dropdown>

@@ -3,6 +3,15 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { tv, type VariantProps } from "tailwind-variants";
 
+/*
+ * Buttons carry a depth ladder instead of a palette of equal-weight boxes:
+ *   primary   solid accent, raised (shadow-md), semibold label
+ *   secondary solid surface, one border, shadow-sm, medium label
+ *   outline   no fill, one border, flat
+ *   ghost     no fill, no border, flat
+ * A filled control reads as the committed act; the quiet ones are for the
+ * operations that surround it.
+ */
 const buttonStyles = tv({
   base: `
     inline-flex items-center justify-center gap-2
@@ -10,7 +19,7 @@ const buttonStyles = tv({
     transition-[color,background-color,border-color,box-shadow,transform] duration-80 ease-out
     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-canvas)]
     disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none
-    active:scale-[0.98]
+    active:translate-y-px
   `,
   variants: {
     variant: {
@@ -18,14 +27,15 @@ const buttonStyles = tv({
         bg-[var(--color-accent,#0969da)] text-[var(--color-fg-on-emphasis)] hover:bg-[var(--color-accent-hover)] hover:border-[var(--color-accent-hover)]
         border border-[var(--color-accent,#0969da)]
         hover:text-[var(--text-inverse)]
-        active:brightness-95
-        font-medium shadow-[var(--shadow-sm)]
+        active:shadow-[var(--shadow-sm)]
+        font-semibold shadow-[var(--shadow-md)]
         focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-[var(--color-canvas)]
       `,
       secondary: `
-        bg-[var(--color-canvas-inset)] text-[var(--color-fg-default)]
+        bg-[var(--color-canvas-default)] text-[var(--color-fg-default)]
         border border-[var(--color-border-default)]
-        hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)]
+        hover:bg-[var(--color-canvas-subtle)] dark:hover:bg-[var(--color-canvas-muted)]
+        hover:border-[var(--color-border-strong)]
         active:bg-[var(--color-canvas-muted)]
         font-medium shadow-[var(--shadow-sm)]
         focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-[var(--color-canvas)]
@@ -34,22 +44,22 @@ const buttonStyles = tv({
         bg-[var(--color-danger-emphasis,#cf222e)] text-[var(--color-fg-on-emphasis)] hover:bg-[var(--color-danger-fg)] hover:border-[var(--color-danger-fg)]
         border border-[var(--color-danger-emphasis,#cf222e)]
         hover:text-[var(--text-inverse)]
-        active:brightness-95
-        font-medium shadow-[var(--shadow-sm)]
+        active:shadow-[var(--shadow-sm)]
+        font-semibold shadow-[var(--shadow-sm)]
         focus-visible:ring-[var(--color-danger-emphasis)] focus-visible:ring-offset-[var(--color-canvas)]
       `,
       ghost: `
         bg-transparent text-[var(--color-fg-default)]
         border border-transparent
-        hover:bg-[var(--color-canvas-subtle)]
-        active:bg-[var(--color-canvas-muted)]
+        hover:bg-[var(--color-canvas-muted)]
+        active:bg-[var(--color-canvas-subtle)]
         focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-[var(--color-canvas)]
       `,
       outline: `
-        bg-transparent text-[var(--color-fg-default)]
-        border border-[var(--color-border-default)]
-        hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)]
-        active:bg-[var(--color-canvas-muted)]
+        bg-[var(--color-canvas-muted)]/65 dark:bg-[var(--color-canvas-muted)] text-[var(--color-fg-default)]
+        border border-transparent
+        hover:bg-[var(--color-canvas-muted)] dark:hover:bg-[var(--color-border-default)]
+        active:bg-[var(--color-border-default)]/80
         font-medium
         focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-[var(--color-canvas)]
       `,
@@ -57,27 +67,27 @@ const buttonStyles = tv({
         bg-[var(--color-success-emphasis,#1a7f37)] text-[var(--color-fg-on-emphasis)] hover:bg-[var(--color-success-fg)] hover:border-[var(--color-success-fg)]
         border border-[var(--color-success-emphasis,#1a7f37)]
         hover:text-[var(--text-inverse)]
-        active:brightness-95
-        font-medium shadow-[var(--shadow-sm)]
+        active:shadow-[var(--shadow-sm)]
+        font-semibold shadow-[var(--shadow-sm)]
         focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-[var(--color-canvas)]
       `,
       invisible: `
         bg-transparent text-[var(--color-fg-muted)]
         border border-transparent
         hover:text-[var(--color-fg-default)]
-        hover:bg-[var(--color-canvas-subtle)]
-        active:bg-[var(--color-canvas-muted)]
+        hover:bg-[var(--color-canvas-muted)]
+        active:bg-[var(--color-canvas-subtle)]
         focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-[var(--color-canvas)]
       `,
     },
     size: {
       sm: `
         h-7.5 px-2.5 text-xs
-        rounded-[var(--radius-md,6px)]
+        rounded-[var(--radius-sm,4px)]
       `,
       md: `
         h-9 px-3.5 text-sm
-        rounded-[var(--radius-md,6px)]
+        rounded-[var(--radius-sm,4px)]
       `,
       lg: `
         h-10.5 px-4.5 text-base
