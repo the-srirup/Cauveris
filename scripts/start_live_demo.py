@@ -259,7 +259,7 @@ def start_live_demo(foreground: bool = True):
     print(" 1. Open Browser:         http://127.0.0.1:3000")
     print(" 2. Sign In With:         operator@cauveris.ai / Operator123456!")
     print(" 3. Upload Incident ZIP:  packages/perception-worker-memory-exhaustion.zip")
-    print("    - Click 'Upload incident package' button on dashboard")
+    print("    - Click 'Upload Incident' button on dashboard")
     print(" 4. Observe Pipeline:     Real ingestion -> Nebius/NVIDIA reasoning -> Experiments -> Unified Diff -> Atomic Verification -> Ready Repair Package")
     print(" 5. Download Repair:      Download actual verified ZIP from browser")
     print("=" * 80)

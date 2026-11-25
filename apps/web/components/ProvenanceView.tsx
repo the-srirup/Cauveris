@@ -1,7 +1,7 @@
 import React from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Info, HelpCircle } from "lucide-react";
-import { Tooltip } from "@/components/Tooltip";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 export type ProvenanceKind =
   | "OBSERVED"

@@ -8,7 +8,6 @@ export * from "./Tabs";
 export * from "./Table";
 export * from "./Tooltip";
 export * from "./Dropdown";
-export * from "./Modal";
 export * from "./Dialog";
 export * from "./Progress";
 export * from "./Avatar";
@@ -26,7 +25,3 @@ export * from "./KV";
 export * from "./Toggle";
 export * from "./Slider";
 export * from "./Panel";
-
-// Legacy re-exports for backward compatibility
-export { Input as LegacyInput } from "../primitives/Input";
-export { Select as LegacySelect } from "../primitives/Select";

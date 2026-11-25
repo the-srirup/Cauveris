@@ -34,7 +34,7 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from cauveris.schemas.incident import Incident, EvidenceItem
 from cauveris.schemas.hypothesis import Hypothesis
 from cauveris.schemas.experiment import Experiment
@@ -86,6 +86,75 @@ from cauveris.config import get_settings
 from cauveris.api.deps import get_current_user, get_optional_user
 from cauveris.api.holographic import router as holographic_router, get_holographic_reconstruction
 from cauveris.packaging.api_router import router as packaging_router
+from cauveris.sessions.api_router import router as sessions_router
+
+
+#: Operator-declared triage values the workspace wizard may submit.  Anything
+#: outside these sets is rejected with 422 rather than silently stored, so the
+#: console never renders a severity it does not know how to order.
+INCIDENT_SEVERITIES = ("critical", "high", "medium", "low")
+INCIDENT_CATEGORIES = (
+    "detection",
+    "navigation",
+    "planning",
+    "control",
+    "communication",
+    "other",
+)
+INCIDENT_ENVIRONMENTS = ("warehouse", "outdoor", "lab", "simulation", "other")
+INCIDENT_INTAKE_METHODS = ("archive", "source", "manual", "url")
+
+#: An explicit incident-id override becomes a directory name in the evidence
+#: and report stores, so it is restricted to characters that cannot escape
+#: those roots or confuse a path segment.
+CUSTOM_ID_PATTERN = re.compile(r"^[\w.-]{1,64}$", re.UNICODE)
+
+
+def _normalize_choice(value: Optional[str], allowed: tuple, field: str) -> Optional[str]:
+    """Lower-case and validate an enumerated metadata choice.
+
+    An unknown value is a 422, not a silently stored string: the console's
+    filters and ordering only understand the documented values.
+    """
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return None
+    if normalized not in allowed:
+        raise ValueError(
+            f"{field} must be one of: {', '.join(allowed)} (got {value!r})"
+        )
+    return normalized
+
+
+def _normalize_tags(value: Optional[Any]) -> List[str]:
+    """Coerce a tag collection into a de-duplicated list of clean labels.
+
+    Accepts a list of strings or a comma-separated string.  Tags are labels,
+    never identifiers — they must not smuggle path separators into an id.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        candidates = value.split(",")
+    elif isinstance(value, (list, tuple, set)):
+        candidates = []
+        for item in value:
+            candidates.extend(str(item).split(","))
+    else:
+        candidates = [str(value)]
+
+    tags: List[str] = []
+    for candidate in candidates:
+        label = str(candidate).strip()
+        if not label:
+            continue
+        if len(label) > 64:
+            raise ValueError("each tag must be 64 characters or fewer")
+        if label not in tags:
+            tags.append(label)
+    return tags
 
 
 class CreateIncidentRequest(BaseModel):
@@ -94,6 +163,63 @@ class CreateIncidentRequest(BaseModel):
     system_name: Optional[str] = None
     golden: bool = False
     custom_id: Optional[str] = None
+    severity: Optional[str] = None
+    category: Optional[str] = None
+    environment: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    intake_method: Optional[str] = None
+    approximate_time: Optional[datetime] = None
+
+    @field_validator("custom_id")
+    @classmethod
+    def _validate_custom_id(cls, value: Optional[str]) -> Optional[str]:
+        """Reject custom ids that cannot safely become a store directory name.
+
+        Historically ``custom_id`` was abused as a carrier for free-form tag
+        strings (the creation form sent ``custom_id: formData.tags``), which
+        produced incidents whose id was e.g. ``"memory-leak, oom"`` and, from
+        there, an unvalidated path segment in the evidence and report stores.
+        """
+        if value is None:
+            return None
+        candidate = str(value).strip()
+        if not candidate:
+            return None
+        if not CUSTOM_ID_PATTERN.match(candidate):
+            raise ValueError(
+                "custom_id must be 1-64 characters of letters, digits, underscore, "
+                "hyphen or dot — use the dedicated tags field for free-form labels"
+            )
+        return candidate
+
+    @field_validator("severity")
+    @classmethod
+    def _validate_severity(cls, value: Optional[str]) -> Optional[str]:
+        return _normalize_choice(value, INCIDENT_SEVERITIES, "severity")
+
+    @field_validator("category")
+    @classmethod
+    def _validate_category(cls, value: Optional[str]) -> Optional[str]:
+        return _normalize_choice(value, INCIDENT_CATEGORIES, "category")
+
+    @field_validator("environment")
+    @classmethod
+    def _validate_environment(cls, value: Optional[str]) -> Optional[str]:
+        return _normalize_choice(value, INCIDENT_ENVIRONMENTS, "environment")
+
+    @field_validator("intake_method")
+    @classmethod
+    def _validate_intake_method(cls, value: Optional[str]) -> Optional[str]:
+        return _normalize_choice(value, INCIDENT_INTAKE_METHODS, "intake_method")
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _validate_tags(cls, value: Any) -> Any:
+        # Runs before the list type is applied so a comma-separated string
+        # ("a, b") is accepted from a form post as well as a JSON array.
+        if isinstance(value, str):
+            return _normalize_tags(value)
+        return value
 
 
 class ApplyPatchRequest(BaseModel):
@@ -190,6 +316,8 @@ async def startup_event():
         try:
             demo_org = await auth_store.get_org("org_demo")
             if not demo_org:
+                demo_org = await auth_store.get_org_by_slug("demo")
+            if not demo_org:
                 demo_org = Organization(
                     id="org_demo",
                     name="Demo Organization",
@@ -198,7 +326,18 @@ async def startup_event():
                     owner_user_id="usr_demo",
                     is_active=True,
                 )
-                await auth_store.create_org(demo_org)
+                try:
+                    await auth_store.create_org(demo_org)
+                except Exception:
+                    pass
+            elif not demo_org.is_active:
+                demo_org.is_active = True
+                try:
+                    await auth_store.update_org(demo_org)
+                except Exception:
+                    pass
+
+            org_id = demo_org.id if demo_org else "org_demo"
 
             demo_user = await auth_store.get_user_by_email("demo@cauveris.local")
             if not demo_user:
@@ -207,11 +346,21 @@ async def startup_event():
                     email="demo@cauveris.local",
                     full_name="Demo User",
                     role=UserRole.ENGINEER,
-                    org_id="org_demo",
+                    org_id=org_id,
                     is_active=True,
                 )
                 demo_user.set_password("demo123456")
-                await auth_store.create_user(demo_user)
+                try:
+                    await auth_store.create_user(demo_user)
+                except Exception:
+                    pass
+            elif not demo_user.is_active or demo_user.org_id != org_id:
+                demo_user.is_active = True
+                demo_user.org_id = org_id
+                try:
+                    await auth_store.update_user(demo_user)
+                except Exception:
+                    pass
 
             op_user = await auth_store.get_user_by_email("operator@cauveris.ai")
             if not op_user:
@@ -220,11 +369,21 @@ async def startup_event():
                     email="operator@cauveris.ai",
                     full_name="Lead Operator",
                     role=UserRole.ENGINEER,
-                    org_id="org_demo",
+                    org_id=org_id,
                     is_active=True,
                 )
                 op_user.set_password("Operator123456!")
-                await auth_store.create_user(op_user)
+                try:
+                    await auth_store.create_user(op_user)
+                except Exception:
+                    pass
+            elif not op_user.is_active or op_user.org_id != org_id:
+                op_user.is_active = True
+                op_user.org_id = org_id
+                try:
+                    await auth_store.update_user(op_user)
+                except Exception:
+                    pass
 
             admin_user = await auth_store.get_user_by_email("admin@cauveris.ai")
             if not admin_user:
@@ -233,11 +392,21 @@ async def startup_event():
                     email="admin@cauveris.ai",
                     full_name="System Administrator",
                     role=UserRole.ADMIN,
-                    org_id="org_demo",
+                    org_id=org_id,
                     is_active=True,
                 )
                 admin_user.set_password("Admin123456!")
-                await auth_store.create_user(admin_user)
+                try:
+                    await auth_store.create_user(admin_user)
+                except Exception:
+                    pass
+            elif not admin_user.is_active or admin_user.org_id != org_id:
+                admin_user.is_active = True
+                admin_user.org_id = org_id
+                try:
+                    await auth_store.update_user(admin_user)
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning(f"Could not seed default users: {e}")
 
@@ -1378,6 +1547,7 @@ def _ensure_incident(incident_id: str) -> Optional[Incident]:
 # Include holographic router
 app.include_router(holographic_router, prefix="/api/v1")
 app.include_router(packaging_router)
+app.include_router(sessions_router)
 
 
 @app.get("/api/v1/incidents/{incident_id}/holographic/reconstruction")
@@ -2641,6 +2811,11 @@ async def list_incidents(request: Request, user_data: tuple = Depends(get_option
                 "system_name": inc.system_name,
                 "status": orch_state,
                 "pipeline_state": orch_state,
+                "severity": getattr(inc, "severity", None),
+                "category": getattr(inc, "category", None),
+                "environment": getattr(inc, "environment", None),
+                "tags": list(getattr(inc, "tags", None) or []),
+                "intake_method": getattr(inc, "intake_method", None),
                 "evidence_count": inc.evidence_count,
                 "timeline_events_count": len(inc.timeline_events)
                 if hasattr(inc, "timeline_events") and inc.timeline_events
@@ -2836,8 +3011,21 @@ async def create_incident(
     sys_name = (body.system_name if body and body.system_name else None) or "unknown-system"
 
     incident = Incident(
-        id=incident_id, title=title, description=desc, system_name=sys_name, status="OBSERVED"
+        id=incident_id,
+        title=title,
+        description=desc,
+        system_name=sys_name,
+        status="OBSERVED",
+        severity=body.severity if body else None,
+        category=body.category if body else None,
+        environment=body.environment if body else None,
+        tags=list(body.tags) if body else [],
+        intake_method=(body.intake_method if body else None) or "manual",
+        approximate_time=body.approximate_time if body else None,
     )
+    # Keep the triage metadata inside the manifest so it survives into the
+    # canonical manifest.yaml and, from there, into a session package.
+    incident.apply_metadata_to_manifest()
     # Store ownership metadata (dynamically added attributes)
     incident._owner_user_id = user_id  # type: ignore[attr-defined]
     incident._owner_org_id = org_id  # type: ignore[attr-defined]
@@ -2893,6 +3081,12 @@ async def upload_and_create_incident(
     title: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     system_name: Optional[str] = Form(None),
+    severity: Optional[str] = Form(None),
+    category: Optional[str] = Form(None),
+    environment: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    intake_method: Optional[str] = Form(None),
+    approximate_time: Optional[str] = Form(None),
     user_data: tuple = Depends(get_current_user),
 ):
     """
@@ -2975,12 +3169,28 @@ async def upload_and_create_incident(
     # no manifest, the controller derives a title from the uploaded filename.
     resolved_title = title or "Uploaded Incident"
 
+    # Validate the triage metadata exactly as the JSON create path does, so
+    # the two entry points cannot drift apart.  An invalid value is a 422.
+    try:
+        resolved_severity = _normalize_choice(severity, INCIDENT_SEVERITIES, "severity")
+        resolved_category = _normalize_choice(category, INCIDENT_CATEGORIES, "category")
+        resolved_environment = _normalize_choice(environment, INCIDENT_ENVIRONMENTS, "environment")
+        resolved_intake = _normalize_choice(intake_method, INCIDENT_INTAKE_METHODS, "intake_method")
+        resolved_tags = _normalize_tags(tags)
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
+
     incident = Incident(
         id=incident_id,
         title=resolved_title,
         description=description or "Uploaded incident bundle",
         system_name=system_name,
         is_demonstration=False,
+        severity=resolved_severity,
+        category=resolved_category,
+        environment=resolved_environment,
+        tags=resolved_tags,
+        intake_method=resolved_intake or "archive",
     )
     incident._owner_user_id = user_id
     incident._owner_org_id = org_id
@@ -3025,6 +3235,9 @@ async def upload_and_create_incident(
         },
         "warnings": ingest_warnings,
     }
+    # Triage metadata travels inside the manifest so it survives into the
+    # canonical manifest.yaml and, from there, into a session package.
+    incident.apply_metadata_to_manifest()
 
     controller = IngestionController()
     for extracted_file in extracted_files:
@@ -3403,6 +3616,37 @@ class IngestFromUrlRequest(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     system_name: Optional[str] = None
+    severity: Optional[str] = None
+    category: Optional[str] = None
+    environment: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    intake_method: Optional[str] = None
+    approximate_time: Optional[datetime] = None
+
+    @field_validator("severity")
+    @classmethod
+    def _validate_severity(cls, value):
+        return _normalize_choice(value, INCIDENT_SEVERITIES, "severity")
+
+    @field_validator("category")
+    @classmethod
+    def _validate_category(cls, value):
+        return _normalize_choice(value, INCIDENT_CATEGORIES, "category")
+
+    @field_validator("environment")
+    @classmethod
+    def _validate_environment(cls, value):
+        return _normalize_choice(value, INCIDENT_ENVIRONMENTS, "environment")
+
+    @field_validator("intake_method")
+    @classmethod
+    def _validate_intake_method(cls, value):
+        return _normalize_choice(value, INCIDENT_INTAKE_METHODS, "intake_method")
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _validate_tags(cls, value):
+        return _normalize_tags(value)
 
 
 @app.post("/api/v1/incidents/from-url", status_code=202)
@@ -3491,6 +3735,14 @@ async def ingest_from_url(
             "title": body.title,
             "description": body.description,
             "system_name": body.system_name,
+            "severity": body.severity,
+            "category": body.category,
+            "environment": body.environment,
+            "tags": body.tags,
+            "intake_method": body.intake_method,
+            "approximate_time": (
+                body.approximate_time.isoformat() if body.approximate_time else None
+            ),
             "user_id": user_id,
             "org_id": org_id,
         },
@@ -5272,6 +5524,11 @@ async def get_incident(
         "approximate_time": incident.approximate_time.isoformat()
         if incident.approximate_time
         else None,
+        "severity": incident.severity,
+        "category": incident.category,
+        "environment": incident.environment,
+        "tags": list(incident.tags or []),
+        "intake_method": incident.intake_method,
         "evidence_count": incident.evidence_count,
         "required_evidence_count": incident.required_evidence_count,
         "missing_required_evidence": incident.missing_required_evidence,

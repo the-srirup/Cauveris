@@ -264,13 +264,28 @@ vi.mock('@/lib/auth', () => ({
 // Shared mock for @/components/ui - comprehensive mock with ALL components from ui/index.ts
 vi.mock("@/components/ui", () => ({
   // Button
-  Button: ({ children, className = "", disabled, ...props }: any) => (
+  Button: ({
+    children,
+    className = "",
+    disabled,
+    loading,
+    loadingText,
+    leadingIcon,
+    trailingIcon,
+    variant,
+    size,
+    ...props
+  }: any) => (
     <button
       className={`focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${className}`}
-      disabled={disabled}
-      aria-disabled={disabled}
+      disabled={disabled || Boolean(loading)}
+      aria-disabled={disabled || Boolean(loading)}
       {...props}
-    >{children}</button>
+    >
+      {leadingIcon}
+      {loading && loadingText ? loadingText : children}
+      {trailingIcon}
+    </button>
   ),
 
   // Input
@@ -282,13 +297,22 @@ vi.mock("@/components/ui", () => ({
     hint,
     error,
     icon,
+    leftIcon,
     rightElement,
     state,
     size,
+    id,
     ...props
-  }: any) => (
-    <input className={className} {...props} />
-  ),
+  }: any) => {
+    const inputId = id || (label ? `input-${String(label).toLowerCase().replace(/[^a-z0-9]+/g, "-")}` : undefined);
+    return (
+      <div className={wrapperClassName}>
+        {label && <label htmlFor={inputId} className="block text-sm font-medium mb-1.5">{label}</label>}
+        <input id={inputId} className={className} aria-label={label} {...props} />
+        {hint && <span className="text-xs">{hint}</span>}
+      </div>
+    );
+  },
 
   // Select
   Select: ({
@@ -349,17 +373,44 @@ vi.mock("@/components/ui", () => ({
   ),
 
   // Tabs
-  Tabs: ({ children, defaultValue, className = "", ...props }: any) => (
-    <div className={className} {...props} data-testid="tabs">{children}</div>
-  ),
+  Tabs: (() => {
+    let activeTabVal = "tab1";
+    const TabsComp = ({ children, defaultValue = "tab1", className = "", ...props }: any) => {
+      activeTabVal = defaultValue;
+      return <div className={className} {...props} data-testid="tabs">{children}</div>;
+    };
+    return Object.assign(TabsComp, {
+      List: ({ children, className = "", ...props }: any) => (
+        <div role="tablist" className={className} {...props} data-testid="tabs-list">{children}</div>
+      ),
+      Trigger: ({ children, value, className = "", ...props }: any) => {
+        const isSelected = value === activeTabVal;
+        return (
+          <button
+            role="tab"
+            aria-selected={isSelected ? "true" : "false"}
+            className={`focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${className}`}
+            data-value={value}
+            data-state={isSelected ? "active" : "inactive"}
+            {...props}
+          >
+            {children}
+          </button>
+        );
+      },
+      Content: ({ children, value, forceMount, ...props }: any) => (
+        <div role="tabpanel" data-value={value} {...props}>{children}</div>
+      ),
+    });
+  })(),
   TabsList: ({ children, className = "", ...props }: any) => (
     <div role="tablist" className={className} {...props} data-testid="tabs-list">{children}</div>
   ),
   TabsTrigger: ({ children, value, className = "", ...props }: any) => (
-    <button role="tab" className={className} data-value={value} {...props}>{children}</button>
+    <button role="tab" className={`focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${className}`} data-value={value} {...props}>{children}</button>
   ),
-  TabsContent: ({ children, value, className = "", ...props }: any) => (
-    <div role="tabpanel" className={className} data-value={value} {...props}>{children}</div>
+  TabsContent: ({ children, value, forceMount, ...props }: any) => (
+    <div role="tabpanel" className={props.className} data-value={value} {...props}>{children}</div>
   ),
 
   // Table
@@ -401,11 +452,6 @@ vi.mock("@/components/ui", () => ({
   ),
   DropdownItem: ({ children, onSelect, disabled = false, ...props }: any) => (
     <div onClick={() => !disabled && onSelect?.()} className={props.className} {...props}>{children}</div>
-  ),
-
-  // Modal
-  Modal: ({ children, open, onClose, ...props }: any) => (
-    open ? <div role="dialog" {...props}>{children}</div> : null
   ),
 
   // Dialog

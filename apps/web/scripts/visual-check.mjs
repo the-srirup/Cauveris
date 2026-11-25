@@ -38,7 +38,7 @@ page.on("console", (m) => {
 page.on("pageerror", (e) => consoleErrors.push(`[pageerror] ${e.message}`));
 
 // Sign in first — every route is behind the auth gate.
-await page.goto("http://127.0.0.1:3000/login", { waitUntil: "networkidle", timeout: 45000 });
+await page.goto("http://localhost:3000/login", { waitUntil: "networkidle", timeout: 45000 });
 await page.locator("#email").fill("operator@cauveris.ai");
 await page.locator("#password").fill("Operator123456!");
 await page.getByRole("button", { name: /sign in/i }).click();
@@ -48,7 +48,7 @@ await page.waitForTimeout(1500);
 for (const route of ROUTES) {
   const name = route === "/" ? "root" : route.replace(/\//g, "-").replace(/^-/, "");
   try {
-    await page.goto(`http://127.0.0.1:3000${route}`, {
+    await page.goto(`http://localhost:3000${route}`, {
       waitUntil: "networkidle",
       timeout: 45000,
     });

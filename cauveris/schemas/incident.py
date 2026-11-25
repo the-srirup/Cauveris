@@ -4,7 +4,7 @@ Incident-related schemas.
 
 from .base import BaseEntity, StatusLabel
 from pydantic import Field, PrivateAttr
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, ClassVar, Tuple
 from datetime import datetime
 
 
@@ -74,6 +74,25 @@ class Incident(BaseEntity):
         default=None, description="Associated pipeline job execution ID"
     )
 
+    # Operator-declared triage metadata.  These are collected by the workspace
+    # creation wizard and must survive ingestion, persistence and a session
+    # package round-trip — the wizard asks for them, so the backend keeps them.
+    severity: Optional[str] = Field(
+        default=None, description="Operator-declared triage severity (critical/high/medium/low)"
+    )
+    category: Optional[str] = Field(
+        default=None, description="Implicated subsystem category (detection/navigation/planning/control/communication/other)"
+    )
+    environment: Optional[str] = Field(
+        default=None, description="Deployment environment (warehouse/outdoor/lab/simulation/other)"
+    )
+    tags: List[str] = Field(
+        default_factory=list, description="Free-form cross-cutting labels. Never used as the incident id."
+    )
+    intake_method: Optional[str] = Field(
+        default=None, description="How the incident entered the system (archive/source/manual/url)"
+    )
+
     # Multi-tenant and upload context private attributes
     _owner_user_id: Optional[str] = PrivateAttr(default=None)
     _owner_org_id: Optional[str] = PrivateAttr(default=None)
@@ -96,3 +115,65 @@ class Incident(BaseEntity):
             for item in self.evidence_items
             if item.is_required and item.status != StatusLabel.OBSERVED
         ]
+
+    #: The operator-declared triage fields that travel with the incident.
+    METADATA_FIELDS: ClassVar[Tuple[str, ...]] = (
+        "severity",
+        "category",
+        "environment",
+        "tags",
+        "intake_method",
+        "approximate_time",
+    )
+
+    def metadata_snapshot(self) -> Dict[str, Any]:
+        """Return the triage metadata as a plain, JSON-safe mapping.
+
+        Empty values are omitted so a metadata sidecar never carries a pile of
+        ``None`` keys that say nothing.
+        """
+        snapshot: Dict[str, Any] = {}
+        for name in self.METADATA_FIELDS:
+            value = getattr(self, name, None)
+            if value is None:
+                continue
+            if name == "tags":
+                if not value:
+                    continue
+                snapshot[name] = list(value)
+                continue
+            if hasattr(value, "isoformat"):
+                value = value.isoformat()
+            snapshot[name] = value
+        return snapshot
+
+    def apply_metadata_snapshot(self, snapshot: Optional[Dict[str, Any]]) -> None:
+        """Restore triage metadata previously captured by ``metadata_snapshot``."""
+        if not snapshot:
+            return
+        for name in self.METADATA_FIELDS:
+            if name not in snapshot or snapshot[name] is None:
+                continue
+            value = snapshot[name]
+            if name == "tags":
+                setattr(self, name, list(value or []))
+                continue
+            if name == "approximate_time" and isinstance(value, str):
+                try:
+                    value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+            setattr(self, name, value)
+
+    def apply_metadata_to_manifest(self) -> Dict[str, Any]:
+        """Merge the triage metadata into ``self.manifest``.
+
+        The manifest is what survives a backend restart and what a session
+        package serializes, so the wizard's answers must live there, not only
+        on the transient incident object.
+        """
+        if not isinstance(self.manifest, dict):
+            self.manifest = {}
+        for key, value in self.metadata_snapshot().items():
+            self.manifest.setdefault(key, value)
+        return self.manifest

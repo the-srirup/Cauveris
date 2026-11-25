@@ -19,6 +19,11 @@ from cauveris.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+#: Upper bound on the number of events a session-package export will carry.
+#: ``get_events`` pages at 500 for UI polling; an archive wants the whole
+#: log, so the limit is raised well beyond any realistic investigation.
+_EXPORT_EVENT_LIMIT = 1_000_000
+
 CANONICAL_STAGE_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "id": "upload_accepted",
@@ -283,9 +288,18 @@ class PipelinePersistenceStore:
             conn.commit()
 
     def initialize_incident_stages(
-        self, incident_id: str, job_id: Optional[str] = None, overwrite: bool = False
+        self,
+        incident_id: str,
+        job_id: Optional[str] = None,
+        overwrite: bool = False,
+        record_event: bool = True,
     ) -> List[PipelineStageRecord]:
-        """Initialize the 18 canonical stages for an incident."""
+        """Initialize the 18 canonical stages for an incident.
+
+        ``record_event=False`` skips the ``PIPELINE_INITIALIZED`` event.  The
+        session restore uses it so a rehydrated investigation does not carry a
+        synthetic event on top of the log it is supposed to reproduce.
+        """
         now = datetime.now(timezone.utc).isoformat()
         records: List[PipelineStageRecord] = []
 
@@ -346,13 +360,14 @@ class PipelinePersistenceStore:
 
             conn.commit()
 
-        self.record_event(
-            incident_id=incident_id,
-            event_type="PIPELINE_INITIALIZED",
-            stage_id=None,
-            payload={"stages_count": len(records), "status": "NOT_STARTED"},
-            job_id=job_id,
-        )
+        if record_event:
+            self.record_event(
+                incident_id=incident_id,
+                event_type="PIPELINE_INITIALIZED",
+                stage_id=None,
+                payload={"stages_count": len(records), "status": "NOT_STARTED"},
+                job_id=job_id,
+            )
         return records
 
     def get_stage(self, incident_id: str, stage_id: str) -> Optional[PipelineStageRecord]:
@@ -449,6 +464,129 @@ class PipelinePersistenceStore:
             )
             conn.commit()
             return cursor.lastrowid or 0
+
+    # ------------------------------------------------------------------
+    # Session-package import/export surface
+    # ------------------------------------------------------------------
+
+    def export_stages(self, incident_id: str) -> List[Dict[str, Any]]:
+        """Serialize every stage record for an incident, in canonical order."""
+        return [record.to_dict() for record in self.get_stages(incident_id)]
+
+    def export_events(self, incident_id: str) -> List[Dict[str, Any]]:
+        """Serialize the *entire* event log for an incident.
+
+        ``get_events`` defaults to a 500-event page, which is right for a UI
+        poll but wrong for an archive: a long investigation would silently be
+        truncated.  This walks the log to the end.
+        """
+        return self.get_events(incident_id, after_sequence_id=None, limit=_EXPORT_EVENT_LIMIT)
+
+    def import_stages(self, incident_id: str, records: List[Dict[str, Any]]) -> int:
+        """Restore stage records without emitting synthetic stage events.
+
+        ``update_stage`` logs a STAGE_UPDATED event for every write, which
+        would make a restored investigation look like the stages had just
+        re-run.  Importing writes the rows directly and records a single
+        SESSION_RESTORED marker instead.
+        """
+        if not records:
+            return 0
+        now = datetime.now(timezone.utc).isoformat()
+        restored = 0
+        with self._get_connection() as conn:
+            for raw in records:
+                if not isinstance(raw, dict):
+                    continue
+                stage_id = raw.get("stage_id") or raw.get("id")
+                if not stage_id:
+                    continue
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO pipeline_stages (
+                        incident_id, stage_id, job_id, name, status, required, depends_on,
+                        started_at, completed_at, duration_ms, input_references, output_references,
+                        warnings, error_code, error, retryability, attempt_count, details, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        incident_id,
+                        str(stage_id),
+                        raw.get("job_id"),
+                        raw.get("name") or str(stage_id),
+                        raw.get("status") or "NOT_STARTED",
+                        1 if raw.get("required", True) else 0,
+                        json.dumps(raw.get("depends_on") or []),
+                        raw.get("started_at"),
+                        raw.get("completed_at"),
+                        raw.get("duration_ms"),
+                        json.dumps(raw.get("input_references") or []),
+                        json.dumps(raw.get("output_references") or []),
+                        json.dumps(raw.get("warnings") or []),
+                        raw.get("error_code"),
+                        raw.get("error"),
+                        1 if raw.get("retryability", True) else 0,
+                        int(raw.get("attempt_count") or 0),
+                        json.dumps(raw.get("details") or {}),
+                        raw.get("updated_at") or now,
+                    ),
+                )
+                restored += 1
+            conn.commit()
+        return restored
+
+    def import_events(self, incident_id: str, events: List[Dict[str, Any]]) -> int:
+        """Restore an event log into an incident.
+
+        The events are *copied*, never moved.  ``sequence_id`` is the table's
+        global AUTOINCREMENT primary key — it is a transport cursor, not a
+        per-incident counter — so reusing the source incident's ids with an
+        ``INSERT OR REPLACE`` would overwrite the source's rows and strip the
+        original investigation of its history.  Instead each restored event
+        gets a fresh local id, and the original number travels with it as
+        ``source_sequence_id`` in the payload so the archive's numbering stays
+        traceable.
+
+        Ordering is preserved: the rows are inserted in the order given, and
+        the ids they receive are monotonic.
+        """
+        if not events:
+            return 0
+        restored = 0
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            # Importing into an incident that already has a log replaces it,
+            # so a repeated import does not double the event count.
+            conn.execute("DELETE FROM pipeline_events WHERE incident_id = ?", (incident_id,))
+            for raw in events:
+                if not isinstance(raw, dict):
+                    continue
+                payload = raw.get("payload")
+                if not isinstance(payload, (dict, list)):
+                    payload = {}
+                source_sequence_id = raw.get("sequence_id")
+                if isinstance(payload, dict) and source_sequence_id is not None:
+                    # Do not clobber a provenance value carried by a session
+                    # that was itself restored from an earlier session.
+                    payload.setdefault("source_sequence_id", source_sequence_id)
+                conn.execute(
+                    """
+                    INSERT INTO pipeline_events
+                        (incident_id, job_id, event_type, stage_id, payload, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        incident_id,
+                        raw.get("job_id"),
+                        raw.get("event_type") or "SESSION_RESTORED",
+                        raw.get("stage_id"),
+                        json.dumps(payload, default=str),
+                        raw.get("created_at") or now,
+                    ),
+                )
+                restored += 1
+            conn.commit()
+        return restored
 
     def get_events(
         self, incident_id: str, after_sequence_id: Optional[int] = None, limit: int = 500

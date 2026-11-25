@@ -117,7 +117,7 @@ describe("CommandPalette", () => {
     const commands = screen.getAllByRole("option");
     // Should show incident-related commands
     expect(commands.length).toBeGreaterThan(0);
-    expect(screen.getByText(/create incident/i)).toBeInTheDocument();
+    expect(screen.getByText(/new incident|create incident/i)).toBeInTheDocument();
   });
 
   it("shows no results message for non-matching query", () => {

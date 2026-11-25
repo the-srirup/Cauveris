@@ -2,8 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, type ReactNode, useRef } from "react";
 import { X, ChevronRight, Search, Zap, Database, GitBranch, FlaskConical, Wrench, Eye, FileText, RotateCcw, Download, AlertTriangle, Plus, Upload, Play, Square, ExternalLink, Clock } from "lucide-react";
-import { Button, Badge } from "./ui";
-import { Tooltip } from "./Tooltip";
+import { Button, Badge, Tooltip } from "./ui";
 import { useShell } from "@/lib/useShell";
 import { useActiveIncident } from "@/lib/useIncident";
 import { api } from "@/lib/api";
@@ -29,7 +28,7 @@ const CATEGORIES: { key: Command["category"]; label: string; icon: ReactNode }[]
 
 export function CommandPalette() {
   const { state, setCommandPalette, toggleCommandPalette, toggleNavCollapse } = useShell();
-  const { incident, loadIncident } = useActiveIncident();
+  const { incident } = useActiveIncident();
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -60,56 +59,45 @@ export function CommandPalette() {
 
   // Build commands
   const commands = useMemo<Command[]>(() => [
-    // Incident
+    /*
+     * Incident lifecycle.
+     *
+     * These used to *perform* the action: "Create Incident" quietly made an
+     * untitled incident, bypassing the wizard that asks for the details;
+     * "Upload Incident Package" reached into the page and clicked whichever
+     * hidden file input it could find first.  Both are now navigation into
+     * the workspace launcher, which owns these actions exactly once.
+     */
     {
       id: "create-incident",
-      label: "Create Incident",
-      description: "Create a new incident investigation",
+      label: "New Incident…",
+      description: "Open the wizard to create an incident",
       category: "incident",
       icon: <Plus className="h-3.5 w-3.5" />,
-      action: async () => {
-        try {
-          const result = await api.create(false, { title: "New Incident" });
-          if (result.incident_id) {
-            loadIncident(result.incident_id);
-            router.push("/");
-          }
-        } catch (error) {
-          console.error("Failed to create incident:", error);
-        }
+      action: () => {
+        router.push("/workspace/new");
         setCommandPalette(false);
       },
     },
     {
       id: "load-golden",
-      label: "Load Golden Incident",
-      description: "Load the CAU-0001 golden incident for demonstration",
+      label: "Open Sample Benchmark…",
+      description: "Open the workspace launcher to load the sample benchmark",
       category: "incident",
       icon: <Download className="h-3.5 w-3.5" />,
-      action: async () => {
-        try {
-          const result = await api.create(true);
-          if (result.incident_id) {
-            loadIncident(result.incident_id);
-            router.push("/");
-          }
-        } catch (error) {
-          console.error("Failed to load golden incident:", error);
-        }
+      action: () => {
+        router.push("/workspace");
         setCommandPalette(false);
       },
     },
     {
       id: "upload-evidence",
-      label: "Upload Incident Package",
-      description: "Upload incident bundle from file (zip/tar/.../json/log) or ingest a link from the dashboard",
+      label: "Upload Evidence Bundle…",
+      description: "Open the wizard on the archive step",
       category: "incident",
       icon: <Upload className="h-3.5 w-3.5" />,
       action: () => {
-        const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
-        if (fileInput) {
-          fileInput.click();
-        }
+        router.push("/workspace/new?mode=upload");
         setCommandPalette(false);
       },
     },
@@ -264,7 +252,7 @@ export function CommandPalette() {
         setCommandPalette(false);
       },
     },
-  ], [incident, loadIncident, router, setCommandPalette, state.isNavCollapsed, toggleNavCollapse]);
+  ], [incident, router, setCommandPalette, state.isNavCollapsed, toggleNavCollapse]);
 
   // Filter commands by query
   const filteredCommands = useMemo(() => {

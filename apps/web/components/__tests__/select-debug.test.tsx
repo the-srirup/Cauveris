@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { Select } from '@/components/primitives/Select';
+import { Select } from '@/components/ui';
 
 describe('Select Debug', () => {
   it('should not pass label prop to select element', () => {

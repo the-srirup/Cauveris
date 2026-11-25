@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
   Button,
   Card,
@@ -299,6 +299,7 @@ function RealityRewindContent() {
   // "Rendered more hooks than during the previous render".
   const searchParams = useSearchParams();
   const deepLink = readDeepLink(searchParams);
+  const router = useRouter();
   const { incidentId, setIncidentId, judgeMode, engineerMode } = useActiveIncident();
   const { openInspector, addActivity, setIncidentContext, state: shellState } = useShell();
 
@@ -316,7 +317,6 @@ function RealityRewindContent() {
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [analysis, setAnalysis] = useState<TemporalAnalysis | null>(null);
   const [incidentsList, setIncidentsList] = useState<Array<{ id: string; title?: string; system_name?: string }>>([]);
-  const [loadingGolden, setLoadingGolden] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -409,20 +409,16 @@ function RealityRewindContent() {
     }
   };
 
-  const handleLoadGolden = async () => {
-    setLoadingGolden(true);
-    try {
-      const res = await api.create(true);
-      if (res && res.incident_id) {
-        setIncidentId(res.incident_id);
-        await loadData(res.incident_id);
-        notify(`Golden incident ${res.incident_id} loaded successfully`, "success");
-      }
-    } catch (err: any) {
-      notify(err.message || "Failed to load golden incident", "error");
-    } finally {
-      setLoadingGolden(false);
-    }
+  /*
+   * The sample benchmark is owned by the workspace launcher.
+   *
+   * This page used to carry two "Load Golden (CAU-0001)" buttons that each
+   * created the incident behind the console's back — one in the header, one in
+   * the empty-state banner.  Creating an incident is the launcher's job, so
+   * this page now has a single way in: open the launcher.
+   */
+  const handleOpenSampleBenchmark = () => {
+    router.push("/workspace");
   };
 
   useEffect(() => {
@@ -931,11 +927,11 @@ function RealityRewindContent() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={handleLoadGolden}
-              disabled={loadingGolden || loading}
-              leadingIcon={loadingGolden ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+              onClick={handleOpenSampleBenchmark}
+              aria-label="Open the workspace launcher to load the sample benchmark"
+              leadingIcon={<Sparkles className="h-3.5 w-3.5" />}
             >
-              {loadingGolden ? "Loading..." : "Load Golden (CAU-0001)"}
+              Open Sample Benchmark
             </Button>
           </div>
         }
@@ -979,16 +975,6 @@ function RealityRewindContent() {
         </div>
       )}
 
-      {/* Mode Indicators */}
-      <div className="flex flex-wrap items-center gap-3">
-        <Badge tone={judgeMode ? "primary" : "muted"}>
-          {judgeMode ? "Judge Mode: Formal Causal Verification Active" : "Judge Mode: Disabled"}
-        </Badge>
-        <Badge tone={engineerMode ? "success" : "muted"}>
-          {engineerMode ? "Engineer Mode: Raw Signal Diagnostic Active" : "Engineer Mode: Standard"}
-        </Badge>
-      </div>
-
       {/* Error Message */}
       {error && (
         <Dialog
@@ -1008,10 +994,7 @@ function RealityRewindContent() {
       {/* Notice banner when no active incident is selected */}
       {!incidentId && !loading && (
         <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)] text-xs text-[var(--color-fg-muted)]">
-          <span>No active incident selected. Choose an incident from the header dropdown or load the golden benchmark (CAU-0001).</span>
-          <Button variant="secondary" size="sm" onClick={handleLoadGolden} disabled={loadingGolden} leadingIcon={<Sparkles className="w-3.5 h-3.5" />}>
-            {loadingGolden ? "Loading..." : "Load Golden (CAU-0001)"}
-          </Button>
+          <span>No incident open. Choose one from the header dropdown, or open the workspace launcher to create an incident, resume a saved session, or start from the sample benchmark.</span>
         </div>
       )}
 

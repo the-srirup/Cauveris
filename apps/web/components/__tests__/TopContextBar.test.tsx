@@ -47,6 +47,9 @@ vi.mock('lucide-react', () => ({
   LogOut: (props: any) => <svg data-testid="icon-logout" {...props} />,
   Settings: (props: any) => <svg data-testid="icon-settings" {...props} />,
   FolderOpen: (props: any) => <svg data-testid="icon-folder-open" {...props} />,
+  Activity: (props: any) => <svg data-testid="icon-activity" {...props} />,
+  Sun: (props: any) => <svg data-testid="icon-sun" {...props} />,
+  Moon: (props: any) => <svg data-testid="icon-moon" {...props} />,
 }));
 
 // Mock all dependencies before importing the component
@@ -169,9 +172,11 @@ describe("TopContextBar", () => {
         <TopContextBar />
       </ShellProvider>
     );
-    expect(screen.getByLabelText("Create new incident")).toBeInTheDocument();
-    expect(screen.getByLabelText("Load golden incident")).toBeInTheDocument();
-    expect(screen.getByLabelText("Upload evidence bundle")).toBeInTheDocument();
+    expect(screen.getByLabelText("Switch active incident")).toBeInTheDocument();
+    expect(screen.getByLabelText("Back to workspace")).toBeInTheDocument();
+    expect(screen.getByLabelText("Stop investigation pipeline")).toBeInTheDocument();
+    expect(screen.getByLabelText("Toggle forensic console")).toBeInTheDocument();
+    expect(screen.getByLabelText("Save session package")).toBeInTheDocument();
   });
 
   it("opens the command palette when the search bar is clicked", () => {

@@ -233,6 +233,13 @@ class IngestionController:
                             for k in ("bundle_path", "package_sha256", "uploaded_filename"):
                                 if k in incident.manifest and k not in manifest_data:
                                     manifest_data[k] = incident.manifest[k]
+                            # Operator-declared triage metadata (severity, category,
+                            # environment, tags, intake_method) is set by the
+                            # creation wizard before ingestion.  A shipped manifest
+                            # wins where it defines the same key; otherwise the
+                            # operator's answer is kept.
+                            for k, v in incident.metadata_snapshot().items():
+                                manifest_data.setdefault(k, v)
                         incident.manifest = manifest_data
                         if not incident.title or incident.title in ("Uploaded Incident", "New Incident"):
                             incident.title = manifest_data.get("title", incident.title)
@@ -338,6 +345,7 @@ class IngestionController:
                     "warnings": ["Manifest file (manifest.yaml) not found in bundle; internal ingestion manifest generated."],
                     "bundle_path": str(bundle_path),
                 }
+                internal_manifest.update(incident.metadata_snapshot())
                 incident.manifest = internal_manifest
 
                 # Discover any files on disk not already in evidence_items
@@ -397,6 +405,23 @@ class IngestionController:
                         )
                     except Exception as e:
                         logger.warning(f"Could not persist owner sidecar for {incident.id}: {e}")
+
+                # Persist the operator-declared triage metadata in its own
+                # sidecar, for the same reason as the owner sidecar above: a
+                # bundle that shipped its own manifest.yaml must never be
+                # mutated, yet the wizard's answers still have to survive a
+                # backend restart (and ride along in a session package).
+                metadata_snapshot = incident.metadata_snapshot()
+                if metadata_snapshot:
+                    try:
+                        (bundle_path / ".cauveris-incident.json").write_text(
+                            json.dumps(metadata_snapshot, indent=2, default=str),
+                            encoding="utf-8",
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not persist incident metadata sidecar for {incident.id}: {e}"
+                        )
 
         # Process each evidence item
         for evidence in incident.evidence_items:
@@ -551,6 +576,9 @@ class IngestionController:
             manifest=manifest_data,
             status=StatusLabel.OBSERVED,
         )
+        incident.apply_metadata_snapshot(
+            {k: manifest_data.get(k) for k in Incident.METADATA_FIELDS if manifest_data.get(k) is not None}
+        )
 
         for file_path in extracted_files:
             rel_path = str(file_path.relative_to(extract_dir)).replace("\\", "/")
@@ -607,9 +635,31 @@ class IngestionController:
             status=StatusLabel.OBSERVED,
         )
 
+        # Restore the operator-declared triage metadata.  It is read from the
+        # metadata sidecar first (authoritative for what the operator
+        # declared) and falls back to the manifest for bundles whose manifest
+        # carries the fields directly.
+        metadata_sidecar = store_path / ".cauveris-incident.json"
+        if metadata_sidecar.is_file():
+            try:
+                incident.apply_metadata_snapshot(json.loads(metadata_sidecar.read_text(encoding="utf-8")))
+            except Exception as e:
+                logger.warning(f"Failed to read incident metadata sidecar for {incident_id}: {e}")
+        else:
+            incident.apply_metadata_snapshot(
+                {k: manifest_data.get(k) for k in Incident.METADATA_FIELDS if manifest_data.get(k) is not None}
+            )
+        incident.apply_metadata_to_manifest()
+
         # Build evidence items from all files in the store
         for file_path in store_path.rglob("*"):
-            if file_path.is_file() and file_path.name not in ("manifest.yaml", "manifest.yml", "manifest.json", ".cauveris-owner.json"):
+            if file_path.is_file() and file_path.name not in (
+                "manifest.yaml",
+                "manifest.yml",
+                "manifest.json",
+                ".cauveris-owner.json",
+                ".cauveris-incident.json",
+            ):
                 rel_path = str(file_path.relative_to(store_path)).replace("\\", "/")
                 is_req = rel_path in manifest_data.get("required_evidence", [])
                 evidence = EvidenceItem(

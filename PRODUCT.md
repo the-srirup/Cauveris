@@ -20,8 +20,8 @@ Truthful execution architecture (confirmed in the init interview): Cauveris neve
 
 ## Operating Context
 
-- Two runnable surfaces: FastAPI REST & SSE API on port 8000 (Swagger at `/docs`) and the Next.js "Mission Control" web console on port 3000 (`apps/web`, routes: holographic-reconstruction, causal-constellation, ghost-lab, evidence-vault, patch-forge, reality-rewind, victory-replay, reports, settings, login).
-- Core workflow, drivable from the console or the API: login (JWT session, RBAC) → upload incident `.zip` → reconstruct digital twin → generate hypotheses → verify via sandboxed counterfactual simulation → download the reversible repair package.
+- Two runnable surfaces: FastAPI REST & SSE API on port 8000 (Swagger at `/docs`) and the Next.js "Mission Control" web console on port 3000 (`apps/web`, routes: workspace, workspace/new, workspace/loading, holographic-reconstruction, causal-constellation, ghost-lab, evidence-vault, patch-forge, reality-rewind, victory-replay, reports, settings, login).
+- Core workflow, drivable from the console or the API: login (JWT session, RBAC) → open a workspace (create a new incident via the three-step wizard, resume a saved session package, or load the sample benchmark) → start the investigation → reconstruct digital twin → generate hypotheses → verify via sandboxed counterfactual simulation → download the reversible repair package → export the whole session as a `cauveris-session/v1` archive that can be reloaded later.
 - Run locally with `uv run cauveris serve` + `cd apps/web && npm run dev`, or the one-command rehearsal stack `python scripts/start_live_demo.py`. State lives in local SQLite under `data/`.
 - Built as a Nebius/NVIDIA hackathon submission: three-tier Nemotron model gateway on Nebius Token Factory (fast triage, 70B reasoning, 340B escalation) with JSON-schema outputs, secret scrubbing, circuit breakers, and token metering. `CAUVERIS_DEMO_MODE=true` seeds demo users for presentations.
 

@@ -16,7 +16,7 @@ import {
   PanelFooter,
   PanelCard,
 } from "@/components/ui";
-import { Tooltip } from "@/components/Tooltip";
+import { Tooltip } from "@/components/ui/Tooltip";
 import {
   FileText,
   Download,

@@ -38,14 +38,14 @@ test("real upload observes stages and exposes the verified repair", async ({ pag
     const uploadPromise = page.waitForResponse(
       (res) => res.url().includes("/incidents/upload") && res.status() === 200,
     );
-    await page.getByRole("button", { name: "Upload incident package" }).first().click();
+    await page.getByRole("button", { name: "Upload Incident", exact: true }).click();
     await page.locator('input[type="file"]').setInputFiles(zip);
     const uploadRes = await uploadPromise;
     const { incident_id: uploadedIncidentId } = await uploadRes.json();
     expect(uploadedIncidentId).toBeTruthy();
 
     await expect(page.getByText(/Package ingested|Incident uploaded/i)).toBeVisible({ timeout: 30_000 });
-    await page.getByRole("button", { name: "Start Investigation" }).click();
+    await page.getByRole("button", { name: "Start", exact: true }).click();
 
     // Wait until the investigation pipeline completes
     await expect(

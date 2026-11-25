@@ -2,9 +2,8 @@ import { render, screen } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import Sidebar from '@/components/Sidebar';
 import { TopContextBar } from '@/components/TopContextBar';
-import { Tooltip } from '@/components/Tooltip';
-import { Tabs } from '@/components/Tabs';
-import { Button } from '@/components/ui';
+import { Tooltip } from '@/components/ui/Tooltip';
+import { Tabs, Button } from '@/components/ui';
 
 expect.extend(toHaveNoViolations);
 
@@ -74,9 +73,9 @@ describe('Accessibility Audit - Core Components', () => {
 
     it('should have accessible buttons with aria-labels for icon-only buttons', () => {
       render(<TopContextBar />);
-      expect(screen.getByLabelText('Create new incident')).toBeInTheDocument();
-      expect(screen.getByLabelText('Load golden incident')).toBeInTheDocument();
-      expect(screen.getByLabelText('Upload evidence bundle')).toBeInTheDocument();
+      expect(screen.getByLabelText('Switch active incident')).toBeInTheDocument();
+      expect(screen.getByLabelText('Back to workspace')).toBeInTheDocument();
+      expect(screen.getByLabelText('Toggle forensic console')).toBeInTheDocument();
     });
 
     it('should have focus-visible styles on all interactive elements', () => {

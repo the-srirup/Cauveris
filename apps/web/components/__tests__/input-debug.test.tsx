@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { Input } from '@/components/primitives/Input';
+import { Input } from '@/components/ui';
 
 describe('Input Debug', () => {
   it('should render label', () => {

@@ -12,8 +12,12 @@ export interface EmptyStateProps {
   description?: string;
   /** Primary action */
   action?: ReactNode;
+  /** Click handler for the primary action button */
+  actionOnClick?: () => void;
   /** Secondary action */
   secondaryAction?: ReactNode;
+  /** Click handler for the secondary action button */
+  secondaryActionOnClick?: () => void;
   /** Size variant */
   size?: "sm" | "md" | "lg";
   /** Alignment */
@@ -51,7 +55,9 @@ export function EmptyState({
   title,
   description,
   action,
+  actionOnClick,
   secondaryAction,
+  secondaryActionOnClick,
   size = "md",
   align = "center",
   className = "",
@@ -77,11 +83,15 @@ export function EmptyState({
       {(action || secondaryAction) && (
         <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
           {secondaryAction && (
-            <Button variant="ghost" size="md">
+            <Button variant="ghost" size="md" onClick={secondaryActionOnClick}>
               {secondaryAction}
             </Button>
           )}
-          {action && <Button variant="primary" size="md">{action}</Button>}
+          {action && (
+            <Button variant="primary" size="md" onClick={actionOnClick}>
+              {action}
+            </Button>
+          )}
         </div>
       )}
     </div>

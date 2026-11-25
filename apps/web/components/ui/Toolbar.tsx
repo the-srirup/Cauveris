@@ -83,7 +83,7 @@ export interface ToolbarTitleProps {
 
 export function ToolbarTitle({ children, className = "" }: ToolbarTitleProps) {
   return (
-    <span className={`text-sm font-semibold text-[var(--color-fg-default)] ${className}`}>
+    <span className={`text-xs font-semibold uppercase tracking-[0.08em] text-[var(--color-fg-muted)] ${className}`}>
       {children}
     </span>
   );

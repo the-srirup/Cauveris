@@ -282,6 +282,24 @@ async def process_ingest_job(job):
         "ingest_job_id": job.id,
     }
 
+    # The operator-declared triage metadata travels with the ingest job so the
+    # wizard's answers survive the asynchronous hop to the worker.
+    incident.apply_metadata_snapshot(
+        {
+            key: payload.get(key)
+            for key in (
+                "severity",
+                "category",
+                "environment",
+                "tags",
+                "intake_method",
+                "approximate_time",
+            )
+            if payload.get(key) is not None
+        }
+    )
+    incident.apply_metadata_to_manifest()
+
     for fpath in sorted(p for p in bundle_dir.rglob("*") if p.is_file()):
         # Only the bundle-root manifest/sidecar are bookkeeping; a manifest in
         # a subdirectory (e.g. a repo shipping src/manifest.yaml) is evidence.

@@ -26,7 +26,7 @@ export function IncidentSwitcher({
 }) {
   const router = useRouter();
   const { setIncidentId } = useActiveIncident();
-  const { setWorkspacePrompt } = useShell();
+  const { setWorkspacePrompt, addActivity } = useShell();
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -90,6 +90,11 @@ export function IncidentSwitcher({
     setQuery("");
     if (target.id === activeId) return;
     setIncidentId(target.id);
+    addActivity?.({
+      type: "system",
+      message: `Switched active incident to ${target.id} (${target.title || "Untitled"})`,
+      dismissible: true,
+    });
     notify(`Switched active incident to ${target.id}`, "info");
   };
 

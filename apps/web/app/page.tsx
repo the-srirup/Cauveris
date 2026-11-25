@@ -123,13 +123,6 @@ function MissionControlContent() {
   // Actionable errors
   const [actionableError, setActionableError] = useState<ActionableError | null>(null);
 
-  // Engineer mode interactive simulation state
-  const [simBatchWindow, setSimBatchWindow] = useState<number>(100);
-  const [simQosDepth, setSimQosDepth] = useState<number>(1);
-  const [simClockSkew, setSimClockSkew] = useState<number>(0);
-  const [simRunning, setSimRunning] = useState<boolean>(false);
-  const [simResult, setSimResult] = useState<any>(null);
-
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   // Health check
@@ -270,6 +263,9 @@ function MissionControlContent() {
     return () => clearInterval(interval);
   }, [checkHealth, loadIncidentsList]);
 
+  const routerRef = useRef(router);
+  routerRef.current = router;
+
   useEffect(() => {
     if (incidentId) {
       loadIncidentDetails(incidentId);
@@ -278,10 +274,14 @@ function MissionControlContent() {
       // If no active incident is open, route to workspace launcher to pick or create one
       const stored = typeof window !== "undefined" ? localStorage.getItem("cauveris_active_incident_id") : null;
       if (!stored) {
-        router.replace("/workspace");
+        if (typeof routerRef.current?.replace === "function") {
+          routerRef.current.replace("/workspace");
+        } else if (typeof routerRef.current?.push === "function") {
+          routerRef.current.push("/workspace");
+        }
       }
     }
-  }, [incidentId, loadIncidentDetails, router]);
+  }, [incidentId, loadIncidentDetails]);
 
   // Sync pipeline state if started or stopped from TopContextBar while on Overview
   useEffect(() => {
@@ -908,64 +908,6 @@ function MissionControlContent() {
           aria-label="Recent investigations"
         />
       </InstrumentPanel>
-
-      {/* Engineer Studio Mode Simulation Panel */}
-      {engineerMode && (
-        <InstrumentPanel
-          title="Interactive Parameter Tuning (Engineer Studio)"
-          subtitle="Real-time counterfactual simulation through the digital twin"
-        >
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <div className="flex justify-between text-xs font-mono mb-1 text-[var(--text-secondary,#a1a1aa)]">
-                <span>Batching Window:</span>
-                <span className="text-[var(--color-fg-default,#1f2933)] font-bold">{simBatchWindow}ms</span>
-              </div>
-              <input
-                type="range"
-                min="50"
-                max="300"
-                step="10"
-                value={simBatchWindow}
-                onChange={(e) => setSimBatchWindow(Number(e.target.value))}
-                className="w-full accent-[var(--color-accent-fg)] h-1.5 bg-[var(--color-border-default)] rounded cursor-pointer"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between text-xs font-mono mb-1 text-[var(--text-secondary,#a1a1aa)]">
-                <span>QoS Queue Depth:</span>
-                <span className="text-[var(--color-fg-default,#1f2933)] font-bold">{simQosDepth}</span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="10"
-                step="1"
-                value={simQosDepth}
-                onChange={(e) => setSimQosDepth(Number(e.target.value))}
-                className="w-full accent-[var(--color-accent-fg)] h-1.5 bg-[var(--color-border-default)] rounded cursor-pointer"
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between text-xs font-mono mb-1 text-[var(--text-secondary,#a1a1aa)]">
-                <span>Clock Skew:</span>
-                <span className="text-[var(--color-fg-default,#1f2933)] font-bold">{simClockSkew}ms</span>
-              </div>
-              <input
-                type="range"
-                min="-50"
-                max="50"
-                step="5"
-                value={simClockSkew}
-                onChange={(e) => setSimClockSkew(Number(e.target.value))}
-                className="w-full accent-[var(--color-accent-fg)] h-1.5 bg-[var(--color-border-default)] rounded cursor-pointer"
-              />
-            </div>
-          </div>
-        </InstrumentPanel>
-      )}
     </div>
   );
 }

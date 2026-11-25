@@ -2,12 +2,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import MissionControl from "@/app/page";
+import { WorkspaceLauncher } from "@/components/workspace/WorkspaceLauncher";
 import { api } from "@/lib/api";
+
+const pushMock = vi.fn();
+const replaceMock = vi.fn();
 
 // Mock router
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
-    push: vi.fn(),
+    push: pushMock,
+    replace: replaceMock,
   }),
 }));
 
@@ -17,7 +22,7 @@ describe("Frontend Real-Backend Integration Contracts", () => {
     vi.clearAllMocks();
   });
 
-  it("starts in clean empty state with selectedIncidentId = null and 3 clear entry actions", async () => {
+  it("starts in clean empty state: redirects to workspace with 3 clear entry actions", async () => {
     vi.spyOn(api, "health").mockResolvedValue({
       status: "healthy",
       service: "cauveris",
@@ -34,11 +39,16 @@ describe("Frontend Real-Backend Integration Contracts", () => {
 
     render(<MissionControl />);
 
-    // Should display welcome screen with 3 clear entry paths
-    expect(await screen.findByText(/Welcome to Cauveris Reality Debugger/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/Upload Incident Package/i).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/Create Incident Workspace/i)).toBeInTheDocument();
-    expect(screen.getByText(/Load Sample Incident/i)).toBeInTheDocument();
+    // Unauthenticated/no-incident visits route to the Workspace Hub
+    await waitFor(() => {
+      expect(replaceMock.mock.calls.length + pushMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    // The Workspace Hub launchpad displays 3 clear entry paths
+    render(<WorkspaceLauncher />);
+    expect(screen.getByText("New incident")).toBeInTheDocument();
+    expect(screen.getByText("Load sample benchmark")).toBeInTheDocument();
+    expect(screen.getByText("Resume saved session")).toBeInTheDocument();
   });
 
   it("requires explicit click to load sample and marks SAMPLE DATA clearly", async () => {
@@ -84,10 +94,18 @@ describe("Frontend Real-Backend Integration Contracts", () => {
       count: 1,
     });
 
-    render(<MissionControl />);
-
-    const loadSampleBtn = await screen.findByText(/Load Sample Incident/i);
+    // 1. Explicitly click to launch benchmark in workspace launcher
+    render(<WorkspaceLauncher />);
+    const loadSampleBtn = screen.getByLabelText("Load golden incident");
     fireEvent.click(loadSampleBtn);
+
+    await waitFor(() => {
+      expect(api.create).toHaveBeenCalled();
+    });
+
+    // 2. Active incident dashboard renders loaded incident
+    localStorage.setItem("cauveris_active_incident_id", "CAU-0001");
+    render(<MissionControl />);
 
     await waitFor(() => {
       expect(screen.getByText(/Golden Benchmark Incident/i)).toBeInTheDocument();
@@ -95,6 +113,7 @@ describe("Frontend Real-Backend Integration Contracts", () => {
   });
 
   it("handles backend API error honestly with actionable error and retry", async () => {
+    localStorage.setItem("cauveris_active_incident_id", "CAU-0001");
     vi.spyOn(api, "health").mockRejectedValue(new Error("Cannot connect to Cauveris API"));
     vi.spyOn(api, "list").mockRejectedValue(new Error("Backend unreachable"));
 

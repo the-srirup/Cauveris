@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Tooltip } from "./ui";
 import { useShell } from "@/lib/useShell";
@@ -8,9 +8,10 @@ import { useActiveIncident } from "@/lib/useIncident";
 import { api } from "@/lib/api";
 import { exportAndDownloadSession } from "@/lib/sessionDownload";
 import { notify } from "./Notification";
-import { Play, Square, Scale, Wrench, Menu, Search, FolderOpen, Download, Terminal } from "lucide-react";
+import { Play, Square, Menu, Search, FolderOpen, Download, Terminal, Sun, Moon } from "lucide-react";
 import { UserMenu } from "./UserMenu";
 import { IncidentSwitcher } from "./workspace/IncidentSwitcher";
+import { ActivityFeedButton } from "./workspace/ActivityFeedButton";
 
 /**
  * The console's top bar.
@@ -29,37 +30,42 @@ export function TopContextBar() {
     openInspector,
     closeInspector,
   } = useShell();
-  const { incident, incidentId: activeIncidentId, judgeMode, engineerMode, setJudgeMode, setEngineerMode } = useActiveIncident();
+  const { incident, incidentId: activeIncidentId } = useActiveIncident();
   const router = useRouter();
   const [isSavingSession, setIsSavingSession] = useState(false);
   const [isPipelineMutating, setIsPipelineMutating] = useState(false);
+  const [isLightTheme, setIsLightTheme] = useState(false);
 
-  const handleToggleJudgeMode = () => {
-    if (engineerMode) return;
-    const newValue = !judgeMode;
-    setJudgeMode(newValue);
-    if (newValue) {
-      setEngineerMode(false);
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      setIsLightTheme(document.documentElement.classList.contains("light"));
     }
-    addActivity({
-      type: "system",
-      message: newValue ? "Judge Mode enabled — Formal verification active" : "Judge Mode disabled",
-      dismissible: true,
-    });
-  };
+  }, []);
 
-  const handleToggleEngineerMode = () => {
-    if (judgeMode) return;
-    const newValue = !engineerMode;
-    setEngineerMode(newValue);
-    if (newValue) {
-      setJudgeMode(false);
+  const handleToggleTheme = () => {
+    if (typeof document === "undefined") return;
+    const nextIsLight = !isLightTheme;
+    const nextTheme = nextIsLight ? "light" : "dark";
+    const root = document.documentElement;
+    if (nextIsLight) {
+      root.classList.add("light");
+      root.classList.remove("dark");
+      root.setAttribute("data-theme", "light");
+      root.style.colorScheme = "light";
+    } else {
+      root.classList.add("dark");
+      root.classList.remove("light");
+      root.setAttribute("data-theme", "dark");
+      root.style.colorScheme = "dark";
     }
-    addActivity({
-      type: "system",
-      message: newValue ? "Engineer Mode enabled — Live twin active" : "Engineer Mode disabled",
-      dismissible: true,
-    });
+    try {
+      const raw = localStorage.getItem("cauveris-settings");
+      const current = raw ? JSON.parse(raw) : {};
+      localStorage.setItem("cauveris-settings", JSON.stringify({ ...current, theme: nextTheme }));
+    } catch {
+      // Ignore storage failures
+    }
+    setIsLightTheme(nextIsLight);
   };
 
   const incidentId = shellState.incidentContext?.id || activeIncidentId || incident?.id;
@@ -91,6 +97,11 @@ export function TopContextBar() {
     setIsSavingSession(true);
     try {
       await exportAndDownloadSession(incidentId);
+      addActivity?.({
+        type: "system",
+        message: `Exported session package for ${incidentId}`,
+        dismissible: true,
+      });
       notify(`Saved session package for ${incidentId}`, "success");
     } catch (err: unknown) {
       notify(
@@ -116,6 +127,11 @@ export function TopContextBar() {
             detail: { incidentId, state: "CANCELLED" },
           })
         );
+        addActivity?.({
+          type: "warning",
+          message: `Cancelled investigation pipeline for ${incidentId}`,
+          dismissible: true,
+        });
         notify("Cancellation signal dispatched.", "info");
       } else {
         await api.reconstruct(incidentId);
@@ -127,6 +143,11 @@ export function TopContextBar() {
             detail: { incidentId, state: "RUNNING" },
           })
         );
+        addActivity?.({
+          type: "pipeline",
+          message: `Started autonomous pipeline for ${incidentId}`,
+          dismissible: true,
+        });
         notify("Autonomous pipeline started.", "info");
       }
     } catch (err: unknown) {
@@ -206,6 +227,7 @@ export function TopContextBar() {
             >
               {incidentState}
             </Badge>
+            {activeStage && <span className="sr-only">{activeStage}</span>}
           </span>
         </div>
       </div>
@@ -248,39 +270,24 @@ export function TopContextBar() {
           </button>
         </Tooltip>
 
-        {/* Mode Toggles */}
-        <div className="hidden lg:flex items-center rounded-[var(--radius-sm,4px)] p-0.5 bg-[var(--color-canvas-default)]">
-          <Tooltip content={judgeMode ? "Judge Mode: Active (Formal verification)" : "Judge Mode: Off"} position="bottom">
-            <button
-              onClick={handleToggleJudgeMode}
-              disabled={engineerMode}
-              className={`flex items-center gap-1 px-2 h-7.5 rounded-[var(--radius-sm,4px)] text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
-                judgeMode
-                  ? "bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)] shadow-[var(--shadow-sm)]"
-                  : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
-              }`}
-              aria-pressed={judgeMode}
-            >
-              <Scale className="h-3 w-3" />
-              <span>Judge</span>
-            </button>
-          </Tooltip>
-          <Tooltip content={engineerMode ? "Engineer Mode: Active (Live digital twin)" : "Engineer Mode: Off"} position="bottom">
-            <button
-              onClick={handleToggleEngineerMode}
-              disabled={judgeMode}
-              className={`flex items-center gap-1 px-2 h-7.5 rounded-[var(--radius-sm,4px)] text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] ${
-                engineerMode
-                  ? "bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)] shadow-[var(--shadow-sm)]"
-                  : "text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)]"
-              }`}
-              aria-pressed={engineerMode}
-            >
-              <Wrench className="h-3 w-3" />
-              <span>Engineer</span>
-            </button>
-          </Tooltip>
-        </div>
+        {/* Session Activity Log */}
+        <ActivityFeedButton />
+
+        {/* Quick Theme Switch (Light / Dark) */}
+        <Tooltip content={isLightTheme ? "Switch to dark theme" : "Switch to light theme"} position="bottom">
+          <button
+            type="button"
+            onClick={handleToggleTheme}
+            className="inline-flex items-center justify-center h-8.5 w-8.5 rounded-[var(--radius-sm,4px)] bg-[var(--color-canvas-muted)]/65 dark:bg-[var(--color-canvas-muted)] text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-muted)] dark:hover:bg-[var(--color-border-default)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+            aria-label={isLightTheme ? "Switch to dark theme" : "Switch to light theme"}
+          >
+            {isLightTheme ? (
+              <Moon className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Sun className="h-4 w-4" aria-hidden="true" />
+            )}
+          </button>
+        </Tooltip>
 
         {/* Forensic Console Drawer Toggle */}
         <Tooltip content={shellState.inspectorOpen ? "Close forensic console" : "Open forensic console"} position="bottom">
@@ -364,16 +371,14 @@ export function TopContextBar() {
         />
 
         <span className="sr-only">
-          {shellState.incidentContext?.processingMode === "judge"
-            ? "Judge Mode"
-            : shellState.incidentContext?.processingMode === "engineer"
-            ? "Engineer Mode"
-            : "Autonomous"}
-        </span>
-
-        <span className="sr-only">
           {modelProvider}
         </span>
+        {shellState.incidentContext?.processingMode && (
+          <span className="sr-only">
+            {shellState.incidentContext.processingMode.charAt(0).toUpperCase() +
+              shellState.incidentContext.processingMode.slice(1)}
+          </span>
+        )}
 
         {/* User Menu Dropdown (icon button matching navbar button height) */}
         <UserMenu />
