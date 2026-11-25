@@ -26,7 +26,7 @@ async function signIn(page: any): Promise<void> {
   await page.locator("#email").fill("operator@cauveris.ai");
   await page.locator("#password").fill("Operator123456!");
   await page.getByRole("button", { name: /sign in/i }).click();
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/workspace/);
 }
 
 test("real upload observes stages and exposes the verified repair", async ({ page }) => {
@@ -35,16 +35,30 @@ test("real upload observes stages and exposes the verified repair", async ({ pag
   const zip = makeZip();
   try {
     await signIn(page);
+
+    // Open upload wizard from Workspace Hub
+    await page.goto("/workspace/new?mode=upload");
+    await expect(page).toHaveURL(/\/workspace\/new/);
+
+    // Step 1: Attach evidence archive ZIP and continue
+    await page.locator('input[type="file"]').setInputFiles(zip);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+
+    // Step 2: Fill required incident description and continue to review
+    await page.locator("#wizard-description").fill("Automated E2E memory quota incident investigation");
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+
+    // Step 3: Create & open workspace, triggering upload
     const uploadPromise = page.waitForResponse(
       (res) => res.url().includes("/incidents/upload") && res.status() === 200,
     );
-    await page.getByRole("button", { name: "Upload Incident", exact: true }).click();
-    await page.locator('input[type="file"]').setInputFiles(zip);
+    await page.getByRole("button", { name: "Create & open workspace", exact: true }).click();
     const uploadRes = await uploadPromise;
     const { incident_id: uploadedIncidentId } = await uploadRes.json();
     expect(uploadedIncidentId).toBeTruthy();
 
-    await expect(page.getByText(/Package ingested|Incident uploaded/i)).toBeVisible({ timeout: 30_000 });
+    // The loading surface settles intake and routes directly to the dashboard
+    await expect(page.getByRole("button", { name: "Start", exact: true })).toBeVisible({ timeout: 60_000 });
     await page.getByRole("button", { name: "Start", exact: true }).click();
 
     // Wait until the investigation pipeline completes
