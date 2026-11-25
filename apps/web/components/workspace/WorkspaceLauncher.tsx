@@ -171,6 +171,7 @@ export function WorkspaceLauncher() {
           <button
             type="button"
             onClick={() => router.push("/workspace/new")}
+            aria-label="New incident"
             className="group relative flex flex-col justify-between rounded-[var(--radius-xl,12px)] bg-[var(--surface-card,var(--color-canvas-default))] p-6 text-left shadow-[var(--elevation-card)] ring-1 ring-[var(--color-accent)]/25 transition-all duration-150 hover:bg-[var(--surface-tile,var(--color-canvas-subtle))] hover:ring-[var(--color-accent)]/50 hover:shadow-[var(--shadow-md)]"
           >
             <div className="space-y-3">

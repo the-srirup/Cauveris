@@ -38,7 +38,7 @@ test("real upload observes stages and exposes the verified repair", async ({ pag
     await signIn(page);
 
     // Open upload wizard from Workspace Hub via primary CTA
-    await page.getByRole("button", { name: /New Incident Investigation/i }).click();
+    await page.getByRole("button", { name: /New incident|Create incident/i }).click();
     await expect(page).toHaveURL(/\/workspace\/new/);
 
     // Step 1: Attach evidence archive ZIP and continue
