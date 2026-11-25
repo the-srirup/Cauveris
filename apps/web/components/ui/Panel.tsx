@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, forwardRef, type HTMLAttributes, type ReactNode } from "react";
-import { tv, type VariantProps } from "tailwind-variants";
+import { tv } from "tailwind-variants";
 
 interface PanelContextValue {
   padding: "none" | "sm" | "md" | "lg";
@@ -9,34 +9,47 @@ interface PanelContextValue {
 
 const PanelContext = createContext<PanelContextValue>({ padding: "md" });
 
+/*
+ * A panel is a framed instrument surface, not a floating box: the frame sits
+ * above the page canvas, the header rides a shallow rail separated by a
+ * hairline, and the work area rests in the frame. Depth, not decoration,
+ * marks whether a panel is the page's primary surface or a recess.
+ */
 const panelStyles = tv({
   base: `
-    bg-[var(--color-canvas-inset)]
-    border border-[var(--color-border-default)]
+    flex flex-col min-w-0
+    bg-[var(--surface-card,var(--color-canvas-default))]
     rounded-[var(--radius-lg)]
-    transition-[color,background-color,border-color,box-shadow] duration-80 ease-out
+    transition-[color,background-color,box-shadow] duration-100 ease-out
   `,
   variants: {
     variant: {
-      default: "shadow-[var(--shadow-sm)]",
+      default: "shadow-[var(--elevation-card,var(--shadow-sm))]",
       elevated: "shadow-[var(--shadow-md)]",
-      inset: "bg-[var(--color-canvas-subtle)]",
-      flush: "border-0 rounded-none shadow-none",
-    },
-    padding: {
-      none: "",
-      sm: "p-4 sm:p-5",
-      md: "p-5 sm:p-6",
-      lg: "p-6 sm:p-8",
+      inset: "bg-[var(--surface-well,var(--color-canvas-inset))]",
+      flush: "rounded-none shadow-none bg-transparent",
     },
   },
   defaultVariants: {
     variant: "default",
-    padding: "md",
   },
 });
 
-export interface PanelProps extends Omit<HTMLAttributes<HTMLDivElement>, "title">, VariantProps<typeof panelStyles> {
+const bodyPaddings = {
+  none: "p-0",
+  sm: "p-4",
+  md: "p-5 sm:p-6",
+  lg: "p-6 sm:p-8",
+};
+
+const railPaddings = {
+  none: "px-5 sm:px-6",
+  sm: "px-4",
+  md: "px-5 sm:px-6",
+  lg: "px-6 sm:px-8",
+};
+
+export interface PanelProps extends Omit<HTMLAttributes<HTMLDivElement>, "title"> {
   /** Panel title (renders as header) */
   title?: ReactNode;
   /** Panel subtitle/description */
@@ -49,6 +62,10 @@ export interface PanelProps extends Omit<HTMLAttributes<HTMLDivElement>, "title"
   footer?: ReactNode;
   /** Footer divider */
   footerDivider?: boolean;
+  /** Frame treatment */
+  variant?: "default" | "elevated" | "inset" | "flush";
+  /** Body padding */
+  padding?: "none" | "sm" | "md" | "lg";
 }
 
 export const Panel = forwardRef<HTMLDivElement, PanelProps>(
@@ -57,7 +74,7 @@ export const Panel = forwardRef<HTMLDivElement, PanelProps>(
       title,
       subtitle,
       headerActions,
-      headerDivider = false,
+      headerDivider = true,
       footer,
       footerDivider = false,
       variant = "default",
@@ -69,23 +86,37 @@ export const Panel = forwardRef<HTMLDivElement, PanelProps>(
     ref
   ) {
     const hasHeader = title !== undefined;
-    const contentPadding = padding !== "none" ? "" : "p-0";
+    const isFlush = variant === "flush";
+
+    // A recessed panel gets a rail that stays recessive against its own
+    // darker frame; a raised panel gets the lit rail.
+    const railBg =
+      variant === "inset"
+        ? "bg-[var(--surface-card,var(--color-canvas-default))]"
+        : "bg-[var(--surface-rail,var(--color-canvas-muted))]";
 
     return (
       <PanelContext.Provider value={{ padding: padding || "md" }}>
         <div
           ref={ref}
-          className={`${panelStyles({ variant, padding })} ${contentPadding} ${className || ""}`}
+          className={`${panelStyles({ variant })} ${className || ""}`}
           {...props}
         >
           {hasHeader && (
-            <header className="flex items-start justify-between gap-4 mb-4">
+            <header
+              className={`
+                flex items-start justify-between gap-4
+                ${isFlush ? "rounded-none" : "rounded-t-[var(--radius-lg,8px)]"}
+                ${railBg}
+                py-3 ${railPaddings[padding]}
+              `}
+            >
               <div className="flex-1 min-w-0">
                 {title && (
-                  <h2 className="text-sm font-semibold text-[var(--color-fg-default)] truncate">{title}</h2>
+                  <h2 className="text-base font-semibold tracking-tight text-[var(--color-fg-default)] truncate">{title}</h2>
                 )}
                 {subtitle && (
-                  <div className={`text-[11px] text-[var(--color-fg-muted)] mt-0.5 ${typeof subtitle === "string" ? "truncate" : ""}`}>{subtitle}</div>
+                  <div className={`text-xs text-[var(--color-fg-muted)] mt-0.5 ${typeof subtitle === "string" ? "truncate" : ""}`}>{subtitle}</div>
                 )}
               </div>
               {headerActions && (
@@ -94,11 +125,7 @@ export const Panel = forwardRef<HTMLDivElement, PanelProps>(
             </header>
           )}
 
-          {hasHeader && headerDivider && (
-            <div className="mb-4 border-t border-[var(--color-border-default)]" />
-          )}
-
-          <div className={padding === "none" ? "p-0" : ""}>{children}</div>
+          <div className={`flex-1 min-w-0 ${bodyPaddings[padding]}`}>{children}</div>
 
           {footer && (
             <>
@@ -144,8 +171,8 @@ export const PanelSection = forwardRef<HTMLDivElement, PanelSectionProps>(
         {(title || subtitle) && (
           <div className="flex items-center justify-between gap-4 mb-3">
             <div className="flex-1 min-w-0">
-              {title && <h3 className="text-xs font-medium uppercase tracking-wider text-[var(--color-fg-subtle)]">{title}</h3>}
-              {subtitle && <div className="text-[11px] text-[var(--color-fg-muted)] mt-0.5">{subtitle}</div>}
+              {title && <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--color-fg-muted)]">{title}</h3>}
+              {subtitle && <div className="text-[11px] text-[var(--color-fg-subtle)] mt-0.5">{subtitle}</div>}
             </div>
           </div>
         )}
@@ -219,12 +246,12 @@ export const PanelCard = forwardRef<HTMLDivElement, PanelCardProps>(
         onKeyDown={(e) => { if (isButton && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onClick(); } }}
         className={`
           relative flex items-start gap-3.5 p-4
-          bg-[var(--color-canvas-inset)]
+          bg-[var(--color-canvas-default)]
           border border-[var(--color-border-default)]
           rounded-[var(--radius-md)]
           transition-[color,background-color,border-color,box-shadow] duration-80 ease-out
           ${selected ? "border-[var(--color-accent-fg)] bg-[var(--color-accent-muted)] shadow-[var(--shadow-sm)]" : ""}
-          ${hoverable ? "hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] cursor-pointer" : ""}
+          ${hoverable ? "hover:bg-[var(--color-canvas-muted)] hover:border-[var(--color-border-strong)] cursor-pointer" : ""}
           ${onClick ? "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-canvas)]" : ""}
           ${className || ""}
         `}
@@ -235,7 +262,7 @@ export const PanelCard = forwardRef<HTMLDivElement, PanelCardProps>(
           {(title || subtitle) && (
             <div className="flex items-center justify-between gap-2">
               <div className="flex-1 min-w-0">
-                {title && <h3 className="text-sm font-medium text-[var(--color-fg-default)] truncate">{title}</h3>}
+                {title && <h3 className="text-sm font-semibold text-[var(--color-fg-default)] truncate">{title}</h3>}
                 {subtitle && <div className="text-[11px] text-[var(--color-fg-muted)] mt-0.5 truncate">{subtitle}</div>}
               </div>
               {trailing && <div className="flex-shrink-0 ml-2">{trailing}</div>}
@@ -260,7 +287,7 @@ export function PanelDivider({ label, className, ...props }: PanelDividerProps) 
     return (
       <div className={`flex items-center gap-3 my-4 ${className || ""}`} {...props}>
         <div className="flex-1 border-t border-[var(--color-border-default)]" />
-        <span className="px-2.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-fg-subtle)] bg-[var(--color-canvas-inset)]">
+        <span className="px-2.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--color-fg-muted)] bg-[var(--color-canvas-default)]">
           {label}
         </span>
         <div className="flex-1 border-t border-[var(--color-border-default)]" />
@@ -300,7 +327,7 @@ export function PanelHeader({ title, subtitle, actions, divider = false, classNa
   return (
     <div className={`flex items-start justify-between gap-4 ${paddingClasses} ${borderClass} ${className || ""}`} {...props}>
       <div className="flex-1 min-w-0">
-        <h2 className="text-sm font-semibold text-[var(--color-fg-default)] truncate">{title}</h2>
+        <h2 className="text-base font-semibold tracking-tight text-[var(--color-fg-default)] truncate">{title}</h2>
         {subtitle && <div className={`text-xs text-[var(--color-fg-muted)] mt-1 ${typeof subtitle === "string" ? "truncate" : ""}`}>{subtitle}</div>}
       </div>
       {actions && <div className="flex items-center gap-2 shrink-0 ml-4">{actions}</div>}

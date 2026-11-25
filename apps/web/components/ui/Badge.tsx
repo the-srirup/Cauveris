@@ -50,40 +50,40 @@ export const Badge = forwardRef<HTMLElement, BadgeProps>(function Badge(
 
   const resolvedVariant: "default" | "primary" | "success" | "danger" | "warning" | "done" | "muted" =
     variant || (tone ? toneMap[tone] || "default" : "default");
+
+  /*
+   * A badge is a state readout, not a button. It reads as an instrument tag:
+   * a low-alpha wash of the state hue, a slightly stronger edge in the same
+   * hue, and the saturated hue as the label. Neutral states recede (outline)
+   * so a coloured state is the only thing that pulls the eye.
+   */
   const variantStyles = {
     default: `
-      bg-[var(--color-canvas-subtle)] text-[var(--color-fg-muted)]
-      border border-[var(--color-border-muted)]
+      bg-[var(--surface-tile,var(--color-canvas-muted))] text-[var(--color-fg-muted)]
     `,
     primary: `
       bg-[var(--color-accent-muted)] text-[var(--color-accent-fg)]
-      border border-[var(--color-accent-subtle)]
     `,
     success: `
       bg-[var(--color-success-muted)] text-[var(--color-success-fg)]
-      border border-[var(--color-success-subtle)]
     `,
     danger: `
       bg-[var(--color-danger-muted)] text-[var(--color-danger-fg)]
-      border border-[var(--color-danger-subtle)]
     `,
     warning: `
       bg-[var(--color-attention-muted)] text-[var(--color-attention-fg)]
-      border border-[var(--color-attention-subtle)]
     `,
     done: `
       bg-[var(--color-done-muted)] text-[var(--color-done-fg)]
-      border border-[var(--color-done-subtle)]
     `,
     muted: `
-      bg-[var(--color-canvas-muted)] text-[var(--color-fg-subtle)]
-      border border-[var(--color-border-muted)]
+      bg-[var(--surface-tile,var(--color-canvas-muted))] text-[var(--color-fg-muted)]
     `,
   };
 
   const sizeStyles = {
-    sm: "px-2 py-0.5 text-xs",
-    md: "px-2.5 py-0.5 text-sm",
+    sm: "px-1.5 py-0.5 text-[10px]",
+    md: "px-2 py-0.5 text-xs",
   };
 
   const dotColors = {
@@ -96,21 +96,31 @@ export const Badge = forwardRef<HTMLElement, BadgeProps>(function Badge(
     muted: "bg-[var(--color-fg-subtle)]",
   };
 
+  const dotSizes = {
+    sm: "h-1 w-1",
+    md: "h-1.5 w-1.5",
+  };
+
+  const isNeutral = resolvedVariant === "default" || resolvedVariant === "muted";
+
+  const interactiveStyles = isNeutral
+    ? "cursor-pointer transition-[border-color,filter,transform] duration-80 hover:border-[var(--color-border-strong)] active:scale-[0.97]"
+    : "cursor-pointer transition-[filter,transform] duration-80 hover:brightness-[1.12] active:scale-[0.97]";
+
   const baseClasses = `
     inline-flex items-center gap-1.5
-    font-medium leading-none
-    rounded-full
-    border
+    font-medium uppercase tracking-[0.06em] leading-none
+    rounded-[var(--radius-sm,4px)]
     ${sizeStyles[size]}
     ${variantStyles[resolvedVariant]}
     ${className}
-    ${onClick ? "cursor-pointer hover:border-[var(--color-border-strong)] active:scale-[0.97] transition-[color,border-color,transform]" : ""}
+    ${onClick ? interactiveStyles : ""}
   `;
 
   const dotElement = dot && (
     <span
       className={`
-        h-1.5 w-1.5 rounded-full flex-shrink-0
+        ${dotSizes[size]} rounded-full flex-shrink-0
         ${dotColors[resolvedVariant]}
       `}
       aria-hidden="true"

@@ -116,8 +116,8 @@ export default function Sidebar() {
         className={`
           fixed top-0 bottom-0 lg:top-[var(--topbar-height,54px)] left-0 z-40 lg:z-[var(--z-nav-sidebar)]
           flex flex-col
-          bg-[var(--color-canvas-inset)]
-          border-r border-[var(--color-border-default)]
+          bg-[var(--surface-well,var(--color-canvas-inset))]
+          shadow-[2px_0_10px_rgba(0,0,0,0.2)]
           transition-all duration-150 ease-out motion-reduce:transition-none
           select-none font-sans
           ${state.isNavCollapsed ? collapsedWidth : expandedWidth}
@@ -128,7 +128,7 @@ export default function Sidebar() {
         data-drawer={state.isNavDrawerOpen}
       >
         {/* Mobile Brand Header (hidden on desktop since navbar spans full top width) */}
-        <div className="flex lg:hidden items-center justify-between h-[var(--topbar-height,54px)] px-3 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-inset)]">
+        <div className="flex lg:hidden items-center justify-between h-[var(--topbar-height,54px)] px-3 bg-[var(--surface-well,var(--color-canvas-inset))]">
           <Link href="/workspace" className="flex items-center gap-2.5 min-w-0" aria-label="Cauveris Home">
             <div className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] text-[var(--color-fg-on-emphasis)] shrink-0 shadow-[var(--shadow-sm)] ring-1 ring-[var(--color-accent-hover)]/30">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.2} viewBox="0 0 24 24" aria-hidden="true">
@@ -148,7 +148,7 @@ export default function Sidebar() {
         </div>
 
         {/* Desktop Sidebar Utility Header (below navbar) */}
-        <div className={`hidden lg:flex items-center h-10 px-2.5 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-inset)] ${state.isNavCollapsed ? "justify-center" : "justify-between"}`}>
+        <div className={`hidden lg:flex items-center h-10 px-2.5 ${state.isNavCollapsed ? "justify-center" : "justify-between"}`}>
           {!state.isNavCollapsed && (
             <span className="px-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)]">
               Navigation
@@ -159,7 +159,7 @@ export default function Sidebar() {
           <Tooltip content={state.isNavCollapsed ? "Expand sidebar" : "Collapse sidebar"} position="right">
             <button
               onClick={toggleNavCollapse}
-              className="p-1.5 rounded-[var(--radius-sm,4px)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--color-canvas-subtle)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+              className="p-1.5 rounded-[var(--radius-sm,4px)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-[var(--surface-tile,var(--color-canvas-subtle))] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
               aria-label={state.isNavCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
               {state.isNavCollapsed ? (
@@ -173,10 +173,10 @@ export default function Sidebar() {
 
         {/* Mobile Drawer Close */}
         {state.isNavDrawerOpen && (
-          <div className="p-2 border-b border-[var(--color-border-default)] lg:hidden">
+          <div className="p-2 lg:hidden">
             <button
               onClick={() => handleDrawerToggle(false)}
-              className="w-full flex items-center justify-center gap-2 p-1.5 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-canvas-subtle)] rounded-[var(--radius-sm,4px)] transition-colors"
+              className="w-full flex items-center justify-center gap-2 p-1.5 text-xs text-[var(--color-fg-muted)] hover:bg-[var(--surface-tile)] rounded-[var(--radius-sm,4px)] transition-colors"
             >
               <X className="h-4 w-4" />
               <span>Close menu</span>
@@ -185,9 +185,9 @@ export default function Sidebar() {
         )}
 
         {/* Navigation Links grouped by section */}
-        <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-3" aria-label="Navigation sections">
+        <nav className="flex-1 overflow-y-auto px-2 py-2 space-y-3" aria-label="Navigation sections">
           {/* Switch Workspace / Back to Workspace Hub */}
-          <div className="pb-2.5 border-b border-[var(--color-border-default)]">
+          <div className="pb-2">
             {state.isNavCollapsed ? (
               <Tooltip content="Back to Workspace (switch incident)" position="right">
                 <button
@@ -276,7 +276,7 @@ export default function Sidebar() {
 
         {/* Footer Status */}
         {!state.isNavCollapsed && (
-          <div className="border-t border-[var(--color-border-default)] p-3 bg-[var(--color-canvas-subtle)]/40">
+          <div className="p-3 bg-[var(--surface-well,var(--color-canvas-inset))]">
             <div className="flex items-center justify-between text-xs text-[var(--color-fg-muted)]">
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-[var(--color-success-emphasis,#1a7f37)] shrink-0" />

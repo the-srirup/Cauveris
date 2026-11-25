@@ -762,7 +762,7 @@ function MissionControlContent() {
         once, in the workspace launcher, so this page only points there.
       */}
       {!incidentId && (
-        <div className="rounded-[var(--radius-lg,8px)] border border-dashed border-[var(--color-border-default)] bg-[var(--color-canvas-default)]">
+        <div className="rounded-[var(--radius-lg,8px)] bg-[var(--surface-card,var(--color-canvas-default))] shadow-[var(--elevation-card)]">
           <EmptyState
             icon={<FolderOpen className="h-10 w-10" />}
             title="No workspace open"
@@ -855,7 +855,7 @@ function MissionControlContent() {
               decisionReason={reportData.capability_report.decision_reason || "No decision recorded for this incident"}
             />
           ) : (
-            <div className="rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/40 p-4">
+            <div className="rounded-[var(--radius-lg,8px)] bg-[var(--surface-card,var(--color-canvas-default))] shadow-[var(--elevation-card)] p-4">
               <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted)]">
                 Capability Map
               </div>

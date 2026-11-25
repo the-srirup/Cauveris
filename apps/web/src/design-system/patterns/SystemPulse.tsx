@@ -1,12 +1,19 @@
 "use client";
 
 import React from "react";
-import { Server, Activity, HardDrive, Sparkles } from "lucide-react";
+import { Server, HardDrive, Sparkles } from "lucide-react";
 
 export interface SystemStatusData {
   backend: "online" | "degraded" | "offline";
   backendLatencyMs?: number;
-  worker: "online" | "busy" | "idle" | "offline";
+  /**
+   * The background worker's state.
+   *
+   * Not rendered: the worker readout repeated the pipeline status that the
+   * top bar already shows, so an idle investigation reported "idle" twice on
+   * one screen.  The queue-depth tile below is the honest place for it.
+   */
+  worker?: "online" | "busy" | "idle" | "offline";
   storage: "healthy" | "warning" | "error";
   nebiusProvider:
     | "live"
@@ -54,12 +61,12 @@ export function SystemPulse({
 
   const getTone = (state: string) => {
     if (isGreen(state)) {
-      return "text-emerald-800 bg-emerald-50/60 border-emerald-200 dark:bg-emerald-950/20 dark:text-emerald-300 dark:border-emerald-800";
+      return "text-emerald-800 bg-emerald-500/12 dark:bg-emerald-500/12 dark:text-emerald-300";
     }
     if (isAmber(state)) {
-      return "text-amber-800 bg-amber-50/60 border-amber-200 dark:bg-amber-950/20 dark:text-amber-300 dark:border-amber-800";
+      return "text-amber-800 bg-amber-500/12 dark:bg-amber-500/12 dark:text-amber-300";
     }
-    return "text-rose-800 bg-rose-50/60 border-rose-200 dark:bg-rose-950/20 dark:text-rose-300 dark:border-rose-800";
+    return "text-rose-800 bg-rose-500/12 dark:bg-rose-500/12 dark:text-rose-300";
   };
 
   const getDot = (state: string) => {
@@ -126,12 +133,12 @@ export function SystemPulse({
 
   return (
     <div
-      className={`grid grid-cols-2 sm:grid-cols-5 gap-2.5 border border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-default,#ffffff)] p-3 rounded-[var(--radius-lg,8px)] text-xs select-none shadow-xs ${className}`}
+      className={`grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-[var(--surface-card,var(--color-canvas-default))] p-3 rounded-[var(--radius-lg,8px)] text-xs select-none shadow-[var(--elevation-card)] ${className}`}
       data-system-pulse
       {...props}
     >
       {/* Backend API */}
-      <div className={`p-2.5 border rounded-[var(--radius-md,6px)] flex items-center justify-between ${getTone(status.backend)}`}>
+      <div className={`p-2.5 rounded-[var(--radius-md,6px)] flex items-center justify-between ${getTone(status.backend)}`}>
         <div className="flex items-center gap-2">
           <Server className="w-4 h-4 shrink-0" />
           <span className="font-semibold text-xs">API</span>
@@ -141,17 +148,8 @@ export function SystemPulse({
         </span>
       </div>
 
-      {/* Background Worker */}
-      <div className={`p-2.5 border rounded-[var(--radius-md,6px)] flex items-center justify-between ${getTone(status.worker)}`}>
-        <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 shrink-0" />
-          <span className="font-semibold text-xs">WORKER</span>
-        </div>
-        <span className="text-xs font-mono font-medium capitalize">{status.worker}</span>
-      </div>
-
       {/* Storage & Artifacts */}
-      <div className={`p-2.5 border rounded-[var(--radius-md,6px)] flex items-center justify-between ${getTone(status.storage)}`}>
+      <div className={`p-2.5 rounded-[var(--radius-md,6px)] flex items-center justify-between ${getTone(status.storage)}`}>
         <div className="flex items-center gap-2">
           <HardDrive className="w-4 h-4 shrink-0" />
           <span className="font-semibold text-xs">STORAGE</span>
@@ -161,7 +159,7 @@ export function SystemPulse({
 
       {/* Model Gateway */}
       <div
-        className={`p-2.5 border rounded-[var(--radius-md,6px)] flex items-center justify-between cursor-help ${getTone(status.nebiusProvider)}`}
+        className={`p-2.5 rounded-[var(--radius-md,6px)] flex items-center justify-between cursor-help ${getTone(status.nebiusProvider)}`}
         title={modelTooltip}
       >
         <div className="flex items-center gap-2">
@@ -174,11 +172,12 @@ export function SystemPulse({
         </div>
       </div>
 
-      {/* Active Jobs */}
-      <div className="p-2.5 border border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-subtle,#f8f9fa)] rounded-[var(--radius-md,6px)] flex items-center justify-between text-[var(--color-fg-default,#1f2933)]">
+      {/* Queue depth — a count, not a state. "0 queued" cannot be mistaken for
+          another pipeline-status readout. */}
+      <div className="p-2.5 bg-[var(--surface-tile,var(--color-canvas-subtle))] rounded-[var(--radius-md,6px)] flex items-center justify-between text-[var(--color-fg-default,#1f2933)] shadow-[var(--elevation-tile)]">
         <span className="font-semibold text-xs text-[var(--color-fg-muted,#5f6b76)]">PIPELINE QUEUE</span>
         <span className="text-xs font-mono font-semibold">
-          {status.activeJobsCount ? `${status.activeJobsCount} Active` : "Idle"}
+          {status.activeJobsCount ? `${status.activeJobsCount} active` : "0 queued"}
         </span>
       </div>
     </div>

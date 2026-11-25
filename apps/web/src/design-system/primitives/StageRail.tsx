@@ -32,15 +32,15 @@ export function StageRail({
 
   return (
     <div
-      className={`border border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-default,#ffffff)] rounded-[var(--radius-lg,8px)] select-none shadow-xs overflow-hidden ${className}`}
+      className={`bg-[var(--surface-well,var(--color-canvas-inset))] p-2 rounded-[var(--radius-lg,8px)] select-none overflow-hidden ${className}`}
       data-stage-rail
       {...props}
     >
       <div
         className={
           isHorizontal
-            ? "flex flex-row items-stretch divide-x divide-[var(--color-border-default,#d9e0e7)] overflow-x-auto scrollbar-thin"
-            : "flex flex-col divide-y divide-[var(--color-border-default,#d9e0e7)]"
+            ? "flex flex-row items-stretch gap-2 overflow-x-auto scrollbar-thin"
+            : "flex flex-col gap-2"
         }
       >
         {stages.map((stage, idx) => {
@@ -51,24 +51,24 @@ export function StageRail({
           const isPartial = stage.status === "PARTIAL";
 
           const statusStyle = isComplete
-            ? "bg-emerald-50/30 text-emerald-950 dark:bg-emerald-950/20 dark:text-emerald-100"
+            ? "bg-emerald-500/12 text-emerald-950 dark:text-emerald-100"
             : isFailed
-            ? "bg-rose-50/40 text-rose-950 dark:bg-rose-950/20 dark:text-rose-100"
+            ? "bg-rose-500/12 text-rose-950 dark:text-rose-100"
             : isBlocked
-            ? "bg-slate-50/50 text-slate-700 dark:bg-slate-900/40 dark:text-slate-300"
+            ? "bg-[var(--surface-tile)] text-slate-700 dark:text-slate-300"
             : isPartial
-            ? "bg-amber-50/40 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100"
+            ? "bg-amber-500/12 text-amber-950 dark:text-amber-100"
             : isCurrent
-            ? "bg-blue-50/50 text-blue-950 dark:bg-blue-950/30 dark:text-blue-100 ring-1 ring-inset ring-[var(--color-accent,#0969da)]"
-            : "bg-[var(--color-canvas-subtle,#f8f9fa)] text-[var(--color-fg-muted,#5f6b76)]";
+            ? "bg-blue-500/15 text-blue-950 dark:text-blue-100 ring-1 ring-inset ring-[var(--color-accent,#0969da)]/60"
+            : "bg-[var(--surface-tile,var(--color-canvas-subtle))] text-[var(--color-fg-muted,#5f6b76)]";
 
           return (
             <div
               key={stage.id}
               className={`group ${
-                isHorizontal ? "flex-1 min-w-[170px]" : "w-full"
-              } p-3.5 flex flex-col justify-between transition-colors overflow-hidden ${statusStyle} ${
-                onSelectStage ? "cursor-pointer hover:opacity-90" : ""
+                isHorizontal ? "flex-1 min-w-[165px]" : "w-full"
+              } p-3.5 rounded-[var(--radius-md,6px)] shadow-[var(--elevation-tile)] flex flex-col justify-between transition-colors overflow-hidden ${statusStyle} ${
+                onSelectStage ? "cursor-pointer hover:bg-[var(--surface-tile-hover)]" : ""
               }`}
               onClick={() => onSelectStage?.(stage.id)}
               role={onSelectStage ? "button" : undefined}
@@ -117,7 +117,7 @@ export function StageRail({
               </div>
 
               {/* Bottom info: Duration or Status */}
-              <div className="mt-2.5 pt-2 border-t border-[var(--color-border-default,#d9e0e7)]/50 flex items-center justify-between gap-1 text-[11px] font-mono min-w-0">
+              <div className="mt-2.5 pt-1.5 flex items-center justify-between gap-1 text-[11px] font-mono min-w-0">
                 <span className="text-[var(--color-fg-muted,#5f6b76)] truncate">
                   {stage.durationMs !== undefined ? (
                     `${(stage.durationMs / 1000).toFixed(2)}s`

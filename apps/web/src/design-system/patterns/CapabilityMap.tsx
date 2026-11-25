@@ -31,23 +31,23 @@ export function CapabilityMap({
 
   return (
     <div
-      className={`flex flex-col border border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-default,#ffffff)] rounded-[var(--radius-lg,8px)] text-xs select-none shadow-xs ${className}`}
+      className={`flex flex-col bg-[var(--surface-card,var(--color-canvas-default))] rounded-[var(--radius-lg,8px)] text-xs select-none shadow-[var(--elevation-card)] overflow-hidden ${className}`}
       data-capability-map
       {...props}
     >
       {/* Header with Decision */}
-      <div className="flex items-center justify-between border-b border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-subtle,#f8f9fa)] px-4 py-2.5 rounded-t-[calc(var(--radius-lg,8px)-1px)]">
+      <div className="flex items-center justify-between bg-[var(--surface-rail,var(--color-canvas-subtle))] px-4 py-2.5 rounded-t-[var(--radius-lg,8px)]">
         <div className="flex items-center gap-2.5">
           <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-muted,#5f6b76)]">
             Capability Boundaries:
           </span>
           <span
-            className={`px-2 py-0.5 text-xs font-semibold rounded-[var(--radius-sm,4px)] border ${
+            className={`px-2 py-0.5 text-xs font-semibold rounded-[var(--radius-sm,4px)] ${
               isRefusal
-                ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800"
+                ? "bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
                 : isPartial
-                ? "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
-                : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+                ? "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
             }`}
           >
             {decision}
@@ -61,17 +61,17 @@ export function CapabilityMap({
       </div>
 
       {/* 8-Node Linear Capability Flow */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 divide-x divide-y md:divide-y-0 divide-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-default,#ffffff)] rounded-b-[calc(var(--radius-lg,8px)-1px)]">
+      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2 p-3 bg-[var(--surface-card,var(--color-canvas-default))] rounded-b-[var(--radius-lg,8px)]">
         {capabilities.map((cap) => {
           const isOk = cap.capable;
           return (
             <div
               key={cap.key}
               onClick={() => onSelectCapability?.(cap)}
-              className={`p-3 flex flex-col justify-between transition-colors ${
+              className={`p-3 rounded-[var(--radius-md,6px)] flex flex-col justify-between transition-colors shadow-[var(--elevation-tile)] ${
                 isOk
-                  ? "hover:bg-[var(--color-canvas-subtle,#f8f9fa)] text-[var(--color-fg-default,#1f2933)]"
-                  : "bg-rose-50/20 hover:bg-rose-50/40 text-[var(--color-fg-default,#1f2933)] dark:bg-rose-950/10"
+                  ? "bg-[var(--surface-tile,var(--color-canvas-subtle))] hover:bg-[var(--surface-tile-hover)] text-[var(--color-fg-default,#1f2933)]"
+                  : "bg-rose-500/10 hover:bg-rose-500/15 text-[var(--color-fg-default,#1f2933)]"
               } ${onSelectCapability ? "cursor-pointer" : ""}`}
             >
               <div className="flex items-center justify-between text-[11px] text-[var(--color-fg-muted,#5f6b76)] uppercase mb-1 font-medium">

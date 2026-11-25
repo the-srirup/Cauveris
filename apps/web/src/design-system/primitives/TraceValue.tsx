@@ -33,11 +33,11 @@ export function TraceValue({
 }: TraceValueProps) {
   return (
     <div
-      className={`group relative flex flex-col justify-between p-3.5 rounded-[var(--radius-lg,8px)] border transition-colors select-none ${
+      className={`group relative flex flex-col justify-between p-4 rounded-[var(--radius-lg,8px)] transition-colors select-none shadow-[var(--elevation-card)] ${
         selected
-          ? "border-[var(--color-accent,#0969da)] bg-[var(--color-canvas-default,#ffffff)] ring-1 ring-[var(--color-accent,#0969da)]/20 shadow-xs"
-          : "border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-default,#ffffff)] hover:border-[var(--color-border-emphasis,#c5ced8)] shadow-xs"
-      } ${onSelect ? "cursor-pointer" : ""} ${className}`}
+          ? "bg-[var(--surface-tile,var(--color-canvas-default))] ring-2 ring-[var(--color-accent,#0969da)]/60"
+          : "bg-[var(--surface-card,var(--color-canvas-default))]"
+      } ${onSelect ? "cursor-pointer hover:bg-[var(--surface-tile-hover,var(--color-canvas-muted))]" : ""} ${className}`}
       onClick={onSelect}
       role={onSelect ? "button" : undefined}
       tabIndex={onSelect ? 0 : undefined}
@@ -78,7 +78,7 @@ export function TraceValue({
       </div>
 
       {/* Comparison Delta or Source metadata */}
-      <div className="flex items-center justify-between text-xs text-[var(--color-fg-muted,#5f6b76)] mt-2 pt-2 border-t border-[var(--color-border-default,#d9e0e7)]">
+      <div className="flex items-center justify-between text-xs text-[var(--color-fg-muted,#5f6b76)] mt-2.5 pt-1">
         {delta ? (
           <span
             className={`font-medium tabular-nums ${

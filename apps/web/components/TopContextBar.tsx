@@ -107,7 +107,7 @@ export function TopContextBar() {
 
   return (
     <header
-      className="fixed top-0 left-0 right-0 z-[25] h-[var(--topbar-height,54px)] bg-[var(--color-canvas-inset)] border-b border-[var(--color-border-default)] px-3 sm:px-4 flex items-center justify-between font-sans select-none"
+      className="fixed top-0 left-0 right-0 z-[25] h-[var(--topbar-height,54px)] bg-[var(--surface-well,var(--color-canvas-inset))] shadow-[0_1px_0_rgba(255,255,255,0.04),0_2px_8px_rgba(0,0,0,0.22)] px-3 sm:px-4 flex items-center justify-between font-sans select-none"
       role="banner"
       aria-label="Incident context and global actions"
     >
@@ -126,7 +126,7 @@ export function TopContextBar() {
           <button
             type="button"
             onClick={handleGoToWorkspace}
-            className="hidden lg:flex items-center gap-2 pr-3 border-r border-[var(--color-border-default)] rounded-[var(--radius-sm,4px)] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] shrink-0"
+            className="hidden lg:flex items-center gap-2 pr-2 rounded-[var(--radius-sm,4px)] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] shrink-0"
             aria-label="Cauveris Workspace Home"
           >
             <span className="flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] text-[var(--color-fg-on-emphasis)] shadow-[var(--shadow-sm)] ring-1 ring-[var(--color-accent-hover)]/30">

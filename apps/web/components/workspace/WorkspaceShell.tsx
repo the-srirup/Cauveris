@@ -44,7 +44,7 @@ export function WorkspaceShell({
 
   return (
     <div className="min-h-screen flex flex-col bg-[var(--color-canvas)]">
-      <header className="border-b border-[var(--color-border-default)] bg-[var(--color-canvas-default)]">
+      <header className="bg-[var(--surface-well,var(--color-canvas-inset))] shadow-[0_1px_0_rgba(255,255,255,0.04),0_2px_8px_rgba(0,0,0,0.22)]">
         <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
           <div className="flex min-h-14 py-2.5 items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">

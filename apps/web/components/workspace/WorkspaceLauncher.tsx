@@ -129,7 +129,7 @@ export function WorkspaceLauncher() {
       />
 
       {/* --- Studio Overview Banner --------------------------------------- */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-6 border-b border-[var(--color-border-default)]">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-2">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--color-fg-default)]">
             Workspace
@@ -139,7 +139,7 @@ export function WorkspaceLauncher() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium border border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)] text-[var(--color-fg-muted)]">
+          <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium bg-[var(--surface-card,var(--color-canvas-subtle))] shadow-[var(--elevation-tile)] text-[var(--color-fg-muted)]">
             <span className="h-2 w-2 rounded-full bg-[var(--color-success-emphasis,#1a7f37)]" />
             Systems Ready
           </span>
@@ -148,7 +148,7 @@ export function WorkspaceLauncher() {
 
       {error && (
         <div
-          className="rounded-[var(--radius-md,6px)] border border-[var(--color-danger-muted)] bg-[var(--color-danger-subtle)] px-4 py-3 text-xs text-[var(--color-danger-fg)]"
+          className="rounded-[var(--radius-md,6px)] bg-[var(--color-danger-subtle)] px-4 py-3 text-xs text-[var(--color-danger-fg)]"
           role="alert"
         >
           {error}
@@ -171,7 +171,7 @@ export function WorkspaceLauncher() {
           <button
             type="button"
             onClick={() => router.push("/workspace/new")}
-            className="group relative flex flex-col justify-between rounded-[var(--radius-xl,12px)] border border-[var(--color-accent-muted)] bg-[var(--color-canvas-default)] p-6 text-left shadow-sm transition-all duration-150 hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-accent)] hover:shadow-md"
+            className="group relative flex flex-col justify-between rounded-[var(--radius-xl,12px)] bg-[var(--surface-card,var(--color-canvas-default))] p-6 text-left shadow-[var(--elevation-card)] ring-1 ring-[var(--color-accent)]/25 transition-all duration-150 hover:bg-[var(--surface-tile,var(--color-canvas-subtle))] hover:ring-[var(--color-accent)]/50 hover:shadow-[var(--shadow-md)]"
           >
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -201,11 +201,11 @@ export function WorkspaceLauncher() {
             onClick={loadSample}
             disabled={isCreatingSample}
             aria-label="Load golden incident"
-            className="group relative flex flex-col justify-between rounded-[var(--radius-xl,12px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-default)] p-6 text-left shadow-sm transition-all duration-150 hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+            className="group relative flex flex-col justify-between rounded-[var(--radius-xl,12px)] bg-[var(--surface-card,var(--color-canvas-default))] p-6 text-left shadow-[var(--elevation-card)] transition-all duration-150 hover:bg-[var(--surface-tile,var(--color-canvas-subtle))] hover:shadow-[var(--shadow-md)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <span className="flex h-10 w-10 items-center justify-center rounded-[var(--radius-lg,8px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-muted)] text-[var(--color-fg-default)]">
+                <span className="flex h-10 w-10 items-center justify-center rounded-[var(--radius-lg,8px)] bg-[var(--surface-tile,var(--color-canvas-muted))] text-[var(--color-fg-default)]">
                   {isCreatingSample ? (
                     <Loader2 className="h-5 w-5 animate-spin text-[var(--color-accent)]" />
                   ) : (
@@ -251,15 +251,15 @@ export function WorkspaceLauncher() {
               }
             }}
             aria-label="Resume saved session package (.zip)"
-            className={`group relative flex flex-col justify-between rounded-[var(--radius-xl,12px)] border p-6 text-left shadow-sm cursor-pointer transition-all duration-150 ${
+            className={`group relative flex flex-col justify-between rounded-[var(--radius-xl,12px)] p-6 text-left shadow-[var(--elevation-card)] cursor-pointer transition-all duration-150 ${
               isDraggingSession
-                ? "border-[var(--color-accent)] bg-[var(--color-accent-subtle)]"
-                : "border-[var(--color-border-default)] bg-[var(--color-canvas-default)] hover:bg-[var(--color-canvas-subtle)] hover:border-[var(--color-border-strong)] hover:shadow-md"
+                ? "ring-2 ring-[var(--color-accent)] bg-[var(--color-accent-subtle)]"
+                : "bg-[var(--surface-card,var(--color-canvas-default))] hover:bg-[var(--surface-tile,var(--color-canvas-subtle))] hover:shadow-[var(--shadow-md)]"
             }`}
           >
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <span className="flex h-10 w-10 items-center justify-center rounded-[var(--radius-lg,8px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-muted)] text-[var(--color-fg-default)]">
+                <span className="flex h-10 w-10 items-center justify-center rounded-[var(--radius-lg,8px)] bg-[var(--surface-tile,var(--color-canvas-muted))] text-[var(--color-fg-default)]">
                   {isImportingSession ? (
                     <Loader2 className="h-5 w-5 animate-spin text-[var(--color-accent)]" />
                   ) : (
@@ -310,7 +310,7 @@ export function WorkspaceLauncher() {
           </Button>
         </div>
 
-        <div className="overflow-hidden rounded-[var(--radius-xl,12px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-default)] shadow-sm">
+        <div className="overflow-hidden rounded-[var(--radius-xl,12px)] bg-[var(--surface-card,var(--color-canvas-default))] shadow-[var(--elevation-card)] p-2">
           {isLoadingRecents ? (
             <div className="flex items-center justify-center gap-3 px-6 py-12 text-sm text-[var(--color-fg-muted)]">
               <Loader2 className="h-5 w-5 animate-spin text-[var(--color-accent)]" />
@@ -327,15 +327,15 @@ export function WorkspaceLauncher() {
               </p>
             </div>
           ) : (
-            <div className="divide-y divide-[var(--color-border-default)]">
+            <div className="space-y-1">
               {recents.map((incident) => (
                 <button
                   key={incident.id}
                   type="button"
                   onClick={() => openIncident(incident.id)}
-                  className="group flex w-full items-center gap-4 px-5 py-4 text-left transition-colors duration-100 hover:bg-[var(--color-canvas-subtle)] focus-visible:outline-none focus-visible:bg-[var(--color-canvas-subtle)]"
+                  className="group flex w-full items-center gap-4 px-4 py-3.5 rounded-[var(--radius-lg,8px)] text-left transition-colors duration-100 hover:bg-[var(--surface-tile,var(--color-canvas-subtle))] focus-visible:outline-none focus-visible:bg-[var(--surface-tile)]"
                 >
-                  <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[var(--radius-md,6px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-muted)] text-[var(--color-fg-muted)] group-hover:border-[var(--color-accent-muted)] group-hover:text-[var(--color-accent-fg)] transition-colors">
+                  <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[var(--radius-md,6px)] bg-[var(--surface-tile,var(--color-canvas-muted))] text-[var(--color-fg-muted)] group-hover:text-[var(--color-accent-fg)] transition-colors">
                     <FileText className="h-4.5 w-4.5" />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -381,7 +381,7 @@ export function WorkspaceLauncher() {
       </section>
 
       {/* --- Technical Guidance & Specifications Shelf ------------------ */}
-      <section aria-labelledby="workspace-guidelines-heading" className="pt-6 border-t border-[var(--color-border-default)]">
+      <section aria-labelledby="workspace-guidelines-heading" className="pt-2">
         <h2
           id="workspace-guidelines-heading"
           className="text-xs font-semibold uppercase tracking-wider text-[var(--color-fg-subtle)] mb-4"
@@ -389,7 +389,7 @@ export function WorkspaceLauncher() {
           Intake Formats & Integrity Specifications
         </h2>
         <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-[var(--radius-lg,8px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-default)] p-5 shadow-xs">
+          <div className="rounded-[var(--radius-lg,8px)] bg-[var(--surface-card,var(--color-canvas-default))] p-5 shadow-[var(--elevation-card)]">
             <div className="flex items-center gap-2.5 text-sm font-semibold text-[var(--color-fg-default)]">
               <FileArchive className="h-4.5 w-4.5 text-[var(--color-accent-fg)]" />
               Supported Evidence Sources
@@ -397,8 +397,8 @@ export function WorkspaceLauncher() {
             <ul className="mt-3 space-y-2 text-xs text-[var(--color-fg-muted)] leading-relaxed">
               <li>
                 <strong className="font-medium text-[var(--color-fg-default)]">Evidence archives:</strong>{" "}
-                <code className="font-mono text-[11px] px-1 py-0.5 rounded bg-[var(--color-canvas-muted)]">.zip</code>,{" "}
-                <code className="font-mono text-[11px] px-1 py-0.5 rounded bg-[var(--color-canvas-muted)]">.tar.gz</code> logs, MCAP telemetry, and configuration bundles.
+                <code className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--surface-tile,var(--color-canvas-muted))]">.zip</code>,{" "}
+                <code className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-[var(--surface-tile,var(--color-canvas-muted))]">.tar.gz</code> logs, MCAP telemetry, and configuration bundles.
               </li>
               <li>
                 <strong className="font-medium text-[var(--color-fg-default)]">Registries & Git:</strong>{" "}
@@ -407,7 +407,7 @@ export function WorkspaceLauncher() {
             </ul>
           </div>
 
-          <div className="rounded-[var(--radius-lg,8px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-default)] p-5 shadow-xs">
+          <div className="rounded-[var(--radius-lg,8px)] bg-[var(--surface-card,var(--color-canvas-default))] p-5 shadow-[var(--elevation-card)]">
             <div className="flex items-center gap-2.5 text-sm font-semibold text-[var(--color-fg-default)]">
               <History className="h-4.5 w-4.5 text-[var(--color-success-fg,#1a7f37)]" />
               Session Package Scope

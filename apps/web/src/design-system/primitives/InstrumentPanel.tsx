@@ -41,16 +41,14 @@ export const InstrumentPanel = forwardRef<HTMLDivElement, InstrumentPanelProps>(
     ref
   ) => {
     const bgClass = recessed
-      ? "bg-[var(--color-canvas-subtle,#f8f9fa)]"
+      ? "bg-[var(--surface-well,var(--color-canvas-subtle))]"
       : raised
-      ? "bg-[var(--color-canvas-default,#ffffff)] shadow-sm"
-      : "bg-[var(--color-canvas-default,#ffffff)]";
+      ? "bg-[var(--surface-tile,var(--color-canvas-default))] shadow-[var(--elevation-card)]"
+      : "bg-[var(--surface-card,var(--color-canvas-default))] shadow-[var(--elevation-card)]";
 
-    const borderClass = selected
-      ? "border-[var(--color-accent,#0969da)] ring-1 ring-[var(--color-accent,#0969da)]/20"
-      : bordered
-      ? "border-[var(--color-border-default,#d9e0e7)]"
-      : "border-transparent";
+    const selectedClass = selected
+      ? "ring-2 ring-[var(--color-accent,#0969da)]/60"
+      : "";
 
     const padClass =
       density === "compact"
@@ -67,7 +65,7 @@ export const InstrumentPanel = forwardRef<HTMLDivElement, InstrumentPanelProps>(
     return (
       <div
         ref={ref}
-        className={`relative flex flex-col rounded-[var(--radius-lg,8px)] border ${borderClass} ${bgClass} text-[var(--color-fg-default,#1f2933)] transition-colors duration-150 motion-reduce:transition-none ${className}`}
+        className={`relative flex flex-col rounded-[var(--radius-lg,8px)] ${selectedClass} ${bgClass} text-[var(--color-fg-default,#1f2933)] transition-colors duration-150 motion-reduce:transition-none overflow-hidden ${className}`}
         data-instrument-panel
         data-selected={selected}
         {...props}
@@ -75,7 +73,7 @@ export const InstrumentPanel = forwardRef<HTMLDivElement, InstrumentPanelProps>(
         {/* Header Rail */}
         {(title || headerRail || actions) && (
           <div
-            className={`flex items-center justify-between border-b border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-subtle,#f8f9fa)] ${headerPad} rounded-t-[calc(var(--radius-lg,8px)-1px)] ${headerClassName}`}
+            className={`flex items-center justify-between bg-[var(--surface-rail,var(--color-canvas-subtle))] ${headerPad} rounded-t-[var(--radius-lg,8px)] ${headerClassName}`}
           >
             <div className="flex items-center gap-2.5 min-w-0 flex-1">
               {headerRail && <div className="shrink-0">{headerRail}</div>}
@@ -106,7 +104,7 @@ export const InstrumentPanel = forwardRef<HTMLDivElement, InstrumentPanelProps>(
 
         {/* Optional Metadata Footer */}
         {metadataFooter && (
-          <div className="flex items-center justify-between border-t border-[var(--color-border-default,#d9e0e7)] bg-[var(--color-canvas-subtle,#f8f9fa)] px-4 py-2.5 text-xs text-[var(--color-fg-muted,#5f6b76)] rounded-b-[calc(var(--radius-lg,8px)-1px)]">
+          <div className="flex items-center justify-between bg-[var(--surface-rail,var(--color-canvas-subtle))] px-4 py-2.5 text-xs text-[var(--color-fg-muted,#5f6b76)] rounded-b-[var(--radius-lg,8px)]">
             {metadataFooter}
           </div>
         )}

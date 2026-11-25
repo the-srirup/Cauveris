@@ -277,9 +277,9 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
       contentClassName="flex-1 flex flex-col justify-center mx-auto w-full max-w-4xl px-4 sm:px-6 py-8 sm:py-12"
     >
       <div className="w-full my-auto">
-        <div className="rounded-[var(--radius-xl,12px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-default)] shadow-sm overflow-hidden">
+        <div className="rounded-[var(--radius-xl,12px)] bg-[var(--surface-card,var(--color-canvas-default))] shadow-[var(--elevation-card)] overflow-hidden">
           {/* Wizard Header / Stepper Rail */}
-          <div className="border-b border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/70 px-4 py-3.5 sm:px-8">
+          <div className="bg-[var(--surface-rail,var(--color-canvas-subtle))] px-4 py-3.5 sm:px-8">
             <ol className="grid grid-cols-3 gap-2 sm:gap-4" aria-label="Wizard progress">
               {STEPS.map((entry) => {
                 const isCurrent = entry.id === step;
@@ -293,9 +293,9 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
                       aria-current={isCurrent ? "step" : undefined}
                       className={`w-full flex items-center gap-2.5 sm:gap-3 rounded-[var(--radius-md,6px)] px-2.5 py-1.5 sm:px-3 sm:py-2 text-left transition-colors ${
                         isCurrent
-                          ? "bg-[var(--color-accent-subtle)] text-[var(--color-fg-default)] shadow-xs"
+                          ? "bg-[var(--color-accent-subtle)] text-[var(--color-fg-default)]"
                           : isDone
-                            ? "text-[var(--color-fg-muted)] hover:bg-[var(--color-canvas-muted)]"
+                            ? "text-[var(--color-fg-muted)] hover:bg-[var(--surface-tile)]"
                             : "text-[var(--color-fg-subtle)] opacity-70"
                       }`}
                     >
@@ -305,7 +305,7 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
                             ? "bg-[var(--color-accent)] text-[var(--color-fg-on-emphasis)] shadow-xs"
                             : isDone
                               ? "bg-[var(--color-success-emphasis,#1a7f37)] text-[var(--color-fg-on-emphasis)]"
-                              : "border border-[var(--color-border-default)] text-[var(--color-fg-subtle)]"
+                              : "bg-[var(--surface-tile)] text-[var(--color-fg-subtle)]"
                         }`}
                       >
                         {isDone ? <Check className="h-3.5 w-3.5" /> : entry.id}
@@ -370,10 +370,10 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
                         type="button"
                         onClick={() => update("sourceKind", option.kind)}
                         aria-pressed={isSelected}
-                        className={`flex flex-col gap-2 rounded-[var(--radius-lg,8px)] border p-4 sm:p-5 text-left transition-all duration-100 ${
+                        className={`flex flex-col gap-2 rounded-[var(--radius-lg,8px)] p-4 sm:p-5 text-left transition-all duration-100 shadow-[var(--elevation-tile)] ${
                           isSelected
-                            ? "border-[var(--color-accent)] bg-[var(--color-accent-subtle)] ring-1 ring-[var(--color-accent)] shadow-xs"
-                            : "border-[var(--color-border-default)] bg-[var(--color-canvas)]/40 hover:border-[var(--color-border-strong)] hover:bg-[var(--color-canvas)]"
+                            ? "bg-[var(--color-accent-subtle)] ring-2 ring-[var(--color-accent)]/70"
+                            : "bg-[var(--surface-tile,var(--color-canvas))] hover:bg-[var(--surface-tile-hover)]"
                         }`}
                       >
                         <Icon
@@ -412,10 +412,10 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
                         setIsDragging(false);
                         handleFile(e.dataTransfer.files?.[0]);
                       }}
-                      className={`rounded-[var(--radius-lg,8px)] border-2 border-dashed p-8 sm:p-10 text-center transition-colors ${
+                      className={`rounded-[var(--radius-lg,8px)] p-8 sm:p-10 text-center transition-colors ${
                         isDragging
-                          ? "border-[var(--color-accent)] bg-[var(--color-accent-subtle)]"
-                          : "border-[var(--color-border-default)] bg-[var(--color-canvas)]/30 hover:border-[var(--color-border-strong)]"
+                          ? "ring-2 ring-[var(--color-accent)] bg-[var(--color-accent-subtle)]"
+                          : "bg-[var(--surface-well,var(--color-canvas))] hover:bg-[var(--surface-tile)]"
                       }`}
                     >
                       <FileArchive className="mx-auto h-8 w-8 text-[var(--color-fg-subtle)]" />
@@ -456,7 +456,7 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
                 )}
 
                 {state.sourceKind === "source" && (
-                  <div className="space-y-4 rounded-[var(--radius-lg,8px)] border border-[var(--color-border-default)] bg-[var(--color-canvas)]/30 p-5">
+                  <div className="space-y-4 rounded-[var(--radius-lg,8px)] bg-[var(--surface-tile,var(--color-canvas))] p-5 shadow-[var(--elevation-tile)]">
                     <div>
                       <label
                         htmlFor="wizard-source"
@@ -477,7 +477,7 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
                       </p>
                     </div>
 
-                    <div className="pt-2 border-t border-[var(--color-border-muted)]">
+                    <div className="pt-2">
                       <p className="text-xs font-medium text-[var(--color-fg-default)] mb-2">Quick Presets</p>
                       <div className="flex flex-wrap gap-2">
                         {QUICK_PRESETS.map((preset) => (
@@ -485,7 +485,7 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
                             key={preset.value}
                             type="button"
                             onClick={() => handlePreset(preset)}
-                            className="rounded-[var(--radius-sm,4px)] border border-[var(--color-border-default)] bg-[var(--color-canvas-default)] px-2.5 py-1 text-xs text-[var(--color-fg-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-fg-default)]"
+                            className="rounded-[var(--radius-sm,4px)] bg-[var(--surface-card,var(--color-canvas-default))] px-2.5 py-1 text-xs text-[var(--color-fg-muted)] transition-colors hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-fg-default)]"
                           >
                             {preset.label}
                           </button>
@@ -496,7 +496,7 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
                 )}
 
                 {state.sourceKind === "manual" && (
-                  <div className="rounded-[var(--radius-lg,8px)] border border-[var(--color-border-default)] bg-[var(--color-canvas)]/30 p-5 text-center">
+                  <div className="rounded-[var(--radius-lg,8px)] bg-[var(--surface-tile,var(--color-canvas))] p-5 text-center shadow-[var(--elevation-tile)]">
                     <NotebookPen className="mx-auto h-7 w-7 text-[var(--color-fg-subtle)] mb-2" />
                     <p className="text-sm font-medium text-[var(--color-fg-default)]">Starting Without Initial Archive</p>
                     <p className="mx-auto mt-1 max-w-md text-xs text-[var(--color-fg-muted)] leading-relaxed">
@@ -638,7 +638,7 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
                   </p>
                 </div>
 
-                <dl className="divide-y divide-[var(--color-border-default)] overflow-hidden rounded-[var(--radius-lg,8px)] border border-[var(--color-border-default)] bg-[var(--color-canvas)]/40">
+                <dl className="space-y-1 overflow-hidden rounded-[var(--radius-lg,8px)] bg-[var(--surface-well,var(--color-canvas))] p-2">
                   <SummaryRow label="Name" value={state.title} />
                   <SummaryRow label="Description" value={state.description} />
                   {state.systemName && <SummaryRow label="System" value={state.systemName} mono />}
@@ -706,7 +706,7 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
           </div>
 
           {/* Wizard Action Footer */}
-          <div className="border-t border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]/70 px-6 py-4 sm:px-8 flex items-center justify-between gap-4">
+          <div className="bg-[var(--surface-rail,var(--color-canvas-subtle))] px-6 py-4 sm:px-8 flex items-center justify-between gap-4">
             {step > 1 ? (
               <Button
                 variant="ghost"
@@ -748,7 +748,7 @@ export function CreateWorkspaceWizard({ initialMode }: { initialMode?: SourceKin
 }
 
 const INPUT_CLASS =
-  "mt-1.5 h-10 w-full rounded-[var(--radius-sm,4px)] border border-[var(--color-border-default)] bg-[var(--color-canvas)] px-3 text-sm text-[var(--color-fg-default)] placeholder:text-[var(--color-fg-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] transition-colors";
+  "mt-1.5 h-10 w-full rounded-[var(--radius-sm,4px)] bg-[var(--surface-well,var(--color-canvas))] px-3 text-sm text-[var(--color-fg-default)] placeholder:text-[var(--color-fg-subtle)] shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] transition-colors";
 
 function Field({
   id,

@@ -173,7 +173,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(
         <div
           ref={dialogRef}
           onClick={(e) => e.stopPropagation()}
-          className={`relative w-full max-h-[85vh] overflow-y-auto bg-[var(--color-canvas-inset)] border border-[var(--color-border-default)] rounded-[var(--radius-xl,10px)] shadow-[var(--shadow-xl)] animate-scale-in my-auto ${sizeClasses[size]} ${className}`}
+          className={`relative w-full max-h-[85vh] overflow-y-auto bg-[var(--surface-card,var(--color-canvas-inset))] rounded-[var(--radius-xl,10px)] shadow-[var(--shadow-xl),inset_0_1px_0_rgba(255,255,255,0.06)] animate-scale-in my-auto ${sizeClasses[size]} ${className}`}
           role="dialog"
           aria-modal={modal ? "true" : "false"}
           aria-labelledby={title ? "dialog-title" : undefined}
@@ -183,7 +183,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(
         >
           <div className="flex flex-col">
             {(title || showCloseButton) && (
-              <div className="flex items-start justify-between gap-3 p-4 border-b border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)]">
+              <div className="flex items-start justify-between gap-3 p-4 bg-[var(--surface-rail,var(--color-canvas-subtle))] rounded-t-[var(--radius-xl,10px)]">
                 <div className="flex-1 min-w-0">
                   {title && (
                     <h2 id="dialog-title" className="text-lg font-semibold text-[var(--color-fg-default)]">
@@ -219,7 +219,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(
             )}
             <div className="p-4 overflow-y-auto">{children}</div>
             {footer && (
-              <div className="flex items-center justify-end gap-3 p-4 border-t border-[var(--color-border-default)] bg-[var(--color-canvas-subtle)/50] rounded-b-[var(--radius-lg)]">
+              <div className="flex items-center justify-end gap-3 p-4 bg-[var(--surface-rail,var(--color-canvas-subtle))] rounded-b-[var(--radius-xl,10px)]">
                 {footer}
               </div>
             )}
