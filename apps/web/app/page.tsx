@@ -283,6 +283,24 @@ function MissionControlContent() {
     }
   }, [incidentId, loadIncidentDetails, router]);
 
+  // Sync pipeline state if started or stopped from TopContextBar while on Overview
+  useEffect(() => {
+    const onPipelineState = (e: Event) => {
+      const detail = (e as CustomEvent<{ incidentId: string; state: string }>).detail;
+      if (detail && detail.incidentId === incidentId) {
+        setPipelineState(detail.state);
+        if (detail.state === "RUNNING") {
+          setIsStarting(true);
+          setPipelineProgress(5);
+        } else {
+          setIsStarting(false);
+        }
+      }
+    };
+    window.addEventListener("cauveris:pipeline-state", onPipelineState);
+    return () => window.removeEventListener("cauveris:pipeline-state", onPipelineState);
+  }, [incidentId]);
+
   // Sync shell topbar
   useEffect(() => {
     if (incidentData) {

@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Tooltip } from "./ui";
 import { useShell } from "@/lib/useShell";
 import { useActiveIncident } from "@/lib/useIncident";
+import { api } from "@/lib/api";
 import { exportAndDownloadSession } from "@/lib/sessionDownload";
 import { notify } from "./Notification";
-import { Plus, Scale, Wrench, Menu, Search, FolderOpen, Download, Terminal } from "lucide-react";
+import { Play, Square, Scale, Wrench, Menu, Search, FolderOpen, Download, Terminal } from "lucide-react";
 import { UserMenu } from "./UserMenu";
+import { IncidentSwitcher } from "./workspace/IncidentSwitcher";
 
 /**
  * The console's top bar.
@@ -23,12 +25,14 @@ export function TopContextBar() {
     setNavDrawer,
     setCommandPalette,
     setWorkspacePrompt,
+    setIncidentContext,
     openInspector,
     closeInspector,
   } = useShell();
   const { incident, incidentId: activeIncidentId, judgeMode, engineerMode, setJudgeMode, setEngineerMode } = useActiveIncident();
   const router = useRouter();
   const [isSavingSession, setIsSavingSession] = useState(false);
+  const [isPipelineMutating, setIsPipelineMutating] = useState(false);
 
   const handleToggleJudgeMode = () => {
     if (engineerMode) return;
@@ -64,6 +68,7 @@ export function TopContextBar() {
   const activeStage = shellState.incidentContext?.pipelineStage;
   const backendStatus = shellState.incidentContext?.backendStatus || "online";
   const modelProvider = shellState.incidentContext?.modelProvider || "Local Fixtures";
+  const isRunning = incidentState === "RUNNING";
 
   /*
    * The status badge names the active stage while the pipeline is running,
@@ -97,6 +102,43 @@ export function TopContextBar() {
     }
   };
 
+  const handleTogglePipeline = async () => {
+    if (!incidentId || isPipelineMutating) return;
+    setIsPipelineMutating(true);
+    try {
+      if (isRunning) {
+        await api.cancel(incidentId);
+        if (shellState.incidentContext) {
+          setIncidentContext?.({ ...shellState.incidentContext, state: "CANCELLED" });
+        }
+        window.dispatchEvent(
+          new CustomEvent("cauveris:pipeline-state", {
+            detail: { incidentId, state: "CANCELLED" },
+          })
+        );
+        notify("Cancellation signal dispatched.", "info");
+      } else {
+        await api.reconstruct(incidentId);
+        if (shellState.incidentContext) {
+          setIncidentContext?.({ ...shellState.incidentContext, state: "RUNNING" });
+        }
+        window.dispatchEvent(
+          new CustomEvent("cauveris:pipeline-state", {
+            detail: { incidentId, state: "RUNNING" },
+          })
+        );
+        notify("Autonomous pipeline started.", "info");
+      }
+    } catch (err: unknown) {
+      notify(
+        err instanceof Error ? err.message : "Pipeline action failed.",
+        "error"
+      );
+    } finally {
+      setIsPipelineMutating(false);
+    }
+  };
+
   const handleToggleConsole = () => {
     if (shellState.inspectorOpen) {
       closeInspector?.();
@@ -111,7 +153,7 @@ export function TopContextBar() {
       role="banner"
       aria-label="Incident context and global actions"
     >
-      {/* Left: Mobile menu toggle + Brand + Incident Context */}
+      {/* Left: Mobile menu toggle + Brand + Interactive Incident Switcher */}
       <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 sm:flex-initial" aria-label="Incident identity">
         <button
           onClick={() => setNavDrawer(!shellState.isNavDrawerOpen)}
@@ -140,19 +182,13 @@ export function TopContextBar() {
           </button>
         </Tooltip>
 
-        {/* Active Incident Badge / Selector */}
+        {/* In-Session Incident Switcher */}
         <div className="flex items-center gap-2 min-w-0">
-          <div
-            className="flex items-center gap-2 px-2.5 h-8.5 rounded-[var(--radius-sm,4px)] bg-[var(--color-canvas-default)] transition-colors min-w-0 cursor-default"
-            title={incidentTitle}
-          >
-            <span className="text-xs font-mono font-medium text-[var(--color-fg-muted)] shrink-0">
-              {incidentId ? incidentId : "STANDBY"}
-            </span>
-            <span className="text-xs font-semibold text-[var(--color-fg-default)] truncate max-w-[150px] sm:max-w-[220px]">
-              {incidentTitle}
-            </span>
-          </div>
+          <IncidentSwitcher
+            activeId={incidentId}
+            activeTitle={incidentTitle}
+            onOpenWorkspaceHub={handleGoToWorkspace}
+          />
 
           {Boolean(incident?.is_demonstration || shellState.incidentContext?.isDemonstration) && (
             <Badge variant="warning" size="sm" className="shrink-0 font-medium">
@@ -163,7 +199,7 @@ export function TopContextBar() {
           {/* The one status readout. */}
           <span title={statusTitle}>
             <Badge
-              variant={incidentState === "RUNNING" ? "primary" : incidentState === "ERROR" ? "danger" : "default"}
+              variant={isRunning ? "primary" : incidentState === "ERROR" ? "danger" : "default"}
               dot
               size="sm"
               className="shrink-0 hidden md:inline-flex"
@@ -281,8 +317,8 @@ export function TopContextBar() {
           </Tooltip>
         )}
 
-        {/* Workspace — switch incident or return to Workspace Hub */}
-        <Tooltip content="Switch workspace (change incident)" position="bottom">
+        {/* Workspace — return to Workspace Hub (with save prompt) */}
+        <Tooltip content="Return to Workspace Hub (create or restore session)" position="bottom">
           <Button
             variant="outline"
             size="sm"
@@ -295,19 +331,28 @@ export function TopContextBar() {
           </Button>
         </Tooltip>
 
-        {/* New — a shortcut into the wizard. */}
-        <Tooltip content="New incident" position="bottom">
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => router.push("/workspace/new")}
-            className="h-8.5 text-xs font-medium"
-            leadingIcon={<Plus className="h-3.5 w-3.5" />}
-            aria-label="Create new incident"
-          >
-            <span className="hidden sm:inline">New</span>
-          </Button>
-        </Tooltip>
+        {/* Primary Operational Action: Run or Stop pipeline for active incident */}
+        {incidentId && (
+          <Tooltip content={isRunning ? "Stop active pipeline" : "Run autonomous reconstruction pipeline"} position="bottom">
+            <Button
+              variant={isRunning ? "danger" : "primary"}
+              size="sm"
+              onClick={() => void handleTogglePipeline()}
+              loading={isPipelineMutating}
+              className="h-8.5 text-xs font-medium"
+              leadingIcon={
+                isPipelineMutating ? undefined : isRunning ? (
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                ) : (
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                )
+              }
+              aria-label={isRunning ? "Stop investigation pipeline" : "Run investigation pipeline"}
+            >
+              <span className="hidden sm:inline">{isRunning ? "Stop" : "Run"}</span>
+            </Button>
+          </Tooltip>
+        )}
 
         <div
           role="progressbar"
